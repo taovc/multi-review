@@ -65,6 +65,7 @@
   "project": {
     "tabs": {
       "pulls": "All PRs",
+      "mine": "My PRs",
       "tasks": "Review tasks",
       "config": "Configuration"
     },
@@ -73,7 +74,14 @@
       "author": "Author",
       "status": "Status",
       "review": "Review",
-      "severity": "Severity"
+      "severity": "Severity",
+      "comments": "Comments"
+    },
+    "myPulls": {
+      "launchFix": "Run a fix",
+      "fixSoon": "Coming soon",
+      "empty": "You have no PRs here",
+      "commentsTitle": "Unresolved threads / total comments"
     },
     "selectAllReviewable": "Select all reviewable",
     "reviewSelected": "Review selected ({count})",

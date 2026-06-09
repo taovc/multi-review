@@ -65,6 +65,7 @@
   "project": {
     "tabs": {
       "pulls": "Toutes les PR",
+      "mine": "Mes PRs",
       "tasks": "Tâches de revue",
       "config": "Configuration"
     },
@@ -73,7 +74,14 @@
       "author": "Auteur",
       "status": "Statut",
       "review": "Revue",
-      "severity": "Sévérité"
+      "severity": "Sévérité",
+      "comments": "Commentaires"
+    },
+    "myPulls": {
+      "launchFix": "Lancer un fix",
+      "fixSoon": "Bientôt disponible",
+      "empty": "Aucune PR de votre part",
+      "commentsTitle": "Discussions non résolues / total des commentaires"
     },
     "selectAllReviewable": "Tout sélectionner",
     "reviewSelected": "Revoir la sélection ({count})",

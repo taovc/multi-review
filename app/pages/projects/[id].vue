@@ -17,6 +17,8 @@ type Pull = {
   hasTask: boolean
   taskId: string | null
   taskStatus: string | null
+  commentsCount?: number
+  unresolvedThreads?: number
 }
 
 const { t, te } = useI18n()
@@ -24,7 +26,7 @@ const route = useRoute()
 const projectId = computed(() => route.params.id as string)
 const { data: project, refresh: refreshProject } = await useFetch<Project>(() => `/api/projects/${projectId.value}`)
 
-const tab = ref<'pulls' | 'tasks' | 'config'>('pulls')
+const tab = ref<'pulls' | 'mine' | 'tasks' | 'config'>('pulls')
 const msg = ref('')
 
 async function onProjectChanged() {
@@ -47,14 +49,10 @@ function openDetail(prNumber: number, reviewId: string | null = null) {
 async function onTaskCreated() {
   await Promise.all([refreshPulls(), refreshTasks()])
 }
-function pickAuthor(a: string) {
-  authorFilter.value = authorFilter.value === a ? null : a
-}
 
 // ── 全部 PR（GraphQL cursor 分页，每页 20）──────────────────
 const PER_PAGE = 20
 const prState = ref<'open' | 'merged' | 'closed' | 'all'>('open')
-const authorFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null) // 点状态徽章筛选当前列表，再点取消
 type PullsResp = { pulls: Pull[]; totalCount: number; hasNextPage: boolean; endCursor: string | null }
 const pullsResp = ref<PullsResp | null>(null)
@@ -101,15 +99,9 @@ function prevPage() {
   }
 }
 
-const authors = computed(() => {
-  const set = new Set<string>()
-  for (const p of pullsResp.value?.pulls ?? []) set.add(p.author)
-  return [...set].sort()
-})
 const visiblePulls = computed(() => {
   let list = pullsResp.value?.pulls ?? []
   // 「进行中」也显示草稿 PR（带「草稿」徽章），不再过滤掉
-  if (authorFilter.value) list = list.filter((p) => p.author === authorFilter.value)
   if (statusFilter.value) list = list.filter((p) => pullKey(p) === statusFilter.value)
   return list
 })
@@ -146,6 +138,52 @@ async function reviewSelected() {
     msg.value = e?.data?.statusMessage || e?.message || t('common.failed')
   } finally {
     starting.value = false
+  }
+}
+
+// ── 我的 PR（author:@me，按需懒加载）──────────────────────
+const myState = ref<'open' | 'merged' | 'closed' | 'all'>('open')
+const myPullsResp = ref<PullsResp | null>(null)
+const myPullsPending = ref(false)
+const myLoaded = ref(false)
+const myPage = ref(0)
+const myCursors = ref<(string | null)[]>([null])
+
+async function loadMyPulls() {
+  myPullsPending.value = true
+  try {
+    const after = myCursors.value[myPage.value]
+    myPullsResp.value = await $fetch<PullsResp>(`/api/projects/${projectId.value}/pulls`, {
+      query: { author: '@me', state: myState.value, first: PER_PAGE, ...(after ? { after } : {}) },
+    })
+    myLoaded.value = true
+    if (myPullsResp.value.hasNextPage) myCursors.value[myPage.value + 1] = myPullsResp.value.endCursor
+  } catch (e: any) {
+    msg.value = e?.data?.statusMessage || e?.message || t('project.msg.fetchFailed')
+  } finally {
+    myPullsPending.value = false
+  }
+}
+function resetAndLoadMine() {
+  myPage.value = 0
+  myCursors.value = [null]
+  loadMyPulls()
+}
+watch(myState, resetAndLoadMine)
+// 首次切到「我的 PR」标签才拉取（省一次请求）
+watch(tab, (t) => {
+  if (t === 'mine' && !myLoaded.value) loadMyPulls()
+})
+function myNextPage() {
+  if (myPullsResp.value?.hasNextPage) {
+    myPage.value++
+    loadMyPulls()
+  }
+}
+function myPrevPage() {
+  if (myPage.value > 0) {
+    myPage.value--
+    loadMyPulls()
   }
 }
 
@@ -326,6 +364,13 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
       </button>
       <button
         class="pb-3 -mb-px border-b-2 transition-colors"
+        :class="tab === 'mine' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'"
+        @click="tab = 'mine'"
+      >
+        {{ $t('project.tabs.mine') }} <span v-if="myLoaded" class="text-dimmed">{{ myPullsResp?.totalCount || 0 }}</span>
+      </button>
+      <button
+        class="pb-3 -mb-px border-b-2 transition-colors"
         :class="tab === 'tasks' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'"
         @click="tab = 'tasks'"
       >
@@ -360,24 +405,6 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
             @click="prState = s; selected = new Set()"
           >
             {{ s === 'all' ? $t('common.all') : $t('status.pr.' + s) }}
-          </button>
-        </div>
-        <div class="flex flex-wrap gap-x-4 gap-y-2 items-baseline">
-          <button
-            class="text-sm transition-colors"
-            :class="!authorFilter ? 'text-highlighted font-medium' : 'text-dimmed hover:text-default'"
-            @click="authorFilter = null"
-          >
-            {{ $t('common.all') }}
-          </button>
-          <button
-            v-for="a in authors"
-            :key="a"
-            class="text-sm transition-colors"
-            :class="authorFilter === a ? 'text-highlighted font-medium underline underline-offset-4' : 'text-muted hover:text-highlighted'"
-            @click="authorFilter = authorFilter === a ? null : a"
-          >
-            {{ a }}
           </button>
         </div>
       </div>
@@ -428,7 +455,7 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
             {{ p.title }}
             <span v-if="p.hasTask" class="ml-2 text-[10px] text-dimmed">· {{ $t('project.hasTaskTag') }}</span>
           </button>
-          <button class="text-xs text-muted hover:text-highlighted truncate text-left" @click="pickAuthor(p.author)">{{ p.author }}</button>
+          <span class="text-xs text-muted truncate">{{ p.author }}</span>
           <span class="text-center">
             <button
               class="text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full cursor-pointer hover:opacity-70 transition"
@@ -448,6 +475,65 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
           <div class="flex gap-4">
             <button class="hover:text-highlighted disabled:opacity-30" :disabled="page === 0 || pullsPending" @click="prevPage">{{ $t('project.pagination.prev') }}</button>
             <button class="hover:text-highlighted disabled:opacity-30" :disabled="!pullsResp.hasNextPage || pullsPending" @click="nextPage">{{ $t('project.pagination.next') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 我的 PR ── -->
+    <div v-show="tab === 'mine'" class="mt-8">
+      <!-- 状态筛选 + 刷新 -->
+      <div class="flex items-center justify-between text-sm">
+        <div class="flex gap-4">
+          <button
+            v-for="s in (['open','merged','closed','all'] as const)"
+            :key="s"
+            class="transition-colors"
+            :class="myState === s ? 'text-highlighted underline underline-offset-4' : 'text-dimmed hover:text-default'"
+            @click="myState = s"
+          >
+            {{ s === 'all' ? $t('common.all') : $t('status.pr.' + s) }}
+          </button>
+        </div>
+        <UButton variant="ghost" size="xs" :loading="myPullsPending" icon="i-lucide-refresh-cw" @click="loadMyPulls()">{{ $t('project.refreshList') }}</UButton>
+      </div>
+
+      <!-- 列表 -->
+      <div class="mt-4">
+        <div class="grid grid-cols-[3.5rem_1fr_7rem_5rem_6rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
+          <span>PR</span><span>{{ $t('project.col.title') }}</span><span class="text-center">{{ $t('project.col.comments') }}</span><span class="text-center">{{ $t('project.col.status') }}</span><span></span>
+        </div>
+        <div
+          v-for="p in (myPullsResp?.pulls ?? [])"
+          :key="p.number"
+          class="grid grid-cols-[3.5rem_1fr_7rem_5rem_6rem] gap-x-4 items-center px-1 py-3 border-b border-default text-sm"
+        >
+          <button class="font-medium tabular-nums hover:underline underline-offset-4 text-left" @click="openDetail(p.number, p.taskId)">#{{ p.number }}</button>
+          <button class="truncate text-default text-left hover:text-highlighted" :title="p.title" @click="openDetail(p.number, p.taskId)">{{ p.title }}</button>
+          <span class="text-center text-xs tabular-nums" :title="$t('project.myPulls.commentsTitle')">
+            <span v-if="p.unresolvedThreads" class="text-highlighted font-medium">{{ p.unresolvedThreads }}</span><span v-if="p.unresolvedThreads" class="text-dimmed"> / </span><span :class="p.commentsCount ? 'text-toned' : 'text-dimmed'">{{ p.commentsCount || 0 }}</span>
+          </span>
+          <span class="text-center">
+            <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="pullBadge(p).cls">{{ $t(pullBadge(p).label) }}</span>
+          </span>
+          <span class="text-right">
+            <button
+              class="text-xs text-dimmed border border-default rounded px-2 py-1 cursor-not-allowed opacity-50"
+              disabled
+              :title="$t('project.myPulls.fixSoon')"
+            >{{ $t('project.myPulls.launchFix') }}</button>
+          </span>
+        </div>
+        <p v-if="!(myPullsResp?.pulls?.length)" class="py-16 text-center text-xs text-dimmed">
+          {{ myPullsPending ? $t('common.loading') : $t('project.myPulls.empty') }}
+        </p>
+
+        <!-- 分页 -->
+        <div v-if="myPullsResp && (myPullsResp.totalCount > PER_PAGE)" class="flex items-center justify-between mt-5 text-xs text-dimmed">
+          <span>{{ $t('project.pagination.summary', { total: myPullsResp.totalCount, page: myPage + 1 }) }}</span>
+          <div class="flex gap-4">
+            <button class="hover:text-highlighted disabled:opacity-30" :disabled="myPage === 0 || myPullsPending" @click="myPrevPage">{{ $t('project.pagination.prev') }}</button>
+            <button class="hover:text-highlighted disabled:opacity-30" :disabled="!myPullsResp.hasNextPage || myPullsPending" @click="myNextPage">{{ $t('project.pagination.next') }}</button>
           </div>
         </div>
       </div>

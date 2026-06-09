@@ -254,6 +254,9 @@ export type PullListItem = {
   updatedAt: string
   additions: number
   deletions: number
+  // 仅「我的 PR」列表会带上（listMyPulls）：评论/未解决讨论数，用于「待处理」提示
+  commentsCount?: number
+  unresolvedThreads?: number
 }
 
 export type PullPage = {
@@ -304,6 +307,70 @@ export async function listPulls(
     totalCount: pr.totalCount,
     hasNextPage: pr.pageInfo.hasNextPage,
     endCursor: pr.pageInfo.endCursor ?? null,
+  }
+}
+
+// 当前登录用户（用于「我的 PR」过滤）。一个会话内不会变，缓存即可。
+let _login: string | null = null
+export async function getCurrentUserLogin(): Promise<string> {
+  if (_login) return _login
+  _login = (await gh(['api', 'user', '--jq', '.login'])).trim()
+  return _login
+}
+
+// 「我的 PR」：用 Search API（pullRequests 连接不支持按 author 过滤），author:@me 取本人 PR，
+// 额外带上评论数 + 未解决讨论数，用于列表的「待处理」提示。
+const SEARCH_STATE: Record<string, string> = { open: 'is:open', merged: 'is:merged', closed: 'is:closed' }
+export async function listMyPulls(
+  repo: string,
+  state: 'open' | 'closed' | 'merged' | 'all' = 'open',
+  first = 20,
+  after: string | null = null,
+): Promise<PullPage> {
+  const stateQ = SEARCH_STATE[state] ? ` ${SEARCH_STATE[state]}` : ''
+  const search = `repo:${repo} is:pr author:@me${stateQ}`
+  const q = `query($q:String!,$first:Int!,$after:String){
+    search(query:$q, type:ISSUE, first:$first, after:$after){
+      issueCount
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        ... on PullRequest {
+          number title author{login} headRefName headRefOid isDraft state reviewDecision additions deletions updatedAt
+          comments{ totalCount }
+          reviewThreads(first:100){ nodes{ isResolved } }
+        }
+      }
+    }
+  }`
+  const args = ['api', 'graphql', '-f', `query=${q}`, '-f', `q=${search}`, '-F', `first=${first}`]
+  if (after) args.push('-f', `after=${after}`)
+  const out = await gh(args)
+  const s = JSON.parse(out).data.search
+  return {
+    pulls: (s.nodes as any[])
+      .filter((j) => j && typeof j.number === 'number')
+      .map((j) => {
+        const threads = (j.reviewThreads?.nodes as any[]) ?? []
+        const unresolvedThreads = threads.filter((t) => t && !t.isResolved).length
+        return {
+          number: j.number,
+          title: j.title ?? '',
+          author: j.author?.login ?? 'unknown',
+          branch: j.headRefName ?? '',
+          headSha: j.headRefOid ?? '',
+          state: normState(j.state, !!j.isDraft),
+          isDraft: !!j.isDraft,
+          reviewDecision: j.reviewDecision ?? '',
+          updatedAt: j.updatedAt ?? '',
+          additions: j.additions ?? 0,
+          deletions: j.deletions ?? 0,
+          commentsCount: (j.comments?.totalCount ?? 0) + threads.length,
+          unresolvedThreads,
+        }
+      }),
+    totalCount: s.issueCount,
+    hasNextPage: s.pageInfo.hasNextPage,
+    endCursor: s.pageInfo.endCursor ?? null,
   }
 }
 

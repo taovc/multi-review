@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
-import { listPulls } from '~core/github/gh'
+import { listMyPulls, listPulls } from '~core/github/gh'
 
 // 分页拉该项目仓库的 PR（GraphQL cursor），标注哪些已建审核任务。
+// author=@me 时只拉本人 PR（Search API），并带上评论/未解决讨论数（「我的 PR」标签页用）。
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const query = getQuery(event)
@@ -12,6 +13,7 @@ export default defineEventHandler(async (event) => {
     : 'open'
   const first = Math.min(Number(query.first) || 20, 50)
   const after = (query.after as string) || null
+  const mine = query.author === '@me'
 
   const d = db()
   const project = d.select().from(schema.projects).where(eq(schema.projects.id, id)).get()
@@ -19,7 +21,9 @@ export default defineEventHandler(async (event) => {
 
   let page
   try {
-    page = await listPulls(project.repo, validState, first, after)
+    page = mine
+      ? await listMyPulls(project.repo, validState, first, after)
+      : await listPulls(project.repo, validState, first, after)
   } catch (e) {
     throw createError({ statusCode: 502, statusMessage: (e as Error).message })
   }

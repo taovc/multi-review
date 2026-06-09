@@ -65,6 +65,7 @@
   "project": {
     "tabs": {
       "pulls": "全部 PR",
+      "mine": "我的 PR",
       "tasks": "审核任务",
       "config": "项目配置"
     },
@@ -73,7 +74,14 @@
       "author": "作者",
       "status": "状态",
       "review": "审核",
-      "severity": "严重度"
+      "severity": "严重度",
+      "comments": "评论"
+    },
+    "myPulls": {
+      "launchFix": "发起修复",
+      "fixSoon": "即将上线",
+      "empty": "没有你的 PR",
+      "commentsTitle": "未解决讨论 / 评论总数"
     },
     "selectAllReviewable": "全选可审",
     "reviewSelected": "审核选中 ({count})",
