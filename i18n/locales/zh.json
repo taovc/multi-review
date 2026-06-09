@@ -326,5 +326,36 @@
       "repliedNoNote": "仅回复·未写回应 note",
       "retracted": "已撤回"
     }
+  },
+  "fix": {
+    "modal": {
+      "title": "发起修复",
+      "desc": "选择要在该 PR 上执行的步骤。",
+      "fix": "按评论修复",
+      "simplify": "精简代码",
+      "tests": "跑测试",
+      "testsUI": "UI 测试（Chrome DevTools）",
+      "slow": "较慢",
+      "experimental": "实验性",
+      "launch": "开始"
+    },
+    "drawer": {
+      "title": "修复 PR",
+      "log": "日志",
+      "starting": "启动中…",
+      "tests": "测试",
+      "testsPassed": "测试通过",
+      "diff": "改动预览",
+      "noChanges": "无改动",
+      "truncated": "diff 已截断 —— 完整内容见 worktree。"
+    },
+    "result": {
+      "push": "推送",
+      "pushing": "推送中…",
+      "pushed": "已推送到分支",
+      "pushFailed": "推送失败",
+      "discard": "丢弃",
+      "discarding": "丢弃中…"
+    }
   }
 }

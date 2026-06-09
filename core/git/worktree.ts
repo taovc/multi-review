@@ -53,9 +53,12 @@ export async function prepareWorktree(opts: {
   reviewId: string
   branch: string
   defaultBranch: string
+  // 审核默认 merge 默认分支再看 diff；「修复」要 push，传 false 不 merge → 推上去的提交才干净。
+  mergeDefault?: boolean
   onStep?: (msg: string) => void
 }): Promise<Worktree> {
   const { localPath, reposDir, reviewId, branch, defaultBranch, onStep } = opts
+  const mergeDefault = opts.mergeDefault !== false
   if (!localPath || !existsSync(localPath)) {
     throw new Error(`项目未配置有效的本地 clone 路径：${localPath || '(空)'}`)
   }
@@ -93,15 +96,17 @@ export async function prepareWorktree(opts: {
   })
 
   // merge 在各自 worktree 内进行（不抢主仓 refs），可并发，放锁外
-  onStep?.(`merge origin/${defaultBranch}`)
-  try {
-    await git(wtPath, ['merge', '--no-edit', `origin/${defaultBranch}`])
-  } catch (e) {
-    onStep?.('merge 冲突，改用 PR head 原样审核')
+  if (mergeDefault) {
+    onStep?.(`merge origin/${defaultBranch}`)
     try {
-      await git(wtPath, ['merge', '--abort'])
-    } catch {
-      /* ignore */
+      await git(wtPath, ['merge', '--no-edit', `origin/${defaultBranch}`])
+    } catch (e) {
+      onStep?.('merge 冲突，改用 PR head 原样审核')
+      try {
+        await git(wtPath, ['merge', '--abort'])
+      } catch {
+        /* ignore */
+      }
     }
   }
 

@@ -326,5 +326,36 @@
       "repliedNoNote": "reply only · no response note",
       "retracted": "retracted"
     }
+  },
+  "fix": {
+    "modal": {
+      "title": "Run a fix",
+      "desc": "Pick the steps to run on this PR.",
+      "fix": "Fix from review comments",
+      "simplify": "Simplify the code",
+      "tests": "Run tests",
+      "testsUI": "UI tests (Chrome DevTools)",
+      "slow": "slower",
+      "experimental": "experimental",
+      "launch": "Launch"
+    },
+    "drawer": {
+      "title": "Fixing PR",
+      "log": "Log",
+      "starting": "Starting…",
+      "tests": "Tests",
+      "testsPassed": "Tests passed",
+      "diff": "Proposed changes",
+      "noChanges": "No changes",
+      "truncated": "Diff truncated — see the worktree for full detail."
+    },
+    "result": {
+      "push": "Push",
+      "pushing": "Pushing…",
+      "pushed": "Pushed to branch",
+      "pushFailed": "Push failed",
+      "discard": "Discard",
+      "discarding": "Discarding…"
+    }
   }
 }

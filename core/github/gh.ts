@@ -242,6 +242,33 @@ export async function fetchPrDiff(repo: string, prNumber: number): Promise<{ dif
   return { diff: out, truncated: false }
 }
 
+export type ReviewComment = {
+  id: number
+  path: string
+  line: number | null
+  body: string
+  author: string
+  isBot: boolean
+  inReplyToId: number | null
+  createdAt: string
+}
+
+// PR 的行级 review 评论（timeline 不含这些）。喂给「修复」agent 作为整改依据。
+export async function fetchReviewComments(repo: string, prNumber: number): Promise<ReviewComment[]> {
+  const out = await gh(['api', `repos/${repo}/pulls/${prNumber}/comments`, '--paginate'])
+  const arr = JSON.parse(out) as any[]
+  return arr.map((c) => ({
+    id: c.id,
+    path: c.path ?? '',
+    line: c.line ?? c.original_line ?? null,
+    body: c.body ?? '',
+    author: c.user?.login ?? '',
+    isBot: c.user?.type === 'Bot' || /\[bot\]$/i.test(c.user?.login ?? ''),
+    inReplyToId: c.in_reply_to_id ?? null,
+    createdAt: c.created_at ?? '',
+  }))
+}
+
 export type PullListItem = {
   number: number
   title: string

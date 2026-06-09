@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
 
 // 项目：一个 repo + 一套方法学（review 模板）
 export const projects = sqliteTable('projects', {
@@ -148,6 +148,36 @@ export const events = sqliteTable('events', {
   message: text('message'),
 })
 
+// 一次「修复我的 PR」= 一行。从一个 PR 发起（不一定有 review），独立于 reviews。
+// agent 改代码 → Node 本地 commit（不 push）→ 用户看 diff → 点「推送」才 push。
+export const fixes = sqliteTable('fixes', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  prNumber: integer('pr_number').notNull(),
+  branch: text('branch').notNull(),
+  steps: text('steps').notNull(), // JSON: { fix, simplify, tests, testsUI }
+  status: text('status', {
+    enum: ['queued', 'running', 'ready', 'pushing', 'pushed', 'error', 'discarded'],
+  })
+    .notNull()
+    .default('queued'),
+  stage: text('stage'), // 当前细粒度阶段文案（实时展示）
+  worktreePath: text('worktree_path'), // 保留到 push/discard 才清
+  baseHeadSha: text('base_head_sha'), // 改动前的 PR head（diff 基线）
+  fixHeadSha: text('fix_head_sha'), // 本地 commit 后的 head
+  filesChanged: integer('files_changed'),
+  additions: integer('additions'),
+  deletions: integer('deletions'),
+  testsResult: text('tests_result'), // passed/failed/skipped + 摘要
+  costUsd: real('cost_usd'),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  pushedAt: text('pushed_at'),
+})
+
 export type Project = typeof projects.$inferSelect
 export type Skill = typeof skills.$inferSelect
 export type Review = typeof reviews.$inferSelect
@@ -155,3 +185,4 @@ export type Finding = typeof findings.$inferSelect
 export type FindingRecheck = typeof findingRechecks.$inferSelect
 export type Post = typeof posts.$inferSelect
 export type ReviewEvent = typeof events.$inferSelect
+export type Fix = typeof fixes.$inferSelect

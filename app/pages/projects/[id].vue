@@ -187,6 +187,29 @@ function myPrevPage() {
   }
 }
 
+// ── 修复我的 PR ───────────────────────────────────────────
+const fixModalOpen = ref(false)
+const fixDrawerOpen = ref(false)
+const fixTargetPr = ref<number | null>(null)
+const currentFixId = ref<string | null>(null)
+function openFixModal(pr: number) {
+  fixTargetPr.value = pr
+  fixModalOpen.value = true
+}
+async function onFixLaunch(steps: { fix: boolean; simplify: boolean; tests: boolean; testsUI: boolean }) {
+  if (!fixTargetPr.value) return
+  try {
+    const res = await $fetch<{ fixId: string }>(`/api/projects/${projectId.value}/pulls/${fixTargetPr.value}/fix`, {
+      method: 'POST',
+      body: { steps },
+    })
+    currentFixId.value = res.fixId
+    fixDrawerOpen.value = true
+  } catch (e: any) {
+    msg.value = e?.data?.statusMessage || e?.message || t('common.failed')
+  }
+}
+
 // ── 审核任务 ──────────────────────────────────────────────
 const { data: tasks, refresh: refreshTasks } = await useFetch<ReviewRow[]>('/api/reviews', {
   query: { projectId },
@@ -518,9 +541,8 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
           </span>
           <span class="text-right">
             <button
-              class="text-xs text-dimmed border border-default rounded px-2 py-1 cursor-not-allowed opacity-50"
-              disabled
-              :title="$t('project.myPulls.fixSoon')"
+              class="text-xs text-default border border-default rounded px-2 py-1 hover:bg-elevated transition-colors"
+              @click="openFixModal(p.number)"
             >{{ $t('project.myPulls.launchFix') }}</button>
           </span>
         </div>
@@ -593,5 +615,7 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
     </div>
 
     <PrDetailDrawer v-model:open="drawerOpen" :project-id="projectId" :pr-number="drawerPr" :review-id="drawerReviewId" @task-created="onTaskCreated" />
+    <FixModal v-model:open="fixModalOpen" @launch="onFixLaunch" />
+    <FixDrawer v-model:open="fixDrawerOpen" :fix-id="currentFixId" @done="loadMyPulls" />
   </div>
 </template>
