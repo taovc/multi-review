@@ -91,6 +91,7 @@
     "hasTaskTag": "已建任务",
     "clearFilter": "取消筛选",
     "filterByStatus": "按此状态筛选",
+    "filterByAuthor": "按作者筛选",
     "noPulls": "没有符合条件的 PR",
     "noTasks": "还没有审核任务。去「全部 PR」勾选 PR 开始。",
     "authorUpdated": "作者已更新",

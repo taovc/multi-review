@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Project, Review } from '~core/db/schema'
+import type { DropdownMenuItem } from '@nuxt/ui'
 
 type ReviewRow = Review & { counts: { High: number; Medium: number; Low: number } }
 type Pull = {
@@ -54,6 +55,7 @@ async function onTaskCreated() {
 const PER_PAGE = 20
 const prState = ref<'open' | 'merged' | 'closed' | 'all'>('open')
 const statusFilter = ref<string | null>(null) // 点状态徽章筛选当前列表，再点取消
+const authorFilter = ref<string | null>(null) // 表头「作者」下拉筛选当前页，再选「全部」取消
 type PullsResp = { pulls: Pull[]; totalCount: number; hasNextPage: boolean; endCursor: string | null }
 const pullsResp = ref<PullsResp | null>(null)
 const pullsPending = ref(false)
@@ -79,6 +81,7 @@ function resetAndLoad() {
   cursors.value = [null]
   selected.value = new Set()
   statusFilter.value = null
+  authorFilter.value = null
   loadPulls()
 }
 watch(prState, resetAndLoad)
@@ -103,8 +106,25 @@ const visiblePulls = computed(() => {
   let list = pullsResp.value?.pulls ?? []
   // 「进行中」也显示草稿 PR（带「草稿」徽章），不再过滤掉
   if (statusFilter.value) list = list.filter((p) => pullKey(p) === statusFilter.value)
+  if (authorFilter.value) list = list.filter((p) => p.author === authorFilter.value)
   return list
 })
+
+// 当前页出现的作者（去重 + 排序），作为表头下拉的可选项
+const authors = computed(() => {
+  const set = new Set<string>()
+  for (const p of pullsResp.value?.pulls ?? []) if (p.author) set.add(p.author)
+  return [...set].sort((a, b) => a.localeCompare(b))
+})
+// 表头「作者」下拉项：「全部」+ 每位作者，当前选中打勾
+const authorItems = computed<DropdownMenuItem[]>(() => [
+  { label: t('common.all'), icon: !authorFilter.value ? 'i-lucide-check' : undefined, onSelect: () => { authorFilter.value = null } },
+  ...authors.value.map((a) => ({
+    label: a,
+    icon: authorFilter.value === a ? 'i-lucide-check' : undefined,
+    onSelect: () => { authorFilter.value = a },
+  })),
+])
 
 const selected = ref<Set<number>>(new Set())
 function toggle(n: number) {
@@ -458,7 +478,18 @@ function sevCls(n: number, level: 'h' | 'm' | 'l') {
       <!-- PR 列表 -->
       <div class="mt-4">
         <div class="grid grid-cols-[1.5rem_3.5rem_1fr_8rem_5rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
-          <span></span><span>PR</span><span>{{ $t('project.col.title') }}</span><span>{{ $t('project.col.author') }}</span><span class="text-center">{{ $t('project.col.status') }}</span>
+          <span></span><span>PR</span><span>{{ $t('project.col.title') }}</span>
+          <UDropdownMenu :items="authorItems" :content="{ align: 'start' }">
+            <button
+              class="inline-flex items-center gap-1 max-w-full hover:text-default transition-colors"
+              :class="authorFilter ? 'text-highlighted normal-case tracking-normal' : 'text-dimmed'"
+              :title="$t('project.filterByAuthor')"
+            >
+              <span class="truncate">{{ authorFilter || $t('project.col.author') }}</span>
+              <UIcon name="i-lucide-chevron-down" class="size-3 shrink-0" />
+            </button>
+          </UDropdownMenu>
+          <span class="text-center">{{ $t('project.col.status') }}</span>
         </div>
         <div
           v-for="p in visiblePulls"

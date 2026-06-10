@@ -91,6 +91,7 @@
     "hasTaskTag": "task created",
     "clearFilter": "Clear filter",
     "filterByStatus": "Filter by this status",
+    "filterByAuthor": "Filter by author",
     "noPulls": "No matching PRs",
     "noTasks": "No review tasks yet. Go to “All PRs” and check some PRs to start.",
     "authorUpdated": "Author updated",

@@ -91,6 +91,7 @@
     "hasTaskTag": "tâche créée",
     "clearFilter": "Retirer le filtre",
     "filterByStatus": "Filtrer par ce statut",
+    "filterByAuthor": "Filtrer par auteur",
     "noPulls": "Aucune PR correspondante",
     "noTasks": "Aucune tâche de revue. Allez dans « Toutes les PR » et cochez des PR pour commencer.",
     "authorUpdated": "Auteur a mis à jour",
