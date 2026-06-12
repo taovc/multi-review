@@ -28,11 +28,15 @@ watch(logLines, () => {
   if (showLog.value) nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
 }, { deep: true })
 const busy = ref('')
+const preview = ref<any>(null) // 发评论的 dry-run 预览（提前定义：卸载守卫 / 切 PR 清理要用）
 let es: EventSource | null = null
+let alive = true // 组件卸载后忽略 in-flight $fetch 的回写（生成预览时关 drawer，请求还在跑）
 
 async function load() {
   if (!rid.value) return
-  data.value = await $fetch<ReviewData>(`/api/reviews/${rid.value}`)
+  const d = await $fetch<ReviewData>(`/api/reviews/${rid.value}`)
+  if (!alive) return
+  data.value = d
   emit('changed') // 通知页面：这条 review 状态/内容可能变了 → 刷新任务列表
   // 用历史事件回填日志（这样打开已完成的任务也能看到 agent 当时一行行干了什么）
   if (!logLines.value.length && data.value.events?.length) {
@@ -59,7 +63,7 @@ function openSSE() {
   }
 }
 watch(rid, (v) => { if (v) { load(); openSSE() } }, { immediate: true })
-onBeforeUnmount(() => es?.close())
+onBeforeUnmount(() => { alive = false; es?.close() })
 
 // 审核状态文案：存 i18n 键，缺失回退原始 status 码
 const STATUS: Record<string, string> = {
@@ -125,20 +129,22 @@ function saveInstruction() {
   }, 600)
 }
 
-// 发评论：先 dry-run 预览，再确认发布
-const preview = ref<any>(null)
+// 发评论：先 dry-run 预览，再确认发布。卸载后（drawer 关了）忽略回写，别串到下一个 PR。
 async function doPreview(force = false) {
   busy.value = 'preview'
-  try { preview.value = (await $fetch<{ assembled: any }>(`/api/reviews/${rid.value}/post`, { method: 'POST', body: { dryRun: true, force } })).assembled }
-  catch (e: any) { live.value = e?.data?.statusMessage || t('review.previewFailed') }
+  try {
+    const res = await $fetch<{ assembled: any }>(`/api/reviews/${rid.value}/post`, { method: 'POST', body: { dryRun: true, force } })
+    if (alive) preview.value = res.assembled
+  } catch (e: any) { if (alive) live.value = e?.data?.statusMessage || t('review.previewFailed') }
   finally { busy.value = '' }
 }
 async function confirmPost() {
   busy.value = 'post'
   try {
     const res = await $fetch<{ url: string }>(`/api/reviews/${rid.value}/post`, { method: 'POST', body: { dryRun: false } })
+    if (!alive) return
     preview.value = null; live.value = t('review.published', { url: res.url }); await load()
-  } catch (e: any) { live.value = e?.data?.statusMessage || t('review.publishFailed') }
+  } catch (e: any) { if (alive) live.value = e?.data?.statusMessage || t('review.publishFailed') }
   finally { busy.value = '' }
 }
 
