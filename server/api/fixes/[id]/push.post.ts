@@ -2,6 +2,8 @@ import { eq, and, inArray } from 'drizzle-orm'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 import { fetchReviewsCount } from '~core/github/gh'
@@ -37,6 +39,19 @@ export default defineEventHandler(async (event) => {
   const git = (args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024 })
   const now = () => new Date().toISOString()
 
+  // 合并进行中？（agent 跑了 `git merge --no-commit` 解完冲突，留下 MERGE_HEAD）。
+  // 是的话提交信息应保留 git 准备好的「Merge ... into HEAD」，而不是 AI 摘要 diff。
+  const mergeState = async (): Promise<{ merging: boolean; msg: string }> => {
+    const merging = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true).catch(() => false)
+    if (!merging) return { merging: false, msg: '' }
+    let msg = ''
+    try {
+      const p = (await git(['rev-parse', '--git-path', 'MERGE_MSG'])).stdout.trim()
+      msg = (await readFile(resolve(wt, p), 'utf8')).trim()
+    } catch { /* 读不到就空，提交时用 --no-edit 让 git 自己填合并信息 */ }
+    return { merging: true, msg }
+  }
+
   // 有可上传的东西吗：worktree 脏（未提交改动）或本地 HEAD 领先 origin/<branch>（已提交未推，含 Claude 自己提交的）
   const { dirty, ahead } = await hasUploadable(wt, fix.branch)
   if (!dirty && !ahead) throw createError({ statusCode: 400, statusMessage: '没有可上传的改动' })
@@ -47,9 +62,11 @@ export default defineEventHandler(async (event) => {
       fixChangesDiff(wt).catch(() => ({ diff: '', truncated: false })),
       fixChangesStat(wt).catch(() => ({ filesChanged: 0, additions: 0, deletions: 0 })),
     ])
-    const genMsg = dirty ? await genCommitMessage(cfg.translateModel as string, diff) : ''
+    // 合并提交：用 git 的合并信息，省掉 AI 生成；普通改动：AI 摘要 diff
+    const { merging, msg: mergeMsg } = await mergeState()
+    const genMsg = !dirty ? '' : merging ? (mergeMsg || `Merge into ${fix.branch}`) : await genCommitMessage(cfg.translateModel as string, diff)
     // needsCommit=false：没有未提交改动，只是本地 HEAD 领先远端（如上次 push 失败）→ 直接重推，不需要 commit message
-    return { dryRun: true, diff, truncated, message: genMsg, needsCommit: dirty, ...stat }
+    return { dryRun: true, diff, truncated, message: genMsg, needsCommit: dirty, isMerge: merging, ...stat }
   }
 
   // ── 真跑：CAS 抢锁 → pushing，commit（脏才提交）+ push ──
@@ -62,8 +79,10 @@ export default defineEventHandler(async (event) => {
   if (!claimed.changes) throw createError({ statusCode: 409, statusMessage: '该修复正在上传或状态已变，请刷新' })
 
   try {
+    const { merging } = await mergeState()
     if (project.provider === 'codex') {
-      if (dirty) {
+      // 合并带进来的改动来自基础分支(非 codex 自己写) → 跳过保护文件拦截；普通改动仍拦。
+      if (dirty && !merging) {
         const { stdout: porcelain } = await git(['status', '--porcelain'])
         assertCodexCommitSafe(porcelain)
       }
@@ -80,13 +99,20 @@ export default defineEventHandler(async (event) => {
       }
     }
     if (dirty) {
-      let msg = (message || '').trim()
-      if (!msg) {
-        const { diff } = await fixChangesDiff(wt).catch(() => ({ diff: '' }))
-        msg = await genCommitMessage(cfg.translateModel as string, diff)
-      }
       await git(['add', '-A'])
-      await git(['commit', '-m', msg])
+      const userMsg = (message || '').trim()
+      if (userMsg) {
+        // 用户在预览里确认/编辑过的信息（合并时默认就是 git 的合并信息）。
+        // 合并中 commit 仍会生成双亲的 merge commit，-m 只决定信息。
+        await git(['commit', '-m', userMsg])
+      } else {
+        if (merging) {
+          await git(['commit', '--no-edit']) // 用 git 准备好的 MERGE_MSG（Merge ... into HEAD）
+        } else {
+          const { diff } = await fixChangesDiff(wt).catch(() => ({ diff: '' }))
+          await git(['commit', '-m', await genCommitMessage(cfg.translateModel as string, diff)])
+        }
+      }
     }
     const { stdout: head } = await git(['rev-parse', 'HEAD'])
     const headSha = head.trim()
