@@ -252,7 +252,8 @@ const filterDims = computed(() => [
     </div>
 
     <!-- Tabs：只剩 全部 PR + 项目配置 -->
-    <div class="mt-8 sm:mt-10 flex gap-6 sm:gap-8 border-b border-default text-sm overflow-x-auto">
+    <!-- overflow-y-hidden：overflow-x-auto 会把 y 轴也算成 auto，叠加 tab 的 -mb-px 会冒出多余的竖向滚动条 -->
+    <div class="mt-8 sm:mt-10 flex gap-6 sm:gap-8 border-b border-default text-sm overflow-x-auto overflow-y-hidden">
       <button
         class="pb-3 -mb-px border-b-2 transition-colors"
         :class="tab === 'pulls' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'"
