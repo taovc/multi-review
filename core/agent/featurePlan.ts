@@ -107,6 +107,7 @@ export type FeaturePlanOptions = {
   description: string // 需求原文
   instruction?: string // 本轮用户消息（细化 / 对上一版方案的反馈）；首轮可空
   onTool?: (name: string, info: string) => void
+  onText?: (chunk: string) => void // 调研阶段的思考/叙述文字流（实时展示，不落库）
 }
 
 export function buildFeaturePlanPrompt(opts: FeaturePlanOptions): string {
@@ -155,7 +156,7 @@ async function runClaudePlan(opts: FeaturePlanOptions): Promise<{ plan: Plan; co
       const content = (msg as any).message?.content
       if (Array.isArray(content)) {
         for (const b of content) {
-          if (b.type === 'text') text += b.text
+          if (b.type === 'text') { text += b.text; opts.onText?.(b.text) }
           else if (b.type === 'tool_use') opts.onTool?.(b.name, String(b.input?.command || b.input?.pattern || b.input?.file_path || '').slice(0, 80))
         }
       }

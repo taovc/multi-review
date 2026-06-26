@@ -69,6 +69,7 @@ export async function runFeaturePlanJob(ctx: FeaturePlanJobCtx, message: string)
       description: t?.description || '',
       instruction: message || undefined,
       onTool: (n, i) => emit('tool', `${n} ${i}`),
+      onText: (chunk) => emit('text', chunk), // 调研阶段思考文字流（实时,不落库）→ 抽屉 liveAssistant
     })
     const text = renderPlanText(plan) || raw.slice(0, 2000)
     db.update(schema.featureTurns).set({ content: text, status: 'done' }).where(eq(schema.featureTurns.id, asstId)).run()
