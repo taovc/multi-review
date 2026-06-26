@@ -218,6 +218,63 @@ export const fixEvents = sqliteTable('fix_events', {
   message: text('message'),
 })
 
+// ── Feature 开发闭环：描述需求 → 只读分析出方案(plan) → 人批准 → 新分支 worktree 实现 → 开 PR。
+// 一个 feature task = 一行。plan_json 存最新方案；decisions 存用户对决策点的答复；
+// status：analyzing 分析中 / planned 方案待批 / building 实现中 / built 待开 PR / opened 已开 PR / error。
+export const featureTasks = sqliteTable('feature_tasks', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  title: text('title'), // 首条需求摘要，列表展示
+  description: text('description').notNull(), // 需求原文 / 贴进来的 issue（不可信输入，只作需求来源）
+  provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
+  model: text('model'),
+  lang: text('lang').notNull().default('en'),
+  status: text('status', {
+    enum: ['analyzing', 'planned', 'building', 'built', 'opened', 'error'],
+  })
+    .notNull()
+    .default('analyzing'),
+  planJson: text('plan_json'), // 最新方案(结构化 JSON 字符串)
+  decisions: text('decisions'), // 用户对决策点的答复(JSON 字符串)
+  baseBranch: text('base_branch'), // 从哪个分支拉新分支(默认 project.defaultBranch)
+  branch: text('branch'), // 实现阶段创建的新功能分支
+  worktreePath: text('worktree_path'),
+  baseHeadSha: text('base_head_sha'),
+  prNumber: integer('pr_number'),
+  prUrl: text('pr_url'),
+  sessionId: text('session_id'), // claude 续聊 id
+  codexSessionId: text('codex_session_id'), // codex thread id；各存各的不混用
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})
+
+// feature task 的对话轮（append-only；阶段1 产出方案、阶段2 实现都在这条对话里）。
+export const featureTurns = sqliteTable('feature_turns', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id')
+    .notNull()
+    .references(() => featureTasks.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+  content: text('content').notNull().default(''),
+  status: text('status', { enum: ['streaming', 'done', 'error', 'stopped'] }).notNull().default('done'),
+  createdAt: text('created_at').notNull(),
+})
+
+// feature task 的进度事件（喂 SSE + 回填历史日志）。
+export const featureEvents = sqliteTable('feature_events', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id')
+    .notNull()
+    .references(() => featureTasks.id, { onDelete: 'cascade' }),
+  ts: text('ts').notNull(),
+  kind: text('kind').notNull(),
+  message: text('message'),
+})
+
 export type Project = typeof projects.$inferSelect
 export type Skill = typeof skills.$inferSelect
 export type Review = typeof reviews.$inferSelect
@@ -228,3 +285,6 @@ export type ReviewEvent = typeof events.$inferSelect
 export type Fix = typeof fixes.$inferSelect
 export type FixTurn = typeof fixTurns.$inferSelect
 export type FixEvent = typeof fixEvents.$inferSelect
+export type FeatureTask = typeof featureTasks.$inferSelect
+export type FeatureTurn = typeof featureTurns.$inferSelect
+export type FeatureEvent = typeof featureEvents.$inferSelect

@@ -229,6 +229,51 @@ function ensureSchema(sqlite: Database.Database) {
       message TEXT
     );
     CREATE INDEX IF NOT EXISTS fix_events_fix_idx ON fix_events(fix_id);
+
+    CREATE TABLE IF NOT EXISTS feature_tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT,
+      description TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'claude',
+      model TEXT,
+      lang TEXT NOT NULL DEFAULT 'en',
+      status TEXT NOT NULL DEFAULT 'analyzing',
+      plan_json TEXT,
+      decisions TEXT,
+      base_branch TEXT,
+      branch TEXT,
+      worktree_path TEXT,
+      base_head_sha TEXT,
+      pr_number INTEGER,
+      pr_url TEXT,
+      session_id TEXT,
+      codex_session_id TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS feature_tasks_project_idx ON feature_tasks(project_id);
+
+    CREATE TABLE IF NOT EXISTS feature_turns (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES feature_tasks(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'done',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS feature_turns_task_idx ON feature_turns(task_id);
+
+    CREATE TABLE IF NOT EXISTS feature_events (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES feature_tasks(id) ON DELETE CASCADE,
+      ts TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      message TEXT
+    );
+    CREATE INDEX IF NOT EXISTS feature_events_task_idx ON feature_events(task_id);
   `)
 }
 
