@@ -25,7 +25,6 @@ const chatting = computed(() => {
   const ts = data.value?.turns ?? []
   return ts.length > 0 && ts[ts.length - 1]!.role === 'assistant' && ts[ts.length - 1]!.status === 'streaming'
 })
-const cwd = computed(() => data.value?.session.cwd || '~')
 
 function notify(msg: string, ok = false) {
   toast.add({ title: msg, color: ok ? 'success' : 'error', icon: ok ? 'i-lucide-check' : 'i-lucide-triangle-alert' })
@@ -227,7 +226,7 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
             <button class="text-dimmed hover:text-highlighted" @click="confirming = ''">{{ $t('common.cancel') }}</button>
           </template>
           <button v-else-if="sessionId" class="px-2 py-1 rounded border border-default text-error hover:bg-muted shrink-0" @click="confirming = 'delete'">{{ $t('common.delete') }}</button>
-          <span class="font-mono text-dimmed truncate max-w-[14rem] shrink-0" :title="cwd">{{ cwd }}</span>
+          <span v-if="data?.session.cwd" class="font-mono text-dimmed truncate max-w-[14rem] shrink-0" :title="data.session.cwd">{{ data.session.cwd }}</span>
         </div>
         <label class="shrink-0 flex items-center gap-2 text-[11px] mb-2 cursor-pointer">
           <input v-model="allowDanger" type="checkbox" class="accent-error" />
