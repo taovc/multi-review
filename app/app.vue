@@ -92,6 +92,9 @@ async function createProject() {
     <!-- 全局确认弹窗（替代 window.confirm）-->
     <AppConfirm />
 
+    <!-- 全局「啥都能干」助手（右下角悬浮按钮 + 抽屉）-->
+    <GlobalChat />
+
     <!-- 创建项目 -->
     <BaseModal v-model:open="showCreate" :title="$t('layout.createProject')">
       <div class="space-y-4">

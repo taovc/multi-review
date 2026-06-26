@@ -445,5 +445,29 @@
     "deleting": "Deleting…",
     "worktreeDeleted": "Local worktree deleted",
     "chatHint": "Chat here to work on the PR — ask the AI to read the code and make changes. No need to run a batch fix first."
+  },
+  "global": {
+    "title": "Assistant",
+    "fabTitle": "AI assistant — do anything",
+    "placeholder": "Ask me anything… type / for commands",
+    "send": "Send",
+    "newSession": "New chat",
+    "history": "History",
+    "empty": "Start a conversation",
+    "thinking": "Working",
+    "untitled": "Untitled chat",
+    "historyEmpty": "No past chats yet",
+    "deleteSession": "Delete chat",
+    "confirmDelete": "Delete this chat? This cannot be undone.",
+    "dangerNote": "⚠️ Full-access mode: can run any command and edit any file on this machine",
+    "copied": "Copied",
+    "cdSet": "Will switch to {path} on the next message",
+    "cdPending": "Pending working dir: {path}",
+    "cmd": {
+      "clear": "Start a new chat (clear context)",
+      "resume": "Browse past chats",
+      "copy": "Copy the last reply",
+      "cd": "/cd <path> — change working directory"
+    }
   }
 }

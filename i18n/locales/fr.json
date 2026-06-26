@@ -445,5 +445,29 @@
     "deleting": "Suppression…",
     "worktreeDeleted": "Espace de travail local supprimé",
     "chatHint": "Discutez ici pour travailler sur la PR — demandez à l'IA de lire le code et de le modifier. Pas besoin de lancer une correction par lot d'abord."
+  },
+  "global": {
+    "title": "Assistant",
+    "fabTitle": "Assistant IA — tout faire",
+    "placeholder": "Demandez-moi n'importe quoi… tapez / pour les commandes",
+    "send": "Envoyer",
+    "newSession": "Nouveau chat",
+    "history": "Historique",
+    "empty": "Démarrer une conversation",
+    "thinking": "En cours",
+    "untitled": "Chat sans titre",
+    "historyEmpty": "Aucun chat passé",
+    "deleteSession": "Supprimer le chat",
+    "confirmDelete": "Supprimer ce chat ? Action irréversible.",
+    "dangerNote": "⚠️ Mode plein accès : peut exécuter n'importe quelle commande et modifier n'importe quel fichier sur cette machine",
+    "copied": "Copié",
+    "cdSet": "Basculera vers {path} au prochain message",
+    "cdPending": "Répertoire de travail en attente : {path}",
+    "cmd": {
+      "clear": "Démarrer un nouveau chat (vider le contexte)",
+      "resume": "Parcourir les chats passés",
+      "copy": "Copier la dernière réponse",
+      "cd": "/cd <chemin> — changer de répertoire de travail"
+    }
   }
 }

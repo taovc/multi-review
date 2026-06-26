@@ -445,5 +445,29 @@
     "deleting": "删除中…",
     "worktreeDeleted": "本地工作区已删除",
     "chatHint": "直接在这聊就能干活——让 AI 读代码、改动、做后续精修，不必先跑批量修复。"
+  },
+  "global": {
+    "title": "助手",
+    "fabTitle": "AI 助手 — 啥都能干",
+    "placeholder": "问我任何事… 输入 / 看命令",
+    "send": "发送",
+    "newSession": "新对话",
+    "history": "历史",
+    "empty": "开始一段对话吧",
+    "thinking": "处理中",
+    "untitled": "未命名对话",
+    "historyEmpty": "还没有历史对话",
+    "deleteSession": "删除对话",
+    "confirmDelete": "删除这段对话？不可恢复。",
+    "dangerNote": "⚠️ 全权限模式：可在本机执行任意命令、改任意文件",
+    "copied": "已复制",
+    "cdSet": "下次将切到目录 {path}",
+    "cdPending": "待切换工作目录：{path}",
+    "cmd": {
+      "clear": "开一段新对话（清空上下文）",
+      "resume": "查看历史对话",
+      "copy": "复制上一条回复",
+      "cd": "/cd <路径> 切换工作目录"
+    }
   }
 }
