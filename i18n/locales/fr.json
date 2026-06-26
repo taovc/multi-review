@@ -468,6 +468,8 @@
       "resume": "Parcourir les chats passés",
       "copy": "Copier la dernière réponse",
       "cd": "/cd <chemin> — changer de répertoire de travail"
-    }
+    },
+    "dangerOff": "Commandes dangereuses bloquées (rm -rf / git push à autoriser)",
+    "dangerOn": "⚠️ Commandes dangereuses AUTORISÉES (rm -rf / git push non bloqués)"
   }
 }

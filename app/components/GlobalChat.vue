@@ -16,6 +16,7 @@ const view = ref<'chat' | 'history'>('chat')
 const input = ref('')
 const liveAssistant = ref('')
 const busy = ref(false)
+const allowDanger = ref(false) // 「允许危险命令」开关 → 放行 PreToolUse 守卫
 let es: EventSource | null = null
 
 const chatting = computed(() => {
@@ -144,7 +145,7 @@ async function send() {
   liveAssistant.value = ''
   try {
     const id = await ensureSession()
-    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined } })
+    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: allowDanger.value } })
     pendingCwd.value = null
     await load()
   } catch (e: any) {
@@ -202,7 +203,10 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
           <button v-if="sessionId" class="px-2 py-1 rounded border border-default text-error hover:bg-muted" @click="deleteSession">{{ $t('common.delete') }}</button>
           <span class="ml-auto font-mono text-dimmed truncate max-w-[16rem]" :title="cwd">{{ cwd }}</span>
         </div>
-        <p class="shrink-0 text-[11px] text-warning mb-2">{{ $t('global.dangerNote') }}</p>
+        <label class="shrink-0 flex items-center gap-2 text-[11px] mb-2 cursor-pointer">
+          <input v-model="allowDanger" type="checkbox" class="accent-error" />
+          <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
+        </label>
 
         <!-- 历史列表 -->
         <div v-if="view === 'history'" class="flex-1 min-h-0 overflow-y-auto">

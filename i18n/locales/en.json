@@ -468,6 +468,8 @@
       "resume": "Browse past chats",
       "copy": "Copy the last reply",
       "cd": "/cd <path> — change working directory"
-    }
+    },
+    "dangerOff": "Dangerous commands blocked (rm -rf / git push need allow)",
+    "dangerOn": "⚠️ Dangerous commands ALLOWED (rm -rf / git push not blocked)"
   }
 }

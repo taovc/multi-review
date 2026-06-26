@@ -47,14 +47,14 @@ export type StreamMsg = Record<string, any>
 export function runClaudeStream(
   args: string[],
   // onSpawn 暴露子进程句柄给调用方（M2 停止按钮要 kill 它）
-  opts: { input?: string; cwd?: string; timeout?: number; onEvent?: (msg: StreamMsg) => void; onSpawn?: (cp: import('node:child_process').ChildProcess) => void } = {},
+  opts: { input?: string; cwd?: string; timeout?: number; env?: Record<string, string>; onEvent?: (msg: StreamMsg) => void; onSpawn?: (cp: import('node:child_process').ChildProcess) => void } = {},
 ): Promise<{ costUsd: number; result: string; sessionId: string | null }> {
   const timeout = opts.timeout ?? 30 * 60_000 // 修复可能跑很久
   const bin = resolveClaudeExecutable() ?? 'claude'
   const hasInput = typeof opts.input === 'string'
   return new Promise((resolve, reject) => {
     // detached:true → 子进程成为新进程组组长，停止时可对「整个组」发信号（含它 spawn 的子进程），等同 Ctrl+C。
-    const cp = spawn(bin, args, { cwd: opts.cwd, stdio: [hasInput ? 'pipe' : 'ignore', 'pipe', 'pipe'], detached: true })
+    const cp = spawn(bin, args, { cwd: opts.cwd, stdio: [hasInput ? 'pipe' : 'ignore', 'pipe', 'pipe'], detached: true, ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}) })
     opts.onSpawn?.(cp)
     let buf = ''
     let err = ''
