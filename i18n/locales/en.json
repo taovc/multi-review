@@ -470,6 +470,7 @@
       "cd": "/cd <path> — change working directory"
     },
     "dangerOff": "Dangerous commands blocked (rm -rf / git push need allow)",
-    "dangerOn": "⚠️ Dangerous commands ALLOWED (rm -rf / git push not blocked)"
+    "dangerOn": "⚠️ Dangerous commands ALLOWED (rm -rf / git push not blocked)",
+    "rename": "Rename"
   }
 }

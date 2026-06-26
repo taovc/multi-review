@@ -3,7 +3,6 @@
 // 命令面板(/clear /resume /copy /cd)是自建的(headless 没有原生 slash REPL)。
 const { t, locale } = useI18n()
 const toast = useToast()
-const ask = useConfirm()
 
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string; seq: number }
 type Session = { id: string; title: string | null; provider: string; cwd: string | null; status: string; error: string | null; lastUsedAt: string }
@@ -17,6 +16,9 @@ const input = ref('')
 const liveAssistant = ref('')
 const busy = ref(false)
 const allowDanger = ref(false) // 「允许危险命令」开关 → 放行 PreToolUse 守卫
+const confirming = ref('') // '' | 'delete'（抽屉内联确认，不用弹窗）
+const renaming = ref(false)
+const renameVal = ref('')
 let es: EventSource | null = null
 
 const chatting = computed(() => {
@@ -42,19 +44,27 @@ async function load() {
   if (!sessionId.value) return
   data.value = await $fetch<Detail>(`/api/global/sessions/${sessionId.value}`)
 }
-async function newSession() {
+// 新对话 = 清空到空白；不立刻建 session（懒创建：第一条消息才落库，避免一打开就冒「未命名对话」）。
+function newSession() {
   closeSSE()
   sessionId.value = null
   data.value = null
   liveAssistant.value = ''
   view.value = 'chat'
-  await ensureSession()
+  confirming.value = ''
 }
 async function deleteSession() {
-  if (!sessionId.value) return
-  if (!(await ask({ title: t('global.deleteSession'), message: t('global.confirmDelete'), okText: t('common.delete'), danger: true }))) return
+  if (!sessionId.value) { confirming.value = ''; return }
   await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'DELETE' }).catch(() => {})
-  await newSession()
+  newSession()
+}
+// 重命名（点标题就地编辑 + PATCH）
+async function saveRename() {
+  const title = renameVal.value.trim()
+  renaming.value = false
+  if (!sessionId.value || !title || !data.value) return
+  data.value.session.title = title
+  await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'PATCH', body: { title } }).catch(() => {})
 }
 
 // ── SSE ──
@@ -73,7 +83,8 @@ function openSSE() {
 function closeSSE() { es?.close(); es = null }
 
 watch(open, (on) => {
-  if (on) { if (!sessionId.value) ensureSession(); else { load(); openSSE() } }
+  // 懒创建：打开抽屉不建 session；有历史 session 才加载。新对话由第一条消息触发创建。
+  if (on) { confirming.value = ''; if (sessionId.value) { load(); openSSE() } }
   else closeSSE()
 })
 onBeforeUnmount(() => { closeSSE(); if (timer) clearInterval(timer) })
@@ -193,15 +204,30 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
     </svg>
   </button>
 
-  <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-full max-w-[44rem]' }">
+  <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-[calc(100vw-15rem)] max-w-none min-w-[640px]' }">
     <template #body>
       <div class="flex flex-col h-full min-h-0">
-        <!-- 顶部:session 控件 + cwd + 危险提示 -->
+        <!-- 顶部:session 控件 + 可编辑标题 + cwd -->
         <div class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default text-xs">
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" @click="newSession">{{ $t('global.newSession') }}</button>
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" :class="view === 'history' ? 'bg-muted text-highlighted' : ''" @click="view = 'history'; loadHistory()">{{ $t('global.history') }}</button>
-          <button v-if="sessionId" class="px-2 py-1 rounded border border-default text-error hover:bg-muted" @click="deleteSession">{{ $t('common.delete') }}</button>
-          <span class="ml-auto font-mono text-dimmed truncate max-w-[16rem]" :title="cwd">{{ cwd }}</span>
+          <!-- 可编辑标题（点一下改名）-->
+          <input
+            v-if="renaming" v-model="renameVal" class="flex-1 min-w-0 text-xs border-b border-inverted outline-none bg-transparent py-0.5"
+            :placeholder="$t('global.untitled')" @keydown.enter="saveRename" @blur="saveRename"
+          />
+          <button
+            v-else-if="sessionId" class="flex-1 min-w-0 truncate text-left text-dimmed hover:text-highlighted"
+            :title="$t('global.rename')" @click="renameVal = data?.session.title || ''; renaming = true"
+          >{{ data?.session.title || $t('global.untitled') }}</button>
+          <!-- 删除：抽屉内联确认（不用弹窗）-->
+          <template v-if="confirming === 'delete'">
+            <span class="text-dimmed">{{ $t('global.confirmDelete') }}</span>
+            <button class="text-error font-medium hover:underline" @click="deleteSession">{{ $t('common.delete') }}</button>
+            <button class="text-dimmed hover:text-highlighted" @click="confirming = ''">{{ $t('common.cancel') }}</button>
+          </template>
+          <button v-else-if="sessionId" class="px-2 py-1 rounded border border-default text-error hover:bg-muted shrink-0" @click="confirming = 'delete'">{{ $t('common.delete') }}</button>
+          <span class="font-mono text-dimmed truncate max-w-[14rem] shrink-0" :title="cwd">{{ cwd }}</span>
         </div>
         <label class="shrink-0 flex items-center gap-2 text-[11px] mb-2 cursor-pointer">
           <input v-model="allowDanger" type="checkbox" class="accent-error" />

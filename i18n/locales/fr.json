@@ -470,6 +470,7 @@
       "cd": "/cd <chemin> — changer de répertoire de travail"
     },
     "dangerOff": "Commandes dangereuses bloquées (rm -rf / git push à autoriser)",
-    "dangerOn": "⚠️ Commandes dangereuses AUTORISÉES (rm -rf / git push non bloqués)"
+    "dangerOn": "⚠️ Commandes dangereuses AUTORISÉES (rm -rf / git push non bloqués)",
+    "rename": "Renommer"
   }
 }

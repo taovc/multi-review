@@ -470,6 +470,7 @@
       "cd": "/cd <路径> 切换工作目录"
     },
     "dangerOff": "危险命令已拦截（rm -rf / git push 等需放行）",
-    "dangerOn": "⚠️ 已允许危险命令（rm -rf / git push 等不再拦）"
+    "dangerOn": "⚠️ 已允许危险命令（rm -rf / git push 等不再拦）",
+    "rename": "重命名"
   }
 }
