@@ -33,7 +33,14 @@ export type FeaturePlanJobCtx = {
 export async function runFeaturePlanJob(ctx: FeaturePlanJobCtx, message: string): Promise<void> {
   const { db, schema, taskId } = ctx
   const now = () => new Date().toISOString()
-  const emit = (kind: string, msg?: string) => cockpitBus.emit({ reviewId: featureChan(taskId), ts: now(), kind, message: msg })
+  const emit = (kind: string, msg?: string) => {
+    const ts = now()
+    cockpitBus.emit({ reviewId: featureChan(taskId), ts, kind, message: msg })
+    // 落 feature_events（除高频 text）：打开任务时回填历史日志 + 思考/分析过程留痕，同 fix。
+    if (kind !== 'text') {
+      try { db.insert(schema.featureEvents).values({ id: nanoid(), taskId, ts, kind, message: msg ?? null }).run() } catch { /* 落库失败不影响主流程 */ }
+    }
+  }
   const task = () => db.select().from(schema.featureTasks).where(eq(schema.featureTasks.id, taskId)).get()
 
   if (jobLocks.has(taskId)) return
@@ -138,7 +145,14 @@ export type FeatureImplJobCtx = {
 export async function runFeatureImplJob(ctx: FeatureImplJobCtx, message: string): Promise<void> {
   const { db, schema, taskId } = ctx
   const now = () => new Date().toISOString()
-  const emit = (kind: string, msg?: string) => cockpitBus.emit({ reviewId: featureChan(taskId), ts: now(), kind, message: msg })
+  const emit = (kind: string, msg?: string) => {
+    const ts = now()
+    cockpitBus.emit({ reviewId: featureChan(taskId), ts, kind, message: msg })
+    // 落 feature_events（除高频 text）：打开任务时回填历史日志 + 思考/分析过程留痕，同 fix。
+    if (kind !== 'text') {
+      try { db.insert(schema.featureEvents).values({ id: nanoid(), taskId, ts, kind, message: msg ?? null }).run() } catch { /* 落库失败不影响主流程 */ }
+    }
+  }
   const task = () => db.select().from(schema.featureTasks).where(eq(schema.featureTasks.id, taskId)).get()
   const saveSession = (sid: string | null) => (ctx.provider === 'codex' ? { codexSessionId: sid } : { sessionId: sid })
 

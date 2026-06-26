@@ -13,14 +13,16 @@ type Plan = {
   testPlan: string; prTitle: string; prBody: string
 }
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string }
-type Task = { id: string; title: string | null; status: string; branch: string | null; prUrl: string | null; prNumber: number | null; error: string | null }
-type Detail = { task: Task; turns: Turn[]; plan: Plan | null; busy: boolean }
+type Task = { id: string; title: string | null; description?: string; status: string; branch: string | null; prUrl: string | null; prNumber: number | null; error: string | null }
+type Detail = { task: Task; turns: Turn[]; events?: { ts: string; kind: string; message: string | null }[]; plan: Plan | null; busy: boolean }
 
 const data = ref<Detail | null>(null)
 const view = ref<'main' | 'pr'>('main')
 const input = ref('')
 const liveAssistant = ref('')
 const logLines = ref<string[]>([])
+const showLog = ref(false)
+const confirming = ref('') // '' | 'discard'（抽屉内联确认，不用弹窗）
 const busy = ref(false)
 const decisions = reactive<Record<string, string>>({})
 let es: EventSource | null = null
@@ -40,11 +42,21 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
 async function load() {
   if (!props.featureId) return
   data.value = await $fetch<Detail>(`/api/features/${props.featureId}`)
+  // 首次：用落库的历史事件回填运行日志（同 fix）
+  if (!logLines.value.length && data.value.events?.length) {
+    logLines.value = data.value.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
+  }
   // 初始化决策选择(默认值 / 推荐 / 第一项)
   for (const dp of plan.value?.decisionPoints ?? []) {
     if (!decisions[dp.id]) decisions[dp.id] = dp.defaultChoice || dp.recommendation || dp.options[0]?.label || ''
   }
   emit('changed')
+}
+async function doDelete() {
+  busy.value = true
+  try { await $fetch(`/api/features/${props.featureId}`, { method: 'DELETE' }); emit('changed'); open.value = false }
+  catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+  finally { busy.value = false; confirming.value = '' }
 }
 function openSSE() {
   if (!props.featureId || !import.meta.client) return
@@ -62,7 +74,7 @@ function openSSE() {
 function closeSSE() { es?.close(); es = null }
 
 watch([open, () => props.featureId], ([o]) => {
-  if (o && props.featureId) { view.value = 'main'; logLines.value = []; for (const k in decisions) delete decisions[k]; load(); openSSE() }
+  if (o && props.featureId) { view.value = 'main'; logLines.value = []; showLog.value = false; confirming.value = ''; for (const k in decisions) delete decisions[k]; load(); openSSE() }
   else closeSSE()
 })
 onBeforeUnmount(closeSSE)
@@ -121,7 +133,7 @@ async function confirmPr() {
 </script>
 
 <template>
-  <USlideover v-model:open="open" :title="$t('feature.tab')" :ui="{ content: 'w-full max-w-[52rem]' }">
+  <USlideover v-model:open="open" :title="$t('feature.tab')" :ui="{ content: 'w-[calc(100vw-15rem)] max-w-none min-w-[640px]' }">
     <template #body>
       <div v-if="!task" class="text-xs text-dimmed p-4">{{ $t('common.loading') }}</div>
 
@@ -148,9 +160,22 @@ async function confirmPr() {
       <div v-else class="flex flex-col h-full min-h-0">
         <!-- header -->
         <div class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default">
-          <span class="text-sm font-medium truncate">{{ task.title || $t('feature.untitled') }}</span>
+          <span class="text-sm font-medium truncate min-w-0">{{ task.title || task.description || $t('feature.untitled') }}</span>
           <span class="shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="status === 'opened' ? 'text-success border-success/40' : status === 'error' ? 'text-error border-error/40' : 'text-toned border-accented'">{{ $t('feature.status.' + status) }}</span>
-          <a v-if="task.prUrl" :href="task.prUrl" target="_blank" class="ml-auto text-xs text-muted hover:text-highlighted shrink-0">PR #{{ task.prNumber }} ↗</a>
+          <a v-if="task.prUrl" :href="task.prUrl" target="_blank" class="text-xs text-muted hover:text-highlighted shrink-0">PR #{{ task.prNumber }} ↗</a>
+          <!-- 删除：抽屉内联确认（不用弹窗，避免 drawer 上 dialog 无法交互）-->
+          <template v-if="confirming === 'discard'">
+            <span class="ml-auto text-xs text-dimmed">{{ $t('feature.discardConfirm') }}</span>
+            <button class="text-xs text-error font-medium hover:underline disabled:opacity-40" :disabled="busy" @click="doDelete">{{ $t('common.delete') }}</button>
+            <button class="text-xs text-dimmed hover:text-highlighted" @click="confirming = ''">{{ $t('common.cancel') }}</button>
+          </template>
+          <button v-else class="ml-auto text-xs text-dimmed hover:text-highlighted disabled:opacity-40 shrink-0" :disabled="running || busy" @click="confirming = 'discard'">{{ $t('feature.discard') }}</button>
+        </div>
+
+        <!-- 运行日志（思考/分析过程，可展开；同 fix）-->
+        <div v-if="logLines.length" class="shrink-0 text-[11px] text-dimmed mb-2">
+          <button class="hover:text-highlighted" @click="showLog = !showLog">{{ showLog ? $t('review.collapseLog') : $t('review.expandLog', { count: logLines.length }) }}</button>
+          <pre v-if="showLog" class="mt-1 max-h-48 overflow-auto bg-neutral-900 text-neutral-300 rounded p-2 leading-relaxed font-mono whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
         </div>
 
         <!-- PR 已开:交接提示 -->

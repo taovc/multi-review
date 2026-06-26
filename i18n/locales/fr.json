@@ -481,6 +481,8 @@
     "confirmOpenPr": "Confirmer l'ouverture",
     "prOpened": "PR #{n} ouverte",
     "refinePlaceholder": "Donnez un retour sur le plan / demandez à le changer…",
-    "chatPlaceholder": "Demandez d'autres changements…"
+    "chatPlaceholder": "Demandez d'autres changements…",
+    "discard": "Supprimer",
+    "discardConfirm": "Supprimer cette tâche ? (worktree inclus, irréversible)"
   }
 }

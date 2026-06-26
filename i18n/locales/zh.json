@@ -481,6 +481,8 @@
     "confirmOpenPr": "确认开 PR",
     "prOpened": "已开 PR #{n}",
     "refinePlaceholder": "对方案提反馈 / 让它改方案…",
-    "chatPlaceholder": "继续让它改 / 补充…"
+    "chatPlaceholder": "继续让它改 / 补充…",
+    "discard": "删除任务",
+    "discardConfirm": "删除这个任务？（含 worktree，不可恢复）"
   }
 }

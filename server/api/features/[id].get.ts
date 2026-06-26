@@ -30,7 +30,14 @@ export default defineEventHandler((event) => {
     }
   }
 
+  const events = d
+    .select({ ts: schema.featureEvents.ts, kind: schema.featureEvents.kind, message: schema.featureEvents.message })
+    .from(schema.featureEvents)
+    .where(eq(schema.featureEvents.taskId, id))
+    .orderBy(asc(schema.featureEvents.ts))
+    .all()
+
   let plan: unknown = null
   try { plan = task.planJson ? JSON.parse(task.planJson) : null } catch { /* 坏 JSON → null */ }
-  return { task, turns, plan, busy: isFeatureBusy(id) }
+  return { task, turns, events, plan, busy: isFeatureBusy(id) }
 })

@@ -481,6 +481,8 @@
     "confirmOpenPr": "Confirm open PR",
     "prOpened": "PR #{n} opened",
     "refinePlaceholder": "Give feedback on the plan / ask to change it…",
-    "chatPlaceholder": "Ask for more changes…"
+    "chatPlaceholder": "Ask for more changes…",
+    "discard": "Delete task",
+    "discardConfirm": "Delete this task? (incl. worktree, irreversible)"
   }
 }
