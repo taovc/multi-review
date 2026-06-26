@@ -229,6 +229,32 @@ function ensureSchema(sqlite: Database.Database) {
       message TEXT
     );
     CREATE INDEX IF NOT EXISTS fix_events_fix_idx ON fix_events(fix_id);
+
+    CREATE TABLE IF NOT EXISTS global_sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      provider TEXT NOT NULL DEFAULT 'claude',
+      model TEXT,
+      cwd TEXT,
+      session_id TEXT,
+      codex_session_id TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      error TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS global_sessions_last_used_idx ON global_sessions(last_used_at);
+
+    CREATE TABLE IF NOT EXISTS global_turns (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES global_sessions(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'done',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS global_turns_session_idx ON global_turns(session_id);
   `)
 }
 

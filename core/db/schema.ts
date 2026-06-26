@@ -218,6 +218,35 @@ export const fixEvents = sqliteTable('fix_events', {
   message: text('message'),
 })
 
+// ── 全局 chatbot 抽屉：独立于 PR/项目的自由会话（bypassPermissions「啥都能干」助手）。
+// 一行 = 一段对话（支持历史列表/翻页/删除）。session_id/codex_session_id 各存各的，切 provider 不混用。
+export const globalSessions = sqliteTable('global_sessions', {
+  id: text('id').primaryKey(),
+  title: text('title'), // 首条消息摘要，历史列表展示用（空 = 未命名）
+  provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
+  model: text('model'), // 空 = 跟随默认
+  cwd: text('cwd'), // 工作目录（/cd 可换；换目录通常另起新会话）
+  sessionId: text('session_id'), // claude 续聊 id
+  codexSessionId: text('codex_session_id'), // codex thread id
+  status: text('status', { enum: ['idle', 'streaming', 'error'] }).notNull().default('idle'),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  lastUsedAt: text('last_used_at').notNull(), // 历史列表按它倒序 + 翻页
+})
+
+// 全局会话的对话轮（append-only，按 seq 排序；assistant 轮流式写入）。
+export const globalTurns = sqliteTable('global_turns', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => globalSessions.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+  content: text('content').notNull().default(''),
+  status: text('status', { enum: ['streaming', 'done', 'error', 'stopped'] }).notNull().default('done'),
+  createdAt: text('created_at').notNull(),
+})
+
 export type Project = typeof projects.$inferSelect
 export type Skill = typeof skills.$inferSelect
 export type Review = typeof reviews.$inferSelect
@@ -228,3 +257,5 @@ export type ReviewEvent = typeof events.$inferSelect
 export type Fix = typeof fixes.$inferSelect
 export type FixTurn = typeof fixTurns.$inferSelect
 export type FixEvent = typeof fixEvents.$inferSelect
+export type GlobalSession = typeof globalSessions.$inferSelect
+export type GlobalTurn = typeof globalTurns.$inferSelect
