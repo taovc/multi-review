@@ -14,6 +14,8 @@ const data = ref<Detail | null>(null)
 const view = ref<'chat' | 'history'>('chat')
 const input = ref('')
 const liveAssistant = ref('')
+const logLines = ref<string[]>([]) // 工具/阶段日志（实时；同 fix 的可展开日志面板）
+const showLog = ref(false)
 const busy = ref(false)
 const allowDanger = ref(false) // 「允许危险命令」开关 → 放行 PreToolUse 守卫
 const confirming = ref('') // '' | 'delete'（抽屉内联确认，不用弹窗）
@@ -49,6 +51,8 @@ function newSession() {
   sessionId.value = null
   data.value = null
   liveAssistant.value = ''
+  logLines.value = []
+  showLog.value = false
   view.value = 'chat'
   confirming.value = ''
 }
@@ -75,6 +79,8 @@ function openSSE() {
     try {
       const e = JSON.parse(ev.data)
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
+      // 工具/阶段事件 → 收进日志面板（同 fix）
+      if (e.message && e.kind !== 'chat') { logLines.value.push(`${hhmmss(e.ts)}  ${e.message}`); if (logLines.value.length > 300) logLines.value.shift() }
       if (['done', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
     } catch { /* ignore */ }
   }
@@ -83,7 +89,7 @@ function closeSSE() { es?.close(); es = null }
 
 watch(open, (on) => {
   // 懒创建：打开抽屉不建 session；有历史 session 才加载。新对话由第一条消息触发创建。
-  if (on) { confirming.value = ''; if (sessionId.value) { load(); openSSE() } }
+  if (on) { confirming.value = ''; logLines.value = []; showLog.value = false; if (sessionId.value) { load(); openSSE() } }
   else closeSSE()
 })
 onBeforeUnmount(() => { closeSSE(); if (timer) clearInterval(timer) })
@@ -187,6 +193,7 @@ function histPrev() { if (histPage.value > 0) { histPage.value--; loadHistory() 
 function histNext() { if (hist.value?.hasNext) { histPage.value++; loadHistory() } }
 
 function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value, { hour12: false }) }
+function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString()).toLocaleTimeString(locale.value, { hour12: false }) }
 </script>
 
 <template>
@@ -232,6 +239,12 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
           <input v-model="allowDanger" type="checkbox" class="accent-error" />
           <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
         </label>
+
+        <!-- 运行日志（工具调用 / 阶段，可展开；同 fix）-->
+        <div v-if="view === 'chat' && logLines.length" class="shrink-0 text-[11px] text-dimmed mb-2">
+          <button class="hover:text-highlighted" @click="showLog = !showLog">{{ showLog ? $t('review.collapseLog') : $t('review.expandLog', { count: logLines.length }) }}</button>
+          <pre v-if="showLog" class="mt-1 max-h-48 overflow-auto bg-neutral-900 text-neutral-300 rounded p-2 leading-relaxed font-mono whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
+        </div>
 
         <!-- 历史列表 -->
         <div v-if="view === 'history'" class="flex-1 min-h-0 overflow-y-auto">
