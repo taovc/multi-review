@@ -26,7 +26,8 @@ let inp = {}; try { inp = JSON.parse(raw) } catch {}
 if ((inp.tool_name || '') !== 'Bash') process.exit(0)
 const cmd = String((inp.tool_input || {}).command || '')
 const DANGER = [
-  /\\brm\\s+-[rf]/i, /\\bsudo\\b/i, /\\bgit\\s+push\\b/i, /\\bgit\\s+reset\\s+--hard\\b/i,
+  /\\brm\\s+-[rf]/i, /\\brm\\b[^|;&]*--(recursive|force)\\b/i, /\\bfind\\b[^|;&]*-(delete|exec)\\b/i,
+  /\\bsudo\\b/i, /\\bgit\\s+push\\b/i, /\\bgit\\s+reset\\s+--hard\\b/i,
   /\\bgit\\s+clean\\s+-[a-z]*f/i, /\\b(mkfs|shred)\\b/i, /\\bdd\\s+if=/i, /\\bchmod\\s+-R\\b/i, /\\bchown\\s+-R\\b/i,
   /\\b(curl|wget)\\b[^|]*\\|\\s*(sh|bash|zsh|python3?|node|perl|ruby)\\b/i,
   /:\\(\\)\\s*\\{/, />\\s*\\/dev\\/sd/i, /\\bgh\\s+repo\\s+delete\\b/i,

@@ -46,21 +46,22 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
   if (chatLocks.has(sessionId)) return
   chatLocks.add(sessionId)
 
-  // append-only：user 轮 + assistant 占位轮（流式写入）。
-  const maxSeq = (db.select().from(schema.globalTurns).where(eq(schema.globalTurns.sessionId, sessionId)).all() as any[])
-    .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
-  db.insert(schema.globalTurns).values({ id: nanoid(), sessionId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
   const asstId = nanoid()
-  db.insert(schema.globalTurns).values({ id: asstId, sessionId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
-  db.update(schema.globalSessions).set({ status: 'streaming', lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
-  emit('chat', 'user')
-
   let acc = ''
   let lastWrite = 0
   const flush = (status: string) =>
     db.update(schema.globalTurns).set({ content: acc, status }).where(eq(schema.globalTurns.id, asstId)).run()
 
+  // 整段放进 try/finally：建轮/写库即使抛了也保证释放锁（否则会话永久卡 busy）。
   try {
+    // append-only：user 轮 + assistant 占位轮（流式写入）。
+    const maxSeq = (db.select().from(schema.globalTurns).where(eq(schema.globalTurns.sessionId, sessionId)).all() as any[])
+      .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
+    db.insert(schema.globalTurns).values({ id: nanoid(), sessionId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
+    db.insert(schema.globalTurns).values({ id: asstId, sessionId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
+    db.update(schema.globalSessions).set({ status: 'streaming', lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
+    emit('chat', 'user')
+
     let stopped = false
     let newSessionId: string | null = row()?.sessionId ?? null
     try {
