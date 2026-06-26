@@ -43,6 +43,44 @@ async function git(cwd: string, args: string[]) {
   return stdout
 }
 
+// Feature 开发用：从最新 origin/<defaultBranch> 拉一个**新功能分支**并建 worktree（区别于审核/修复的
+// 「checkout 已有 PR 分支」）。-B = 不存在则建、存在则重置到 origin/default（重跑安全）。
+export async function prepareFeatureWorktree(opts: {
+  localPath: string
+  reposDir: string
+  taskId: string
+  newBranch: string
+  defaultBranch: string
+  onStep?: (msg: string) => void
+}): Promise<Worktree> {
+  const { localPath, reposDir, taskId, newBranch, defaultBranch, onStep } = opts
+  if (!localPath || !existsSync(localPath)) throw new Error(`项目未配置有效的本地 clone 路径：${localPath || '(空)'}`)
+  if (!newBranch) throw new Error('新分支名为空')
+  if (!existsSync(reposDir)) mkdirSync(reposDir, { recursive: true })
+  const wtPath = resolve(reposDir, taskId)
+
+  const cleanup = async () => {
+    await withRepoLock(localPath, async () => {
+      try { await git(localPath, ['worktree', 'remove', '--force', wtPath]) } catch { /* 已不存在 */ }
+    })
+  }
+
+  const headSha = await withRepoLock(localPath, async () => {
+    if (existsSync(wtPath)) {
+      try { await git(localPath, ['worktree', 'remove', '--force', wtPath]) } catch { /* ignore */ }
+    }
+    onStep?.(`fetch origin ${defaultBranch}`)
+    await git(localPath, ['fetch', 'origin', defaultBranch])
+    const sha = (await git(localPath, ['rev-parse', `origin/${defaultBranch}`])).trim()
+    onStep?.(`创建新分支 worktree（${newBranch} ← origin/${defaultBranch}）`)
+    // -B：从 origin/default 强制建/重置功能分支，并在新 worktree 里 checkout
+    await git(localPath, ['worktree', 'add', '-B', newBranch, wtPath, `origin/${defaultBranch}`])
+    return sha
+  })
+
+  return { path: wtPath, headSha, cleanup }
+}
+
 export type Worktree = { path: string; headSha: string; cleanup: () => Promise<void> }
 
 // 在项目已有本地 clone 上开一个隔离 worktree：fetch PR 分支 → detached checkout → merge 默认分支。
