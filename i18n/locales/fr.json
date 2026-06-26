@@ -445,5 +445,42 @@
     "deleting": "Suppression…",
     "worktreeDeleted": "Espace de travail local supprimé",
     "chatHint": "Discutez ici pour travailler sur la PR — demandez à l'IA de lire le code et de le modifier. Pas besoin de lancer une correction par lot d'abord."
+  },
+  "feature": {
+    "tab": "Dév feature",
+    "composerHint": "Décrivez une fonctionnalité ou collez une issue — l'IA analyse d'abord en lecture seule et propose un plan avec points de décision ; elle n'implémente et n'ouvre une PR qu'après votre approbation.",
+    "composerPlaceholder": "Décrivez la fonctionnalité / collez une issue…",
+    "start": "Analyser",
+    "creating": "Création…",
+    "empty": "Aucune tâche feature",
+    "status": {
+      "analyzing": "Analyse",
+      "planned": "Plan prêt",
+      "building": "En cours",
+      "built": "Prêt pour PR",
+      "opened": "PR ouverte",
+      "error": "Erreur"
+    },
+    "untitled": "Tâche sans titre",
+    "handoff": "PR ouverte — n'itérez pas ici. Faites la revue dans un contexte propre depuis l'onglet Toutes les PR (l'auteur a des angles morts sur ses propres changements ; un regard neuf voit plus).",
+    "gotoReview": "Ouvrir cette PR",
+    "planTitle": "Plan",
+    "approach": "Approche",
+    "more": "Plus (tests / hors périmètre)",
+    "testPlan": "Plan de test",
+    "outOfScope": "Hors périmètre",
+    "decisions": "Points de décision (choisissez, puis approuvez)",
+    "recommended": "recommandé",
+    "pickBlocking": "Veuillez répondre à tous les points requis (*)",
+    "approve": "Approuver & construire",
+    "openPr": "Ouvrir la PR",
+    "back": "Retour",
+    "prTitle": "Titre PR",
+    "prBody": "Corps PR",
+    "diff": "Changements",
+    "confirmOpenPr": "Confirmer l'ouverture",
+    "prOpened": "PR #{n} ouverte",
+    "refinePlaceholder": "Donnez un retour sur le plan / demandez à le changer…",
+    "chatPlaceholder": "Demandez d'autres changements…"
   }
 }

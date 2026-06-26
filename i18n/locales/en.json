@@ -445,5 +445,42 @@
     "deleting": "Deleting…",
     "worktreeDeleted": "Local worktree deleted",
     "chatHint": "Chat here to work on the PR — ask the AI to read the code and make changes. No need to run a batch fix first."
+  },
+  "feature": {
+    "tab": "Feature dev",
+    "composerHint": "Describe a feature or paste an issue — the AI analyzes read-only first and proposes a plan with decision points; it only implements and opens a PR after you approve.",
+    "composerPlaceholder": "Describe the feature / paste an issue…",
+    "start": "Analyze",
+    "creating": "Creating…",
+    "empty": "No feature tasks yet",
+    "status": {
+      "analyzing": "Analyzing",
+      "planned": "Plan ready",
+      "building": "Building",
+      "built": "Ready for PR",
+      "opened": "PR opened",
+      "error": "Error"
+    },
+    "untitled": "Untitled task",
+    "handoff": "PR opened — don't keep iterating here. Review it in a clean context from the All PRs tab (the implementer has blind spots about their own changes; a fresh view catches more).",
+    "gotoReview": "Open this PR",
+    "planTitle": "Plan",
+    "approach": "Approach",
+    "more": "More (tests / out of scope)",
+    "testPlan": "Test plan",
+    "outOfScope": "Out of scope",
+    "decisions": "Decision points (choose, then approve)",
+    "recommended": "recommended",
+    "pickBlocking": "Please answer all required (*) decision points",
+    "approve": "Approve & build",
+    "openPr": "Open PR",
+    "back": "Back",
+    "prTitle": "PR title",
+    "prBody": "PR body",
+    "diff": "Changes",
+    "confirmOpenPr": "Confirm open PR",
+    "prOpened": "PR #{n} opened",
+    "refinePlaceholder": "Give feedback on the plan / ask to change it…",
+    "chatPlaceholder": "Ask for more changes…"
   }
 }

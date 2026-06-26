@@ -30,7 +30,7 @@ const route = useRoute()
 const projectId = computed(() => route.params.id as string)
 const { data: project, refresh: refreshProject } = await useFetch<Project>(() => `/api/projects/${projectId.value}`)
 
-const tab = ref<'pulls' | 'config'>('pulls')
+const tab = ref<'pulls' | 'feature' | 'config'>('pulls')
 const msg = ref('')
 
 async function onProjectChanged() {
@@ -261,11 +261,17 @@ const filterDims = computed(() => [
       >{{ $t('project.tabs.pulls') }}</button>
       <button
         class="pb-3 -mb-px border-b-2 transition-colors"
+        :class="tab === 'feature' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'"
+        @click="tab = 'feature'"
+      >{{ $t('feature.tab') }}</button>
+      <button
+        class="pb-3 -mb-px border-b-2 transition-colors"
         :class="tab === 'config' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'"
         @click="tab = 'config'"
       >{{ $t('project.tabs.config') }}</button>
     </div>
 
+    <FeatureTab v-if="tab === 'feature' && project" :project-id="projectId" />
     <ProjectConfig v-if="tab === 'config' && project" :project="project" @changed="onProjectChanged" @deleted="onProjectDeleted" />
 
     <!-- ── 全部 PR ── -->

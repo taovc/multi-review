@@ -445,5 +445,42 @@
     "deleting": "删除中…",
     "worktreeDeleted": "本地工作区已删除",
     "chatHint": "直接在这聊就能干活——让 AI 读代码、改动、做后续精修，不必先跑批量修复。"
+  },
+  "feature": {
+    "tab": "Feature 开发",
+    "composerHint": "描述需求或贴一段 issue —— AI 先只读分析、给出方案和决策点，等你批准后才动手实现并开 PR。",
+    "composerPlaceholder": "描述要做的功能 / 粘贴 issue…",
+    "start": "开始分析",
+    "creating": "创建中…",
+    "empty": "还没有 feature 任务",
+    "status": {
+      "analyzing": "分析中",
+      "planned": "方案待批",
+      "building": "实现中",
+      "built": "待开 PR",
+      "opened": "已开 PR",
+      "error": "出错"
+    },
+    "untitled": "未命名任务",
+    "handoff": "PR 已开 —— 建议别在这里继续迭代，换个干净上下文去【全部 PR】里 review 这个 PR（实现者对自己的改动有盲点，新视角更容易看出问题）。",
+    "gotoReview": "打开这个 PR",
+    "planTitle": "方案",
+    "approach": "思路",
+    "more": "更多（测试 / 范围外）",
+    "testPlan": "测试",
+    "outOfScope": "不在本次范围",
+    "decisions": "决策点（选好后批准）",
+    "recommended": "推荐",
+    "pickBlocking": "请先选好所有必选(*)决策点",
+    "approve": "批准并实现",
+    "openPr": "开 PR",
+    "back": "返回",
+    "prTitle": "PR 标题",
+    "prBody": "PR 正文",
+    "diff": "改动",
+    "confirmOpenPr": "确认开 PR",
+    "prOpened": "已开 PR #{n}",
+    "refinePlaceholder": "对方案提反馈 / 让它改方案…",
+    "chatPlaceholder": "继续让它改 / 补充…"
   }
 }
