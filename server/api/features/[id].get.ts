@@ -23,6 +23,10 @@ export default defineEventHandler((event) => {
       const next = task.planJson ? 'planned' : 'error'
       d.update(schema.featureTasks).set({ status: next, error: task.planJson ? null : '分析中断（服务重启或进程结束）' }).where(eq(schema.featureTasks.id, id)).run()
       ;(task as any).status = next
+    } else if (task.status === 'building') {
+      // 实现中途崩溃（进程没了）：标 error 让用户能重试（error 仍可批准/开 PR）；worktree 里的部分改动保留。
+      d.update(schema.featureTasks).set({ status: 'error', error: '实现中断（服务重启或进程结束）；worktree 改动已保留，可重试或直接开 PR' }).where(eq(schema.featureTasks.id, id)).run()
+      ;(task as any).status = 'error'
     }
   }
 

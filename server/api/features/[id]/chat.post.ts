@@ -18,7 +18,10 @@ export default defineEventHandler(async (event) => {
   if (!project?.localPath) throw createError({ statusCode: 400, statusMessage: '项目未配置本地 clone 路径' })
   const rc = resolveReviewConfig(d, project)
 
-  if (task.status === 'building' || task.status === 'built') {
+  // 已进入实现阶段(有 worktree / 状态 building·built)就继续实现；否则(含未建 worktree 的 error)走重新出方案。
+  // 用 worktreePath 兜底：phase-2 崩溃自愈成 error 后，仍应继续实现而不是丢掉 worktree 重新 plan。
+  const inImplPhase = task.status === 'building' || task.status === 'built' || !!task.worktreePath
+  if (inImplPhase) {
     // 阶段2：在新分支 worktree 里继续实现
     const ctx: FeatureImplJobCtx = {
       db: d, schema, taskId: id,

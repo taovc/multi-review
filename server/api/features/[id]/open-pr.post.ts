@@ -12,7 +12,7 @@ import { PlanSchema } from '~core/agent/featurePlan'
 import { fixChangesDiff, fixChangesStat } from '~core/fix/changes'
 
 const pexec = promisify(execFile)
-const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/
+const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/ // 注：分支生成已 slugify 成纯 [a-z0-9/-]，这里仅防注入/路径穿越
 
 // 开 PR = feature 闭环终点：commit(英文 conventional) + push 新分支 + gh pr create。
 // dryRun=true → 返回待提交 diff + 默认标题/正文(来自方案)，不落地。永远手动触发。
@@ -52,10 +52,17 @@ export default defineEventHandler(async (event) => {
   if (task.status === 'opened' && task.prUrl) return { ok: true, url: task.prUrl, number: task.prNumber }
   if (!['built', 'error'].includes(task.status)) throw createError({ statusCode: 409, statusMessage: `当前状态（${task.status}）不能开 PR` })
 
-  d.update(schema.featureTasks).set({ status: 'building', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, id)).run()
+  // 真没东西可开就别推空分支 / 开空 PR（这一步在 try 外，干净返回 400，不把状态写成 error）。
+  const { stdout: porcelain } = await git(['status', '--porcelain'])
+  const dirty = !!porcelain.trim()
+  if (!dirty) {
+    const { stdout: ahead } = await git(['rev-list', '--count', `origin/${base}..HEAD`]).catch(() => ({ stdout: '0' }))
+    if ((Number(ahead.trim()) || 0) === 0) throw createError({ statusCode: 400, statusMessage: 'worktree 没有任何改动，无法开 PR' })
+  }
+
+  // 不在这里把状态改成 building（会和实现阶段撞名，且开 PR 中途崩溃会卡住）；保持 built，成功→opened / 失败→error。
   try {
-    const { stdout: porcelain } = await git(['status', '--porcelain'])
-    if (porcelain.trim()) {
+    if (dirty) {
       await git(['add', '-A'])
       await git(['commit', '-m', defTitle])
     }

@@ -38,17 +38,18 @@ export async function runFeaturePlanJob(ctx: FeaturePlanJobCtx, message: string)
 
   if (jobLocks.has(taskId)) return
   jobLocks.add(taskId)
-
-  // append-only：user 轮 + assistant 占位轮（分析完成后写入方案文本）。
-  const maxSeq = (db.select().from(schema.featureTurns).where(eq(schema.featureTurns.taskId, taskId)).all() as any[])
-    .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
-  db.insert(schema.featureTurns).values({ id: nanoid(), taskId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
   const asstId = nanoid()
-  db.insert(schema.featureTurns).values({ id: asstId, taskId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
-  db.update(schema.featureTasks).set({ status: 'analyzing', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
-  emit('chat', 'user')
 
+  // 整段放进 try/finally：哪怕建轮/写库就抛了，也保证锁释放（否则任务永久卡 busy）。
   try {
+    // append-only：user 轮 + assistant 占位轮（分析完成后写入方案文本）。
+    const maxSeq = (db.select().from(schema.featureTurns).where(eq(schema.featureTurns.taskId, taskId)).all() as any[])
+      .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
+    db.insert(schema.featureTurns).values({ id: nanoid(), taskId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
+    db.insert(schema.featureTurns).values({ id: asstId, taskId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
+    db.update(schema.featureTasks).set({ status: 'analyzing', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
+    emit('chat', 'user')
+
     const t = task()
     emit('stage', 'AI 调研分析中…')
     const { plan, raw } = await runFeaturePlanAgent({
@@ -143,27 +144,27 @@ export async function runFeatureImplJob(ctx: FeatureImplJobCtx, message: string)
 
   if (jobLocks.has(taskId)) return
   jobLocks.add(taskId)
-
-  const maxSeq = (db.select().from(schema.featureTurns).where(eq(schema.featureTurns.taskId, taskId)).all() as any[])
-    .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
-  db.insert(schema.featureTurns).values({ id: nanoid(), taskId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
   const asstId = nanoid()
-  db.insert(schema.featureTurns).values({ id: asstId, taskId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
-  db.update(schema.featureTasks).set({ status: 'building', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
-  emit('chat', 'user')
-
   let acc = ''
   let lastWrite = 0
   const flush = (status: string) => db.update(schema.featureTurns).set({ content: acc, status }).where(eq(schema.featureTurns.id, asstId)).run()
 
+  // 整段放进 try/finally：建轮/写库即使抛了也保证释放锁。
   try {
+    const maxSeq = (db.select().from(schema.featureTurns).where(eq(schema.featureTurns.taskId, taskId)).all() as any[])
+      .reduce((m: number, t: any) => Math.max(m, t.seq), 0)
+    db.insert(schema.featureTurns).values({ id: nanoid(), taskId, seq: maxSeq + 1, role: 'user', content: message, status: 'done', createdAt: now() }).run()
+    db.insert(schema.featureTurns).values({ id: asstId, taskId, seq: maxSeq + 2, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
+    db.update(schema.featureTasks).set({ status: 'building', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
+    emit('chat', 'user')
+
     let stopped = false
     const t = task()
-    // 确保新分支 worktree（首次实现时建）
+    // 确保新分支 worktree（首次实现时建）。分支名 slugify 成纯 [a-z0-9-]，避免 nanoid 的 _ 触发 SAFE_REF 拦截。
     let wtPath = t?.worktreePath as string | null
     if (!wtPath || !existsSync(wtPath)) {
       emit('stage', '准备 worktree（新功能分支）')
-      const branch = t?.branch || `feat/${slugify(t?.title || t?.description)}-${taskId.slice(0, 6)}`
+      const branch = t?.branch || `feat/${slugify(t?.title || t?.description)}-${slugify(taskId.slice(0, 6))}`
       const wt = await prepareFeatureWorktree({
         localPath: ctx.localPath, reposDir: ctx.reposDir, taskId,
         newBranch: branch, defaultBranch: t?.baseBranch || ctx.defaultBranch,
