@@ -82,12 +82,26 @@ const BG: Record<Side, string> = {
       <div v-for="(r, i) in f.rows" :key="i">
         <!-- hunk 头：整行横跨 -->
         <div v-if="r.hunk" class="text-dimmed bg-elevated/50 px-3 py-0.5 whitespace-pre-wrap break-all">{{ r.text }}</div>
-        <!-- 普通行：左旧 / 右新 -->
-        <div v-else class="grid grid-cols-[2.5rem_1fr_2.5rem_1fr] border-t border-default/40">
-          <div class="text-right pr-1.5 text-dimmed select-none tabular-nums" :class="BG[r.ltype]">{{ r.lo ?? '' }}</div>
-          <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.ltype], r.ltype === 'del' ? 'text-error' : 'text-toned']">{{ r.lt }}</div>
-          <div class="text-right pr-1.5 text-dimmed select-none tabular-nums border-l border-default/40" :class="BG[r.rtype]">{{ r.ro ?? '' }}</div>
-          <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.rtype], r.rtype === 'add' ? 'text-success' : 'text-toned']">{{ r.rt }}</div>
+        <!-- 普通行 -->
+        <div v-else class="border-t border-default/40">
+          <!-- 桌面(md+)：GitHub 式 split，左旧 / 右新 两列 -->
+          <div class="hidden md:grid grid-cols-[2.5rem_1fr_2.5rem_1fr]">
+            <div class="text-right pr-1.5 text-dimmed select-none tabular-nums" :class="BG[r.ltype]">{{ r.lo ?? '' }}</div>
+            <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.ltype], r.ltype === 'del' ? 'text-error' : 'text-toned']">{{ r.lt }}</div>
+            <div class="text-right pr-1.5 text-dimmed select-none tabular-nums border-l border-default/40" :class="BG[r.rtype]">{{ r.ro ?? '' }}</div>
+            <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.rtype], r.rtype === 'add' ? 'text-success' : 'text-toned']">{{ r.rt }}</div>
+          </div>
+          <!-- 手机：unified 单列，避免两列代码各挤半屏。ctx 只显一次(左)，del/add 各成一行 -->
+          <div class="md:hidden">
+            <div v-if="r.ltype !== 'empty'" class="grid grid-cols-[2.5rem_1fr]" :class="BG[r.ltype]">
+              <div class="text-right pr-1.5 text-dimmed select-none tabular-nums">{{ r.lo ?? '' }}</div>
+              <div class="px-2 whitespace-pre-wrap break-all" :class="r.ltype === 'del' ? 'text-error' : 'text-toned'">{{ r.lt }}</div>
+            </div>
+            <div v-if="r.rtype === 'add'" class="grid grid-cols-[2.5rem_1fr] bg-success/10">
+              <div class="text-right pr-1.5 text-dimmed select-none tabular-nums">{{ r.ro ?? '' }}</div>
+              <div class="px-2 whitespace-pre-wrap break-all text-success">{{ r.rt }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

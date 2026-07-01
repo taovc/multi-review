@@ -182,7 +182,7 @@ async function doDelete() {
 </script>
 
 <template>
-  <USlideover v-model:open="open" :ui="{ content: 'w-[calc(100vw-15rem)] max-w-none min-w-[640px]' }">
+  <USlideover v-model:open="open" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
     <template #content>
       <div class="h-full flex flex-col bg-default text-default">
         <!-- 顶部 header：标题 + 在 GitHub 打开 + ✕（同 PR 详情抽屉；GitHub 链接就在 X 旁边）-->

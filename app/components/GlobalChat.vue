@@ -257,7 +257,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
     </svg>
   </button>
 
-  <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-[calc(100vw-15rem)] max-w-none min-w-[640px]' }">
+  <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
     <template #body>
       <div class="flex flex-col h-full min-h-0">
         <!-- 顶部:session 控件 + 可编辑标题 + cwd -->

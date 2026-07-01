@@ -317,8 +317,9 @@ const filterDims = computed(() => [
 
       <!-- PR 列表：PR | 标题(固定宽·换行) | 作者 | PR状态 | 审核 | 修复 -->
       <div class="mt-3 overflow-x-auto">
-        <div class="min-w-[46rem]">
-        <div class="grid grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
+        <div class="md:min-w-[46rem]">
+        <!-- 列头：仅桌面显示（手机是卡片，不需要列名）-->
+        <div class="hidden md:grid grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
           <span>PR</span>
           <span>{{ $t('project.col.title') }}</span>
           <span>{{ $t('project.col.author') }}</span>
@@ -326,41 +327,49 @@ const filterDims = computed(() => [
           <span class="text-center">{{ $t('project.col.reviewStatus') }}</span>
           <span class="text-center">{{ $t('project.col.fixStatus') }}</span>
         </div>
+        <!-- 手机=卡片(flex-col)，桌面=6 列网格。两个 md:contents 包裹层在桌面「消融」，
+             其子元素直接落进网格列；手机上它们各自成组(标题组 / 状态组)。 -->
         <div
           v-for="p in pagedPulls"
           :key="p.number"
-          class="grid grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] gap-x-4 items-center px-1 h-16 border-b border-default text-sm cursor-pointer hover:bg-elevated/40 transition-colors"
+          class="flex flex-col gap-2 py-3 px-1 border-b border-default text-sm cursor-pointer hover:bg-elevated/40 transition-colors md:grid md:grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] md:gap-x-4 md:items-center md:py-0 md:h-16"
           @click="openDetail(p.number, p.taskId, p.fixId)"
         >
-          <span class="font-medium tabular-nums">#{{ p.number }}</span>
-          <span class="text-default break-words leading-snug line-clamp-2">{{ p.title }}</span>
-          <button class="text-xs text-muted hover:text-highlighted truncate text-left" @click.stop="toggleFilter('author', p.author)">{{ p.author }}</button>
-          <!-- PR status -->
-          <span class="text-center">
-            <span class="inline-block whitespace-nowrap text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="pullBadge(p).cls">{{ $t(pullBadge(p).label) }}</span>
-          </span>
-          <!-- Review status + 作者已更新 -->
-          <span class="text-center text-xs flex flex-col items-center justify-center gap-0.5 leading-tight">
-            <span v-if="reviewCell(p)" :class="reviewCell(p)!.cls">{{ reviewCell(p)!.label }}</span>
-            <span v-else class="text-dimmed">—</span>
-            <span v-if="p.authorUpdated" class="text-[9px] text-highlighted font-medium" :title="$t('project.authorUpdatedTitle')">● {{ $t('project.authorUpdated') }}</span>
-          </span>
-          <!-- Fix status：对话中（我已介入）直接接管为主状态，不再叠「已上传 / 审核已更新」；否则显示状态 +（可选）审核已更新 -->
-          <span class="text-center text-xs flex flex-col items-center justify-center gap-0.5 leading-tight">
-            <button
-              v-if="p.fixChatting"
-              class="text-toned font-medium flex items-center gap-1 hover:text-highlighted"
-              :title="$t('project.chattingTitle')"
-              @click.stop="openDetail(p.number, p.taskId, p.fixId, 'fix')"
-            >
-              <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ $t('project.chatting') }}
-            </button>
-            <template v-else>
-              <button v-if="fixCell(p)" :class="fixCell(p)!.cls" class="hover:text-highlighted" @click.stop="openDetail(p.number, p.taskId, p.fixId, 'fix')">{{ fixCell(p)!.label }}</button>
+          <!-- PR# + 标题 -->
+          <div class="flex items-baseline gap-2 md:contents">
+            <span class="font-medium tabular-nums shrink-0">#{{ p.number }}</span>
+            <span class="text-default break-words leading-snug line-clamp-2">{{ p.title }}</span>
+          </div>
+          <!-- 作者 + 三个状态：手机 flex-wrap 成一行小标签；桌面各占一列 -->
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 md:contents">
+            <button class="text-xs text-muted hover:text-highlighted truncate text-left" @click.stop="toggleFilter('author', p.author)">{{ p.author }}</button>
+            <!-- PR status -->
+            <span class="md:text-center">
+              <span class="inline-block whitespace-nowrap text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="pullBadge(p).cls">{{ $t(pullBadge(p).label) }}</span>
+            </span>
+            <!-- Review status + 作者已更新 -->
+            <span class="text-xs flex items-center gap-1 leading-tight md:flex-col md:items-center md:justify-center md:gap-0.5 md:text-center">
+              <span v-if="reviewCell(p)" :class="reviewCell(p)!.cls">{{ reviewCell(p)!.label }}</span>
               <span v-else class="text-dimmed">—</span>
-              <span v-if="p.reviewerUpdated" class="text-[9px] text-highlighted font-medium" :title="$t('project.reviewerUpdatedTitle')">● {{ $t('project.reviewerUpdated') }}</span>
-            </template>
-          </span>
+              <span v-if="p.authorUpdated" class="text-[9px] text-highlighted font-medium" :title="$t('project.authorUpdatedTitle')">● {{ $t('project.authorUpdated') }}</span>
+            </span>
+            <!-- Fix status：对话中（我已介入）直接接管为主状态；否则显示状态 +（可选）审核已更新 -->
+            <span class="text-xs flex items-center gap-1 leading-tight md:flex-col md:items-center md:justify-center md:gap-0.5 md:text-center">
+              <button
+                v-if="p.fixChatting"
+                class="text-toned font-medium flex items-center gap-1 hover:text-highlighted"
+                :title="$t('project.chattingTitle')"
+                @click.stop="openDetail(p.number, p.taskId, p.fixId, 'fix')"
+              >
+                <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ $t('project.chatting') }}
+              </button>
+              <template v-else>
+                <button v-if="fixCell(p)" :class="fixCell(p)!.cls" class="hover:text-highlighted" @click.stop="openDetail(p.number, p.taskId, p.fixId, 'fix')">{{ fixCell(p)!.label }}</button>
+                <span v-else class="text-dimmed">—</span>
+                <span v-if="p.reviewerUpdated" class="text-[9px] text-highlighted font-medium" :title="$t('project.reviewerUpdatedTitle')">● {{ $t('project.reviewerUpdated') }}</span>
+              </template>
+            </span>
+          </div>
         </div>
         <p v-if="!visiblePulls.length" class="py-16 text-center text-xs text-dimmed">
           {{ pullsPending ? $t('common.loading') : $t('project.noPulls') }}

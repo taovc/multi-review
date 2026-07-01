@@ -213,17 +213,17 @@ const lineCls: Record<DiffLine['t'], string> = {
 </script>
 
 <template>
-  <USlideover v-model:open="open" :ui="{ content: 'w-[calc(100vw-15rem)] max-w-none min-w-[640px]' }">
+  <USlideover v-model:open="open" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
     <template #content>
       <div class="h-full flex flex-col bg-default text-default">
         <!-- header -->
         <div class="px-6 py-5 border-b border-default shrink-0">
           <div v-if="detail" class="flex items-start justify-between gap-4">
             <div class="min-w-0">
-              <div class="flex items-center gap-2 text-xs text-dimmed">
+              <div class="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-dimmed">
                 <span class="tabular-nums">#{{ detail.number }}</span>
                 <span>·</span><span>{{ detail.author }}</span>
-                <span>·</span><span class="font-mono">{{ detail.branch }}</span>
+                <span>·</span><span class="font-mono break-all">{{ detail.branch }}</span>
               </div>
               <h2 class="text-lg font-medium mt-1 leading-snug">{{ detail.title }}</h2>
               <div class="text-xs text-dimmed mt-1 tabular-nums">
@@ -256,13 +256,14 @@ const lineCls: Record<DiffLine['t'], string> = {
             <span v-else-if="autoNoteText" class="text-highlighted">· {{ autoNoteText }}</span>
           </div>
 
-          <!-- 子 tab -->
-          <div v-if="detail" class="flex gap-6 mt-4 text-sm">
-            <button class="pb-1 border-b-2 transition-colors" :class="activeTab === 'review' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'review'">{{ $t('prDrawer.tabReview') }}</button>
-            <button class="pb-1 border-b-2 transition-colors" :class="activeTab === 'fix' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'fix'">{{ $t('prDrawer.tabFix') }}</button>
-            <button class="pb-1 border-b-2 transition-colors" :class="activeTab === 'timeline' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'timeline'">{{ $t('prDrawer.tabTimeline') }}</button>
-            <button class="pb-1 border-b-2 transition-colors" :class="activeTab === 'changes' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'changes'">{{ $t('prDrawer.tabChanges') }} <span class="text-dimmed">{{ detail.changedFiles }}</span></button>
-            <button class="pb-1 border-b-2 transition-colors" :class="activeTab === 'workflow' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'workflow'">{{ $t('automation.tab') }}</button>
+          <!-- 子 tab：手机上 5 个 tab 会超出抽屉宽度 → 横向滚动(bleed 到抽屉边缘)，
+               而不是撑破整个页面宽度(那会让手机 layout viewport 变宽、md 断点误触发、整体布局崩) -->
+          <div v-if="detail" class="flex gap-5 md:gap-6 mt-4 text-sm overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'review' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'review'">{{ $t('prDrawer.tabReview') }}</button>
+            <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'fix' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'fix'">{{ $t('prDrawer.tabFix') }}</button>
+            <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'timeline' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'timeline'">{{ $t('prDrawer.tabTimeline') }}</button>
+            <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'changes' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'changes'">{{ $t('prDrawer.tabChanges') }} <span class="text-dimmed">{{ detail.changedFiles }}</span></button>
+            <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'workflow' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'workflow'">{{ $t('automation.tab') }}</button>
           </div>
         </div>
 
