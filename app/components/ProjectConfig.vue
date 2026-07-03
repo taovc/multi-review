@@ -27,6 +27,7 @@ const form = reactive({
   provider: ((props.project as Project & { provider?: Provider }).provider || 'claude') as Provider,
   model: props.project.model || '',
   effort: props.project.effort || '',
+  codexFast: ((props.project as Project & { codexServiceTier?: string | null }).codexServiceTier || '') === 'fast',
   autoMaxRounds: (props.project as Project & { autoMaxRounds?: number }).autoMaxRounds ?? 2,
   autoCooldownMinutes: (props.project as Project & { autoCooldownMinutes?: number }).autoCooldownMinutes ?? 5,
 })
@@ -77,6 +78,7 @@ async function saveInfo() {
       body: {
         name: form.name, repo: form.repo, localPath: form.localPath || null,
         defaultBranch: form.defaultBranch, provider: form.provider, model: form.model || null, effort: form.effort || null,
+        codexServiceTier: form.codexFast ? 'fast' : null,
         autoMaxRounds: Math.min(10, Math.max(1, Number(form.autoMaxRounds) || 2)),
         autoCooldownMinutes: Math.min(120, Math.max(0, Number(form.autoCooldownMinutes) ?? 5)),
       },
@@ -365,6 +367,15 @@ function codexAuthClass(status: CodexSdkStatus | null) {
               <div class="flex items-center justify-between gap-3">
                 <span class="text-xs text-dimmed">{{ $t('config.codexAuthenticated') }}</span>
                 <span class="text-xs font-medium" :class="codexAuthClass(codexStatus)">{{ codexAuthLabel(codexStatus) }}</span>
+              </div>
+            </div>
+            <div class="mt-4 border-t border-default pt-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-xs text-highlighted">{{ $t('config.codexFastLabel') }}</div>
+                  <p class="mt-1 text-[11px] leading-relaxed text-dimmed">{{ $t('config.codexFastHint') }}</p>
+                </div>
+                <USwitch v-model="form.codexFast" />
               </div>
             </div>
             <p class="mt-3 text-[11px] leading-relaxed text-dimmed">{{ codexStatus?.detail || $t('config.codexStatusUnknown') }}</p>

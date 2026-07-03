@@ -13,6 +13,7 @@ import { computeFixNextStatus } from './status'
 import { appendTurns } from '../db/turns'
 import { makeEmit } from '../streaming/emit'
 import { sessionFields } from '../agent/session'
+import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchReviewsCount } from '../github/gh'
 import type { ChildProcess } from 'node:child_process'
 import type { ChatRunner, ReviewProvider } from '../agent/runners'
@@ -78,6 +79,7 @@ export type FixJobCtx = {
   provider?: ReviewProvider
   model: string // 当前 provider 的实模型（不混用）
   effort?: string
+  codexServiceTier?: string | null
   lang: string
   allowDanger?: boolean // 放行危险命令守卫（含 git push / gh pr create），默认拦
   ultracode?: boolean // 后台激活 ultracode（前缀由运行器注入）
@@ -180,15 +182,23 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       const resumeId: string | null = (ctx.provider === 'codex' ? fix?.codexSessionId : fix?.sessionId) ?? null
       let newSessionId: string | null = resumeId
       const headBeforeCodex = ctx.provider === 'codex' ? await currentHead(wt.path) : null
+      const historyAccess = await prepareAgentHistoryAccess({
+        db, schema, scope: 'fix', id: fixId, cwd: wt.path, limit: 80,
+      }).catch((e) => {
+        h.emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
+        return undefined
+      })
       try {
         const chatRunner = selectChatRunner(ctx.provider)
         const r = await chatRunner.runChat({
           cwd: wt.path,
           model: ctx.model,
           effort: ctx.effort,
+          codexServiceTier: ctx.codexServiceTier,
           lang: ctx.lang,
           sessionId: resumeId,
           message: agentMessage,
+          historyAccess,
           allowDanger: ctx.allowDanger,
           ultracode: ctx.ultracode,
           conflictHint: await conflictHint(wt.path),

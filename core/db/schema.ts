@@ -13,6 +13,7 @@ export const projects = sqliteTable('projects', {
   provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
   model: text('model'), // 审核用模型别名/全名（空=全局默认）
   effort: text('effort'), // 审核力度 low/medium/high/xhigh/max（空=不设）
+  codexServiceTier: text('codex_service_tier'), // Codex 专用服务档位；null=不覆盖，fast=启用快速档
   // 自动化「修复↔复查」每条 PR 的回合上限（防自驱闭环烧 token）。在项目配置里和模型选择同处编辑。
   autoMaxRounds: integer('auto_max_rounds').notNull().default(2),
   // 自动化冷却期（分钟）：某条 PR 的 head 第一次被看到后等这么久才动手，给用户时间进去关掉不想跑的。0=不冷却。

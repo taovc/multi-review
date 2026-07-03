@@ -9,12 +9,15 @@ export type FixChatOptions = {
   cwd: string
   model: string
   effort?: string
+  codexServiceTier?: string | null
   lang: string
   sessionId: string | null // 有就 --resume；没有就开新会话
   message: string
+  historyAccess?: string
   conflictHint?: string
   // ── feature 开发 / 危险命令 / ultracode 共用开关 ──
   promptKind?: 'fix' | 'feature' | 'global' // codex 各自的 prompt：fix=修 PR / feature=新分支开发 / global=自由助手
+  baseBranch?: string // feature：开 PR 时的目标分支
   fullAccess?: boolean // codex：true → danger-full-access 沙箱（否则 workspace-write）
   networkAccess?: boolean // codex：true → 放开联网 + web 搜索
   allowDanger?: boolean // claude：放行危险命令守卫（含 git push / gh pr create），默认拦
@@ -44,6 +47,7 @@ export async function runFixChat(opts: FixChatOptions): Promise<FixChatResult> {
     effort: opts.effort,
     sessionId: opts.sessionId,
     message: opts.message,
+    historyAccess: opts.historyAccess,
     systemPrompt: fixSystemPrompt(opts.lang, opts.conflictHint),
     allowDanger: opts.allowDanger,
     ultracode: opts.ultracode,

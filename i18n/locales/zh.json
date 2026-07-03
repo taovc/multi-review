@@ -242,6 +242,8 @@
     "codexSdkInstalled": "SDK 安装",
     "codexAuthenticated": "认证",
     "codexStatusUnknown": "还没有读到 Codex SDK 状态。",
+    "codexFastLabel": "Fast 模式",
+    "codexFastHint": "仅 Codex 项目生效。打开后本项目的审核、复审、Skill、修复聊天、Feature 开发和评论翻译会请求 Codex fast 服务档位。",
     "claudeStatus": "Claude 状态",
     "claudeCli": "本地 Claude",
     "claudeModels": "可用模型",

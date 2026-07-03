@@ -72,6 +72,7 @@ export type ReviewAgentOptions = {
   methodology: string
   model: string
   effort?: string
+  codexServiceTier?: string | null
   lang?: string
   onTool?: (name: string, info: string) => void
 }
@@ -158,6 +159,7 @@ export type GuidedReviewAgentOptions = {
   methodology: string
   model: string
   effort?: string
+  codexServiceTier?: string | null
   lang?: string
   existing: GuidedInput[]
   instruction: string

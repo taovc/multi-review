@@ -1,14 +1,56 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join, delimiter } from 'node:path'
 import os from 'node:os'
-import { Codex, type ModelReasoningEffort, type ThreadEvent } from '@openai/codex-sdk'
+import { execFileSync } from 'node:child_process'
+import { Codex, type ModelReasoningEffort, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { extractCodexErrorMessage } from './codexErrors'
+
+const DEFAULT_PROJECT_DOC_FALLBACKS = ['CLAUDE.md', '.claude/CLAUDE.md']
+const DEFAULT_PROJECT_DOC_MAX_BYTES = 64 * 1024
+export type CodexServiceTier = 'fast'
+export type CodexConfigOverrides = { serviceTier?: CodexServiceTier | string | null }
 
 // 把 UI 的 effort（含 max）映射到 Codex SDK 的档位；空/不认识则交给 SDK 默认。
 export function toCodexEffort(effort?: string): ModelReasoningEffort | undefined {
   if (effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh') return effort
   if (effort === 'max') return 'xhigh'
   return undefined
+}
+
+function splitConfigList(value?: string): string[] {
+  return (value || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+export function codexCliConfig(env: NodeJS.ProcessEnv = process.env, overrides?: CodexConfigOverrides): Record<string, string | number | boolean | string[]> {
+  const fallbacks = splitConfigList(env.CODEX_PROJECT_DOC_FALLBACK_FILENAMES)
+  const maxBytes = Number(env.CODEX_PROJECT_DOC_MAX_BYTES)
+  const rawServiceTier = overrides && 'serviceTier' in overrides ? overrides.serviceTier : env.CODEX_SERVICE_TIER
+  const serviceTier = (rawServiceTier || '').trim()
+  const config: Record<string, string | number | boolean | string[]> = {
+    project_doc_fallback_filenames: fallbacks.length ? fallbacks : DEFAULT_PROJECT_DOC_FALLBACKS,
+    project_doc_max_bytes: Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : DEFAULT_PROJECT_DOC_MAX_BYTES,
+  }
+  if (serviceTier) config.service_tier = serviceTier
+  return config
+}
+
+function isGitWorkTree(cwd: string): boolean {
+  try {
+    execFileSync('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function codexWorkingDirectoryOptions(cwd?: string): Pick<ThreadOptions, 'workingDirectory' | 'skipGitRepoCheck'> {
+  if (!cwd) return { skipGitRepoCheck: true }
+  return isGitWorkTree(cwd)
+    ? { workingDirectory: cwd }
+    : { workingDirectory: cwd, skipGitRepoCheck: true }
 }
 
 // 平台 → Rust target triple（Codex 二进制放在 vendor/<triple>/bin/codex 下）。
@@ -79,20 +121,40 @@ export function resolveCodexExecutable(): string | undefined {
 
 // 有本地 OpenAI key 就用 key；否则交给 Codex CLI 的本地登录（不覆盖 env，让它继承 gh/codex 凭据）。
 // codexPathOverride：显式指向解析到的二进制，绕开 nitro 打包后找不到二进制的问题。
-export function newCodex(): Codex {
+export function newCodex(overrides?: CodexConfigOverrides): Codex {
   const executablePath = resolveCodexExecutable()
   return new Codex({
     ...(executablePath ? { codexPathOverride: executablePath } : {}),
+    config: codexCliConfig(process.env, overrides),
     ...(process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : {}),
   })
 }
 
+function gitCommandPattern(commandPattern: string): RegExp {
+  const gitOption = String.raw`(?:-[A-Za-z](?:\s+\S+)?|--[A-Za-z0-9-]+(?:[=\s]\S+)?)`
+  return new RegExp(String.raw`\bgit\b(?:\s+${gitOption})*\s+${commandPattern}(?=\s|$|[|;&])`, 'i')
+}
+
+const GIT_REMOTE_MUTATION_RE = gitCommandPattern('push')
+const GIT_LOCAL_MUTATION_RES = [
+  gitCommandPattern('(?:add|commit|reset|checkout|switch|merge|rebase|restore|clean|cherry-pick|revert|apply|am|mv|rm)'),
+  gitCommandPattern(String.raw`branch\s+(?:-[dDmMcC]\b|--(?:delete|move|copy|set-upstream-to|unset-upstream)\b|[^\s-]\S*)`),
+  gitCommandPattern(String.raw`tag\s+(?:-[adfsm]\b|--(?:annotate|delete|sign|force|message)\b|[^\s-]\S*)`),
+  gitCommandPattern(String.raw`stash\s+(?:push|pop|apply|drop|clear|save|store|branch|create)\b`),
+  gitCommandPattern(String.raw`worktree\s+(?:add|remove|move|prune|repair)\b`),
+  gitCommandPattern(String.raw`remote\s+(?:add|remove|rm|rename|set-url|prune)\b`),
+  gitCommandPattern(String.raw`config\s+(?:(?:--global|--system|--local)\s+)?(?:--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section|--edit)\b`),
+]
+const GH_MUTATION_RE = /\bgh\s+pr\s+(?:create|review|comment|merge|close|edit|ready|reopen)\b/i
+const GH_API_MUTATION_RE = /\bgh\s+api\b.*(?:--method|-X)\s*(?:POST|PUT|PATCH|DELETE)\b/i
+
 // 禁止的本地/远端写操作：git 写、gh 的 review/comment/merge 等、以及 gh api 的写方法。
 // Codex 跑命令是「事后」检测（命令已执行），配合上传门控/HEAD 校验做多层防御。
-export function isForbiddenRemoteOrGitMutation(command: string): boolean {
-  return /\bgit\s+(?:add|commit|push|reset|checkout|switch|merge|rebase|tag)\b/i.test(command)
-    || /\bgh\s+pr\s+(?:review|comment|merge|close|edit|ready|reopen)\b/i.test(command)
-    || /\bgh\s+api\b.*(?:--method|-X)\s*(?:POST|PUT|PATCH|DELETE)\b/i.test(command)
+export function isForbiddenRemoteOrGitMutation(command: string, opts: { allowLocalGitMutation?: boolean } = {}): boolean {
+  return GIT_REMOTE_MUTATION_RE.test(command)
+    || GH_MUTATION_RE.test(command)
+    || GH_API_MUTATION_RE.test(command)
+    || (!opts.allowLocalGitMutation && GIT_LOCAL_MUTATION_RES.some((re) => re.test(command)))
 }
 
 // 只读 agent 阶段（首审 / 反馈复审 / 复审 / Skill 生成）的事件处理：
@@ -134,18 +196,19 @@ export async function runCodexReadonly(opts: {
   cwd?: string
   model?: string
   effort?: string
+  serviceTier?: CodexServiceTier | string | null
   outputSchema?: unknown
   allowNetwork?: boolean // 复审/反馈复审要用 gh 读评论 → 放开网络（写操作仍被命令守卫拦截）
   label: string
   onTool?: (name: string, info: string) => void
   onStop?: (stop: () => void) => void // 暴露中断回调：停止时打标记，事件循环检测到就中断消费（feature 分析阶段的停止按钮用）
 }): Promise<string> {
-  const codex = newCodex()
+  const codex = newCodex('serviceTier' in opts ? { serviceTier: opts.serviceTier } : undefined)
   const effort = toCodexEffort(opts.effort)
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
     ...(effort ? { modelReasoningEffort: effort } : {}),
-    ...(opts.cwd ? { workingDirectory: opts.cwd } : { skipGitRepoCheck: true }),
+    ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',
     networkAccessEnabled: !!opts.allowNetwork,
@@ -176,13 +239,14 @@ export async function runCodexText(opts: {
   cwd?: string
   model?: string
   effort?: string
+  serviceTier?: CodexServiceTier | string | null
 }): Promise<string> {
-  const codex = newCodex()
+  const codex = newCodex('serviceTier' in opts ? { serviceTier: opts.serviceTier } : undefined)
   const effort = toCodexEffort(opts.effort)
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
     ...(effort ? { modelReasoningEffort: effort } : {}),
-    ...(opts.cwd ? { workingDirectory: opts.cwd } : { skipGitRepoCheck: true }),
+    ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',
     networkAccessEnabled: false,

@@ -27,6 +27,7 @@ export type ReviewJobCtx = {
   provider?: ReviewProvider
   model: string // 当前 provider 的实模型（不混用）
   effort: string
+  codexServiceTier?: string | null
   lang?: string // AI 产出的工作语言（UI locale），缺省 zh 保持旧行为
   guided?: boolean // true=带反馈针对性复审；false/undefined=全新首审
 }
@@ -86,7 +87,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       emit('stage', 'AI 针对你的反馈复审中…')
       const g = await selectReviewRunner(ctx.provider).runGuidedReview({
         cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
-        defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, lang: ctx.lang,
+        defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
         instruction: review?.reviewInstruction || '', globalNotes: review?.globalNotes || '',
         existing: existing.map((f: any) => ({ fid: f.fid, severity: f.severity, title: f.title, location: f.location, problem: f.problem, reviewerNote: f.notes })),
         onTool: (n, i) => emit('tool', `${n} ${i}`),
@@ -135,7 +136,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       const reviewRunner = selectReviewRunner(ctx.provider)
       const r = await reviewRunner.runReview({
         cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
-        defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, lang: ctx.lang,
+        defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
         onTool: (name, info) => emit('tool', `${name} ${info}`),
       })
       result = r.result
@@ -227,7 +228,7 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
       lastPostSha: review?.lastPostSha ?? null,
       requirement: review?.requirement ?? null,
       findings: existing.map((f: any) => ({ fid: f.fid, title: f.title, location: f.location, problem: f.problem, fix: f.fix, notes: f.notes })),
-      methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, lang: ctx.lang, onTool: (n, i) => emit('tool', `${n} ${i}`),
+      methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, onTool: (n, i) => emit('tool', `${n} ${i}`),
     })
 
     if (!db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()) {

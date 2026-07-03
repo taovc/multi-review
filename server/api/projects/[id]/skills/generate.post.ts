@@ -45,6 +45,7 @@ export default defineEventHandler(async (event) => {
       cwd: project.localPath,
       model: rc.model,
       effort: rc.effort,
+      codexServiceTier: rc.codexServiceTier,
       baseContent,
       instruction: b.instruction || null,
       onTool: (name, info) => emit('tool', `[${++toolN}] ${name} ${info}`),

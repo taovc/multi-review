@@ -1,6 +1,6 @@
 import { type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { classifyCodexError, extractCodexErrorMessage, formatCodexProviderError } from './codexErrors'
-import { isForbiddenRemoteOrGitMutation, newCodex, toCodexEffort } from './codexAgent'
+import { codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, newCodex, toCodexEffort } from './codexAgent'
 import { outputLangClause } from './lang'
 import { askUserClause } from './chat'
 import type { ChatRunner } from './runners'
@@ -25,7 +25,26 @@ export function shouldRetryCodexChatWithoutThread(error: unknown, hadSessionId: 
   return hadSessionId && classifyCodexError(error) === 'invalid_thread'
 }
 
-function buildCodexChatPrompt(opts: FixChatOptions): string {
+function codexUltracodePrompt(kind: 'fix' | 'feature' | 'global'): string {
+  const askUser = kind === 'feature'
+    ? `- Ask ONLY on genuine decision points: architecture, data model, external contract, or a real user-facing tradeoff. When you must ask, STOP and emit exactly one fenced block, then end the turn:
+\`\`\`ask-user
+<your question in one or two lines>
+- <option A>
+- <option B (推荐)>
+\`\`\`
+  Mark the recommended option with (推荐).`
+    : '- If you hit a real blocker or need a product decision, stop and state the exact question clearly; do not invent requirements.'
+
+  return `Ultracode mode is enabled for this Codex turn.
+- Use deep reasoning and a deliberate implementation workflow: inspect the relevant project docs first, then read the actual code before editing.
+- Keep a concise internal todo list for multi-step work, but keep the final reply brief.
+- Prefer the smallest complete, reviewable slice over broad rewrites.
+- Verify with targeted tests or checks when practical; if you cannot run them, say exactly why.
+${askUser}`
+}
+
+export function buildCodexChatPrompt(opts: FixChatOptions): string {
   if (opts.promptKind === 'feature') return buildCodexFeaturePrompt(opts)
   if (opts.promptKind === 'global') return buildCodexGlobalPrompt(opts)
   const opening = opts.sessionId
@@ -42,6 +61,8 @@ This is a CONVERSATION, not a fresh review. Treat the reviewer's message below a
 - Do NOT push, post comments, reply to GitHub, or mutate any remote service.
 - Do NOT run git add, git commit, git push, gh pr review/comment/merge, or gh api mutations.
 - Leave edits unstaged and uncommitted. The Node process will inspect the diff, commit it, and update fixHeadSha.
+${opts.historyAccess ? `\n${opts.historyAccess}` : ''}
+${opts.ultracode ? `\n${codexUltracodePrompt('fix')}` : ''}
 
 Reviewer's message:
 ${opts.message}
@@ -52,17 +73,29 @@ ${askUserClause(opts.lang)}`
 }
 
 // Feature 开发：在「从默认分支拉的新功能分支」worktree 里自由开发（不是修 PR）。
-function buildCodexFeaturePrompt(opts: FixChatOptions): string {
+export function buildCodexFeaturePrompt(opts: FixChatOptions): string {
   const opening = opts.sessionId
     ? 'You are continuing the same Codex thread, building a feature inside its isolated git worktree.'
     : 'You are starting a Codex chat to build a NEW feature inside an isolated git worktree on a fresh feature branch (created from the default branch).'
+  const base = opts.baseBranch || 'the default branch'
 
   return `${opening}
 
 The current directory is that worktree — implement what the user asks by editing files directly. Investigate the repo whenever it helps. Keep the change a focused, reviewable slice.
 
-- Do NOT git add, git commit, or git push. Do NOT push, post comments, reply to GitHub, or mutate any remote service.
-- Leave your edits uncommitted in the worktree. The user reviews them in the UI and clicks "Open PR", which commits and pushes for them.
+Working principles:
+- Explore before acting: read the relevant code first, reuse existing patterns/conventions, and keep each change a small, focused, reviewable slice. If the request is too big, propose the smallest first slice.
+- Just do it when it's clear: if the change is unambiguous with no real fork, implement it directly.
+- Ask ONLY on genuine decision points (architecture / data model / external contract / a real user-facing tradeoff). When you must ask, STOP and emit EXACTLY one fenced block, then END your turn and wait (the user's answer arrives as the next message):
+\`\`\`ask-user
+<your question in one or two lines>
+- <option A>
+- <option B (推荐)>
+\`\`\`
+  Mark your recommended option with (推荐). Batch related questions; never ask about implementation details you can decide yourself; keep the number of questions minimal.
+- Do NOT commit or push by default — leave your edits uncommitted in the worktree. EXCEPTION: when the user explicitly asks you to open a PR (e.g. "开 PR" / "open a PR"), then: commit with an English conventional-commit message; push the current branch with \`git push -u origin HEAD\` (NEVER a bare \`git push\` — its upstream is intentionally unset, and never push to ${base}); then run \`gh pr create --base ${base} --title <English> --body <English>\` and report the resulting PR URL.
+${opts.historyAccess ? `\n${opts.historyAccess}` : ''}
+${opts.ultracode ? `\n${codexUltracodePrompt('feature')}` : ''}
 
 User's message:
 ${opts.message}
@@ -73,13 +106,15 @@ ${askUserClause(opts.lang)}`
 }
 
 // 全局「啥都能干」助手（codex）：自由聊 + 直接动手。git 写/push 类会被「执行后」守卫拦（codex 的固有限制）。
-function buildCodexGlobalPrompt(opts: FixChatOptions): string {
+export function buildCodexGlobalPrompt(opts: FixChatOptions): string {
   const opening = opts.sessionId
     ? 'You are continuing the same Codex thread as a general-purpose coding assistant.'
     : 'You are a general-purpose coding assistant in a Codex thread.'
   return `${opening}
 
 The current directory is the user's chosen working directory. Investigate and do whatever the user asks by editing files / running commands directly. Keep answers focused.
+${opts.historyAccess ? `\n${opts.historyAccess}` : ''}
+${opts.ultracode ? `\n${codexUltracodePrompt('global')}` : ''}
 
 User's message:
 ${opts.message}
@@ -95,6 +130,8 @@ function emitCodexChatEvent(
   enforceGitGuard: boolean, // fix/feature 有上传门控 → 拦 git 写；global 是「啥都能干」助手 → 不拦（沙箱/断网即边界，对齐 claude-global）
   onTool?: (name: string, info: string) => void,
   onText?: (text: string) => void,
+  allowFeaturePublishCommands = false,
+  allowLocalGitMutations = false,
 ): string | null {
   if (event.type === 'turn.failed') throw new CodexChatError(`Codex chat turn failed: ${extractCodexErrorMessage(event.error.message)}`)
   if (event.type === 'error') throw new CodexChatError(`Codex chat stream failed: ${extractCodexErrorMessage(event.message)}`)
@@ -113,7 +150,7 @@ function emitCodexChatEvent(
 
   if (item.type === 'command_execution') {
     onTool?.('CodexCommand', item.command.slice(0, 100))
-    if (enforceGitGuard && isForbiddenRemoteOrGitMutation(item.command)) {
+    if (enforceGitGuard && isForbiddenRemoteOrGitMutation(item.command, { allowLocalGitMutation: allowLocalGitMutations }) && !(allowFeaturePublishCommands && isAllowedFeaturePublishCommand(item.command))) {
       throw new CodexChatError(`Codex chat attempted a forbidden git/GitHub mutation: ${item.command}`)
     }
   } else if (item.type === 'file_change') {
@@ -130,13 +167,24 @@ function emitCodexChatEvent(
   return null
 }
 
+export function isAllowedFeaturePublishCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (!trimmed || /[;\n|<>`$]/.test(trimmed)) return false
+  const segments = trimmed.split(/\s+&&\s+/).map((part) => part.trim()).filter(Boolean)
+  return segments.length > 0 && segments.every((part) =>
+    /^git\s+add(?:\s+.+)?$/i.test(part)
+    || /^git\s+commit(?:\s+.+)?$/i.test(part)
+    || /^git\s+push\s+(?:-u|--set-upstream)\s+origin\s+HEAD$/i.test(part)
+    || /^gh\s+pr\s+create(?:\s+.+)?$/i.test(part),
+  )
+}
+
 export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult> {
   const runTurn = async (sessionId: string | null): Promise<FixChatResult> => {
-    // ultracode 后台激活：给 agent 的消息注入前缀（与 claude 运行器一致；存库/展示仍是干净消息）。
-    const runOpts = { ...opts, sessionId, message: opts.ultracode ? `ultracode: ${opts.message}` : opts.message }
+    const runOpts = { ...opts, sessionId }
     // 用共享的 newCodex()：它带 codexPathOverride，绕开 nitro 打包后找不到二进制的问题。
-    const codex = newCodex()
-    const effort = toCodexEffort(runOpts.effort)
+    const codex = newCodex('codexServiceTier' in runOpts ? { serviceTier: runOpts.codexServiceTier } : undefined)
+    const effort = toCodexEffort(runOpts.ultracode ? 'xhigh' : runOpts.effort)
     // 网络只跟随「feature 开 PR」这类显式意图（feature 会同时传 fullAccess+networkAccess）。
     // fix 的 allowDanger 只放开本地沙箱（rm 等危险本地操作），**不开网络**——fix 从不需要 agent 自己 push
     // （上传走独立 Node 路径），且 codex 的 git-mutation 守卫是「执行后」才拦，开了网络会让 push 先落地再报错。
@@ -145,7 +193,7 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const threadOptions: ThreadOptions = {
       ...(runOpts.model ? { model: runOpts.model } : {}),
       ...(effort ? { modelReasoningEffort: effort } : {}),
-      workingDirectory: runOpts.cwd,
+      ...codexWorkingDirectoryOptions(runOpts.cwd),
       sandboxMode: fullSandbox ? 'danger-full-access' : 'workspace-write',
       approvalPolicy: 'never',
       networkAccessEnabled: network,
@@ -163,9 +211,11 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const { events } = await thread.runStreamed(buildCodexChatPrompt(runOpts), { signal: controller.signal })
     const seenTextByItem = new Map<string, number>()
     let text = ''
+    const allowFeaturePublishCommands = runOpts.promptKind === 'feature' && !!runOpts.allowDanger && !!runOpts.networkAccess
+    const allowLocalGitMutations = runOpts.promptKind !== 'feature' && !!runOpts.allowDanger
     for await (const event of events) {
       if (event.type === 'thread.started') runOpts.onSessionId?.(event.thread_id)
-      const finalText = emitCodexChatEvent(event, seenTextByItem, runOpts.promptKind !== 'global', runOpts.onTool, runOpts.onText)
+      const finalText = emitCodexChatEvent(event, seenTextByItem, runOpts.promptKind !== 'global', runOpts.onTool, runOpts.onText, allowFeaturePublishCommands, allowLocalGitMutations)
       if (finalText != null) text = finalText
     }
 

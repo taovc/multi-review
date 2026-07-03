@@ -85,8 +85,8 @@ async function claudePrint(model: string, prompt: string): Promise<string> {
   const out = await runClaude(['--print', '--model', model || 'sonnet'], { input: prompt, timeout: 120_000 })
   return String(out).trim()
 }
-function makePrint(provider: ReviewProvider, model: string, cwd?: string): (prompt: string) => Promise<string> {
-  if (provider === 'codex') return (prompt) => runCodexText({ prompt, model: model || undefined, cwd })
+function makePrint(provider: ReviewProvider, model: string, cwd?: string, codexServiceTier?: string | null): (prompt: string) => Promise<string> {
+  if (provider === 'codex') return (prompt) => runCodexText({ prompt, model: model || undefined, cwd, serviceTier: codexServiceTier })
   return (prompt) => claudePrint(model, prompt)
 }
 
@@ -95,10 +95,11 @@ async function translate(
   provider: ReviewProvider,
   model: string,
   cwd: string | undefined,
+  codexServiceTier: string | null | undefined,
   findings: PostFinding[],
   globalNotes: string,
 ): Promise<{ globalNotesEn: string; bodies: Record<string, string> }> {
-  const print = makePrint(provider, model, cwd)
+  const print = makePrint(provider, model, cwd, codexServiceTier)
   const tasks: Promise<void>[] = []
   const bodies: Record<string, string> = {}
   let globalNotesEn = ''
@@ -175,12 +176,13 @@ export type AssembledReview = {
 export async function assembleReview(opts: {
   provider?: ReviewProvider
   model: string
+  codexServiceTier?: string | null
   cwd?: string // codex 翻译需要一个 workingDirectory（项目本地 clone 路径），缺省则 skipGitRepoCheck
   findings: PostFinding[]
   globalNotes: string
   diff: string
 }): Promise<AssembledReview> {
-  const { globalNotesEn, bodies } = await translate(opts.provider === 'codex' ? 'codex' : 'claude', opts.model, opts.cwd, opts.findings, opts.globalNotes)
+  const { globalNotesEn, bodies } = await translate(opts.provider === 'codex' ? 'codex' : 'claude', opts.model, opts.cwd, opts.codexServiceTier, opts.findings, opts.globalNotes)
   const right = rightLines(opts.diff)
 
   const comments: AssembledReview['comments'] = []

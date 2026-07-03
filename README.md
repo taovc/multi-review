@@ -84,7 +84,7 @@ cp .env.example .env
 | 变量 | 何时修改 |
 |---|---|
 | `PORT` | `3001` 被占用时 |
-| `INFERENCE_PROVIDER` | `claude`（本地订阅，默认）或 `anthropic-api` |
+| `INFERENCE_PROVIDER` | `claude`（本地订阅，默认）、`codex` 或 `anthropic-api` |
 | `ANTHROPIC_API_KEY` | **仅**在 `anthropic-api` 模式，或本地 `claude` 未登录时 |
 
 全部变量详见 [配置（.env）](#配置env) 一节。
@@ -135,14 +135,22 @@ pnpm dev                  # 默认 http://localhost:3001
 | 变量 | 示例 | 说明 |
 |---|---|---|
 | `PORT` | `3001` | 端口 |
-| `INFERENCE_PROVIDER` | `claude` | `claude`(本地订阅) / `anthropic-api` |
+| `INFERENCE_PROVIDER` | `claude` | `claude`(本地订阅) / `codex` / `anthropic-api` |
 | `ANTHROPIC_MODEL` | `sonnet` | 审核默认模型（项目里可覆盖） |
+| `CODEX_MODEL` |  | Codex 项目默认模型；留空走 Codex 默认 |
+| `CODEX_SERVICE_TIER` |  | 可选，Codex/OpenAI 全局默认速度档；项目配置页的 Fast 开关会按项目覆盖它。取消全局 fast 就留空/删除，若 `~/.codex/config.toml` 也设置了 `service_tier`，那里也要删除 |
+| `CODEX_PROJECT_DOC_FALLBACK_FILENAMES` | `CLAUDE.md,.claude/CLAUDE.md` | 无 `AGENTS.md` 时 Codex 读取的项目说明 fallback |
 | `TRANSLATE_MODEL` | `sonnet` | 发评论中→英翻译用的轻量模型 |
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | 仅 api 模式或本地未登录时 |
 | `DEFAULT_REPO` | `owner/repo` | 可选，粘纯数字 PR 时的默认仓库 |
 | `DB_PATH` | `./data/cockpit.db` | SQLite 路径 |
 | `REPOS_DIR` | `./data/worktrees` | review 的 git worktree 落地根 |
 | `MAX_CONCURRENCY` | `3` | 并行审核上限 |
+
+### Codex 日志提示
+
+- `Not inside a trusted directory and --skip-git-repo-check was not specified`：Codex 从非 git 目录启动。项目页全局助手会优先用项目本地路径作为工作目录；如果手动 `/cd` 到非 git 目录，运行器会自动跳过 git repo 检查。
+- `CodexWarning failed to parse plugin hooks config .../claude-plugins-official/.../hooks.json`：Codex 扫到了 Claude 插件的 hook 配置，但不认识这个 Claude hook 格式；这类 warning 通常只表示该 hook 被忽略，不代表当前任务失败。
 
 ## 目录
 

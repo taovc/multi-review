@@ -137,6 +137,9 @@ See `.env.example`; key entries:
 | `PORT` | `3001` | Port |
 | `INFERENCE_PROVIDER` | `claude` | `claude` (local subscription) / `anthropic-api` |
 | `ANTHROPIC_MODEL` | `sonnet` | Default review model (overridable per project) |
+| `CODEX_MODEL` |  | Default model for Codex projects; empty uses the Codex default |
+| `CODEX_SERVICE_TIER` |  | Optional global default Codex/OpenAI speed tier; the project-level Fast toggle overrides it. To disable global fast, leave/delete it and also remove `service_tier` from `~/.codex/config.toml` if set globally |
+| `CODEX_PROJECT_DOC_FALLBACK_FILENAMES` | `CLAUDE.md,.claude/CLAUDE.md` | Project docs Codex reads when `AGENTS.md` is absent |
 | `TRANSLATE_MODEL` | `sonnet` | Lightweight model for Chinese→English translation when posting |
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Only in api mode or when not logged in locally |
 | `DEFAULT_REPO` | `owner/repo` | Optional, default repo when pasting a bare PR number |

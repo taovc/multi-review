@@ -30,6 +30,7 @@ async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatRe
     effort: opts.effort,
     sessionId: opts.sessionId,
     message: opts.message,
+    historyAccess: opts.historyAccess,
     systemPrompt: featureSystemPrompt(opts.lang, opts.baseBranch),
     allowDanger: opts.allowDanger,
     ultracode: opts.ultracode,

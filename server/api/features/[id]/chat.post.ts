@@ -6,7 +6,7 @@ import { runFeatureDevelopJob, isFeatureBusy, type FeatureDevelopJobCtx } from '
 
 // 单段式开发对话：在隔离 worktree 里 bypassPermissions 全权限开发。
 // allowDanger 放行危险命令（含 git push / gh pr create —— 「开 PR」按钮会带上 true）。
-// ultracode = 后台激活（管线给 agent 的消息注入 `ultracode:` 前缀，存库仍是干净消息）。
+// ultracode = 后台激活；存库仍是干净消息，具体执行方式交给 provider runner。
 const Body = z.object({
   message: z.string().min(1).max(20000),
   allowDanger: z.boolean().default(false),
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
   const ctx: FeatureDevelopJobCtx = {
     db: d, schema, taskId: id,
     localPath: project.localPath, reposDir: cfg.reposDir as string, defaultBranch: project.defaultBranch, repo: project.repo,
-    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, lang: task.lang || 'zh',
+    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: task.lang || 'zh',
     allowDanger, ultracode, assetsDir,
   }
   void runFeatureDevelopJob(ctx, message).catch((e) => console.error('[feature-develop] job failed', e))

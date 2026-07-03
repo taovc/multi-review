@@ -15,6 +15,7 @@ export type SkillGenOptions = {
   cwd: string
   model: string
   effort?: string
+  codexServiceTier?: string | null
   baseContent?: string | null
   instruction?: string | null // 用户自定义指令（介入生成方向）
   onTool?: (name: string, info: string) => void

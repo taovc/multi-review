@@ -204,6 +204,7 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
+      serviceTier: opts.codexServiceTier,
       outputSchema: REVIEW_RESULT_JSON_SCHEMA,
       allowNetwork: true, // 让 gh 能读 PR 元数据；写操作由命令守卫拦截
       label: 'review',
@@ -223,6 +224,7 @@ export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions):
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
+      serviceTier: opts.codexServiceTier,
       outputSchema: GUIDED_RESULT_JSON_SCHEMA,
       allowNetwork: true,
       label: 'guided review',
@@ -242,6 +244,7 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
+      serviceTier: opts.codexServiceTier,
       outputSchema: RECHECK_RESULT_JSON_SCHEMA,
       allowNetwork: true,
       label: 'recheck',
