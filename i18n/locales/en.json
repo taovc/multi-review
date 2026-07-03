@@ -474,7 +474,6 @@
     "send": "Send",
     "newSession": "New chat",
     "history": "History",
-    "providerHint": "Provider for the global assistant. You can switch the current chat; Claude and Codex native sessions are stored separately.",
     "empty": "Start a conversation",
     "thinking": "Working",
     "untitled": "Untitled chat",

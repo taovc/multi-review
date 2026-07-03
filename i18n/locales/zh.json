@@ -474,7 +474,6 @@
     "send": "发送",
     "newSession": "新对话",
     "history": "历史",
-    "providerHint": "全局助手的 provider。可切换当前会话；Claude/Codex 的原生 session 分开保存。",
     "empty": "开始一段对话吧",
     "thinking": "处理中",
     "untitled": "未命名对话",

@@ -5,9 +5,14 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runGlobalChatJob, isGlobalChatting, type GlobalChatJobCtx } from '~core/global/pipeline'
+import type { ReviewProvider } from '~core/agent/runners'
 
 // 发一条全局会话消息（fire-and-forget，进度走 SSE）。可带 cwd（/cd）：校验存在后持久化到 session。
 const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional() })
+
+function defaultGlobalProvider(cfg: ReturnType<typeof useRuntimeConfig>): ReviewProvider {
+  return cfg.inferenceProvider === 'codex' ? 'codex' : 'claude'
+}
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -27,7 +32,12 @@ export default defineEventHandler(async (event) => {
 
   // 助手项目无关：model/effort 优先用会话自带的，没有就回退到当前 provider 的中心默认配置。
   const cfg = useRuntimeConfig()
-  const provider = session.provider === 'codex' ? 'codex' : 'claude'
+  const configuredProvider = defaultGlobalProvider(cfg)
+  const hasNativeSession = !!session.sessionId || !!session.codexSessionId
+  const provider = hasNativeSession ? (session.provider === 'codex' ? 'codex' : 'claude') : configuredProvider
+  if (!hasNativeSession && session.provider !== provider) {
+    d.update(schema.globalSessions).set({ provider, model: null }).where(eq(schema.globalSessions.id, id)).run()
+  }
   const ctx: GlobalChatJobCtx = {
     db: d, schema, sessionId: id, cwd: workdir,
     provider,
