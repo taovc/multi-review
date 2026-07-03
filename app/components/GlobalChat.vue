@@ -5,6 +5,7 @@ const { t, locale } = useI18n()
 const toast = useToast()
 
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string; seq: number }
+type Provider = 'claude' | 'codex'
 type Session = { id: string; title: string | null; provider: string; cwd: string | null; status: string; error: string | null; lastUsedAt: string }
 type Detail = { session: Session; turns: Turn[]; chatting: boolean }
 
@@ -20,16 +21,36 @@ const busy = ref(false)
 // 不再每条消息重点。ultracode 不再往输入框塞前缀，改由后端在发给 agent 时注入（你永远看不到前缀）。
 const allowDanger = ref(false)
 const ultracodeOn = ref(false)
+const selectedProvider = ref<Provider>('claude')
 const LS_DANGER = 'mr.global.allowDanger'
 const LS_ULTRA = 'mr.global.ultracode'
+const LS_PROVIDER = 'mr.global.provider'
 onMounted(() => {
   allowDanger.value = localStorage.getItem(LS_DANGER) === '1'
   ultracodeOn.value = localStorage.getItem(LS_ULTRA) === '1'
+  selectedProvider.value = localStorage.getItem(LS_PROVIDER) === 'codex' ? 'codex' : 'claude'
 })
 watch(allowDanger, (v) => { if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0') })
+watch(selectedProvider, (v) => { if (import.meta.client) localStorage.setItem(LS_PROVIDER, v) })
 function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
+}
+function normalizeProvider(provider?: string | null): Provider {
+  return provider === 'codex' ? 'codex' : 'claude'
+}
+const activeProvider = computed<Provider>(() => normalizeProvider(data.value?.session.provider || selectedProvider.value))
+async function setProvider(provider: Provider) {
+  if (chatting.value || busy.value) return
+  const prev = activeProvider.value
+  selectedProvider.value = provider
+  if (!sessionId.value || !data.value?.session) return
+  data.value.session.provider = provider
+  await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'PATCH', body: { provider } }).catch((e: any) => {
+    selectedProvider.value = prev
+    if (data.value?.session) data.value.session.provider = prev
+    notify(e?.data?.statusMessage || t('common.failed'))
+  })
 }
 const { confirming } = useInlineConfirm() // '' | 'delete'（抽屉内联确认，不用弹窗）
 const renaming = ref(false)
@@ -50,7 +71,7 @@ function notify(msg: string, ok = false) {
 // ── session 生命周期 ──
 async function ensureSession(): Promise<string> {
   if (sessionId.value) return sessionId.value
-  const s = await $fetch<Session>('/api/global/sessions', { method: 'POST', body: {} })
+  const s = await $fetch<Session>('/api/global/sessions', { method: 'POST', body: { provider: selectedProvider.value } })
   sessionId.value = s.id
   data.value = { session: s, turns: [], chatting: false }
   openSSE()
@@ -63,6 +84,7 @@ async function load() {
   const detail = await $fetch<Detail>(`/api/global/sessions/${sid}`)
   if (my !== loadToken || sid !== sessionId.value) return // 过期结果（切了会话 / 有更新的 load）→ 丢弃
   data.value = detail
+  selectedProvider.value = normalizeProvider(detail.session.provider)
 }
 // 新对话 = 清空到空白；不立刻建 session（懒创建：第一条消息才落库，避免一打开就冒「未命名对话」）。
 function newSession() {
@@ -264,6 +286,20 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
         <div class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default text-xs">
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" @click="newSession">{{ $t('global.newSession') }}</button>
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" :class="view === 'history' ? 'bg-muted text-highlighted' : ''" @click="view = 'history'; loadHistory()">{{ $t('global.history') }}</button>
+          <div class="inline-flex rounded border border-default overflow-hidden shrink-0" :title="$t('global.providerHint')">
+            <button
+              class="px-2 py-1"
+              :class="activeProvider === 'claude' ? 'bg-muted text-highlighted' : 'hover:bg-muted text-dimmed'"
+              :disabled="chatting || busy"
+              @click="setProvider('claude')"
+            >{{ $t('config.providerClaude') }}</button>
+            <button
+              class="px-2 py-1 border-l border-default"
+              :class="activeProvider === 'codex' ? 'bg-muted text-highlighted' : 'hover:bg-muted text-dimmed'"
+              :disabled="chatting || busy"
+              @click="setProvider('codex')"
+            >{{ $t('config.providerCodex') }}</button>
+          </div>
           <!-- 可编辑标题（点一下改名）-->
           <input
             v-if="renaming" v-model="renameVal" class="flex-1 min-w-0 text-xs border-b border-inverted outline-none bg-transparent py-0.5"

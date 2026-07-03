@@ -474,6 +474,7 @@
     "send": "Envoyer",
     "newSession": "Nouveau chat",
     "history": "Historique",
+    "providerHint": "Provider de l'assistant global. Vous pouvez changer le chat courant ; les sessions natives Claude et Codex sont conservées séparément.",
     "empty": "Démarrer une conversation",
     "thinking": "En cours",
     "untitled": "Chat sans titre",
