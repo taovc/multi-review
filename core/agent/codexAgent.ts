@@ -1,7 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join, delimiter } from 'node:path'
 import os from 'node:os'
-import { Codex, type ModelReasoningEffort, type ThreadEvent } from '@openai/codex-sdk'
+import { execFileSync } from 'node:child_process'
+import { Codex, type ModelReasoningEffort, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { extractCodexErrorMessage } from './codexErrors'
 
 const DEFAULT_PROJECT_DOC_FALLBACKS = ['CLAUDE.md', '.claude/CLAUDE.md']
@@ -34,6 +35,22 @@ export function codexCliConfig(env: NodeJS.ProcessEnv = process.env, overrides?:
   }
   if (serviceTier) config.service_tier = serviceTier
   return config
+}
+
+function isGitWorkTree(cwd: string): boolean {
+  try {
+    execFileSync('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function codexWorkingDirectoryOptions(cwd?: string): Pick<ThreadOptions, 'workingDirectory' | 'skipGitRepoCheck'> {
+  if (!cwd) return { skipGitRepoCheck: true }
+  return isGitWorkTree(cwd)
+    ? { workingDirectory: cwd }
+    : { workingDirectory: cwd, skipGitRepoCheck: true }
 }
 
 // 平台 → Rust target triple（Codex 二进制放在 vendor/<triple>/bin/codex 下）。
@@ -172,7 +189,7 @@ export async function runCodexReadonly(opts: {
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
     ...(effort ? { modelReasoningEffort: effort } : {}),
-    ...(opts.cwd ? { workingDirectory: opts.cwd } : { skipGitRepoCheck: true }),
+    ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',
     networkAccessEnabled: !!opts.allowNetwork,
@@ -210,7 +227,7 @@ export async function runCodexText(opts: {
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
     ...(effort ? { modelReasoningEffort: effort } : {}),
-    ...(opts.cwd ? { workingDirectory: opts.cwd } : { skipGitRepoCheck: true }),
+    ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',
     networkAccessEnabled: false,

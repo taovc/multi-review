@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { statSync } from 'node:fs'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 import type { ReviewProvider } from '~core/agent/runners'
@@ -14,6 +15,16 @@ const Body = z.object({
   title: z.string().max(200).optional(),
 })
 
+function existingPath(path?: string | null): string | null {
+  const p = path?.trim()
+  if (!p) return null
+  try {
+    return statSync(p).isDirectory() ? p : null
+  } catch {
+    return null
+  }
+}
+
 export default defineEventHandler(async (event) => {
   const b = Body.parse((await readBody(event).catch(() => ({}))) || {})
   const d = db()
@@ -28,7 +39,7 @@ export default defineEventHandler(async (event) => {
     provider,
     model: b.model?.trim() || (b.projectId ? providerDefaults.model : null) || null,
     effort: b.effort?.trim() || (b.projectId ? providerDefaults.effort : null) || null,
-    cwd: b.cwd?.trim() || null,
+    cwd: existingPath(b.cwd) || existingPath(providerDefaults.cwd) || null,
     sessionId: null,
     codexSessionId: null,
     status: 'idle' as const,

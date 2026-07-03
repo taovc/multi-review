@@ -1,6 +1,6 @@
 import { type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { classifyCodexError, extractCodexErrorMessage, formatCodexProviderError } from './codexErrors'
-import { isForbiddenRemoteOrGitMutation, newCodex, toCodexEffort } from './codexAgent'
+import { codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, newCodex, toCodexEffort } from './codexAgent'
 import { outputLangClause } from './lang'
 import { askUserClause } from './chat'
 import type { ChatRunner } from './runners'
@@ -192,7 +192,7 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const threadOptions: ThreadOptions = {
       ...(runOpts.model ? { model: runOpts.model } : {}),
       ...(effort ? { modelReasoningEffort: effort } : {}),
-      workingDirectory: runOpts.cwd,
+      ...codexWorkingDirectoryOptions(runOpts.cwd),
       sandboxMode: fullSandbox ? 'danger-full-access' : 'workspace-write',
       approvalPolicy: 'never',
       networkAccessEnabled: network,

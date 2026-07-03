@@ -9,6 +9,7 @@ export type GlobalAgentDefaults = {
   model: string
   effort?: string
   codexServiceTier?: string | null
+  cwd?: string
 }
 
 function readConfig(cfg: RuntimeAgentConfig, key: string): unknown {
@@ -31,6 +32,7 @@ export function runtimeGlobalAgentDefaults(cfg: RuntimeAgentConfig, provider?: R
 
 export function projectGlobalAgentDefaults(project: any, cfg: RuntimeAgentConfig): GlobalAgentDefaults {
   const provider: ReviewProvider = project?.provider === 'codex' ? 'codex' : 'claude'
+  const cwd = typeof project?.localPath === 'string' && project.localPath.trim() ? project.localPath.trim() : undefined
   return {
     provider,
     model: provider === 'codex'
@@ -38,6 +40,7 @@ export function projectGlobalAgentDefaults(project: any, cfg: RuntimeAgentConfig
       : (project?.model || str(readConfig(cfg, 'anthropicModel'))),
     effort: project?.effort || undefined,
     codexServiceTier: provider === 'codex' && project?.codexServiceTier === 'fast' ? 'fast' : null,
+    ...(cwd ? { cwd } : {}),
   }
 }
 
