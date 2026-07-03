@@ -3,6 +3,7 @@
 // 命令面板(/clear /resume /copy /cd)是自建的(headless 没有原生 slash REPL)。
 const { t, locale } = useI18n()
 const toast = useToast()
+const route = useRoute()
 
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string; seq: number }
 type Session = { id: string; title: string | null; provider: string; cwd: string | null; status: string; error: string | null; lastUsedAt: string }
@@ -38,6 +39,12 @@ let es: EventSource | null = null
 // load 竞态护栏（同 FeatureDrawer）：切会话 / 新对话时，上一个会话在途的 load 迟到返回不能盖回 data。
 let loadToken = 0
 
+const currentProjectId = computed(() => {
+  if (!route.path.startsWith('/projects/')) return undefined
+  const id = route.params.id
+  return typeof id === 'string' && id.trim() ? id : undefined
+})
+
 const chatting = computed(() => {
   const ts = data.value?.turns ?? []
   return ts.length > 0 && ts[ts.length - 1]!.role === 'assistant' && ts[ts.length - 1]!.status === 'streaming'
@@ -50,7 +57,7 @@ function notify(msg: string, ok = false) {
 // ── session 生命周期 ──
 async function ensureSession(): Promise<string> {
   if (sessionId.value) return sessionId.value
-  const s = await $fetch<Session>('/api/global/sessions', { method: 'POST', body: {} })
+  const s = await $fetch<Session>('/api/global/sessions', { method: 'POST', body: { projectId: currentProjectId.value } })
   sessionId.value = s.id
   data.value = { session: s, turns: [], chatting: false }
   openSSE()
@@ -206,7 +213,7 @@ async function send(skipSlash = false) {
   liveAssistant.value = ''
   try {
     const id = await ensureSession()
-    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
+    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, projectId: currentProjectId.value } })
     pendingCwd.value = null
     await load()
   } catch (e: any) {

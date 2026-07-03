@@ -6,17 +6,14 @@ import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runGlobalChatJob, isGlobalChatting, type GlobalChatJobCtx } from '~core/global/pipeline'
 import type { ReviewProvider } from '~core/agent/runners'
+import { resolveGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../../../../utils/globalAgentConfig'
 
 // 发一条全局会话消息（fire-and-forget，进度走 SSE）。可带 cwd（/cd）：校验存在后持久化到 session。
-const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional() })
-
-function defaultGlobalProvider(cfg: ReturnType<typeof useRuntimeConfig>): ReviewProvider {
-  return cfg.inferenceProvider === 'codex' ? 'codex' : 'claude'
-}
+const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), projectId: z.string().optional() })
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const { message, cwd, allowDanger, ultracode } = Body.parse((await readBody(event)) || {})
+  const { message, cwd, allowDanger, ultracode, projectId } = Body.parse((await readBody(event)) || {})
   const d = db()
   const session = d.select().from(schema.globalSessions).where(eq(schema.globalSessions.id, id)).get()
   if (!session) throw createError({ statusCode: 404, statusMessage: 'session 不存在' })
@@ -30,20 +27,33 @@ export default defineEventHandler(async (event) => {
     d.update(schema.globalSessions).set({ cwd: workdir }).where(eq(schema.globalSessions.id, id)).run()
   }
 
-  // 助手项目无关：model/effort 优先用会话自带的，没有就回退到当前 provider 的中心默认配置。
+  // 没有原生 Claude/Codex session 前，允许当前项目配置决定全局助手走哪个 provider。
+  // 一旦已有原生 session，就固定原 provider，避免拿 Claude session 去 resume Codex 或反过来。
   const cfg = useRuntimeConfig()
-  const configuredProvider = defaultGlobalProvider(cfg)
+  const defaults = resolveGlobalAgentDefaults(d, cfg, projectId)
   const hasNativeSession = !!session.sessionId || !!session.codexSessionId
-  const provider = hasNativeSession ? (session.provider === 'codex' ? 'codex' : 'claude') : configuredProvider
-  if (!hasNativeSession && session.provider !== provider) {
-    d.update(schema.globalSessions).set({ provider, model: null }).where(eq(schema.globalSessions.id, id)).run()
+  const provider: ReviewProvider = hasNativeSession ? (session.provider === 'codex' ? 'codex' : 'claude') : defaults.provider
+  const providerDefaults = provider === defaults.provider ? defaults : runtimeGlobalAgentDefaults(cfg, provider)
+  const canReuseSessionConfig = session.provider === provider
+  if (!hasNativeSession) {
+    const patch: Record<string, string | null> = {}
+    if (!canReuseSessionConfig) {
+      patch.provider = provider
+      patch.model = providerDefaults.model || null
+      patch.effort = providerDefaults.effort || null
+    } else {
+      if (!session.model && providerDefaults.model) patch.model = providerDefaults.model
+      if (!session.effort && providerDefaults.effort) patch.effort = providerDefaults.effort
+    }
+    if (Object.keys(patch).length) d.update(schema.globalSessions).set(patch).where(eq(schema.globalSessions.id, id)).run()
   }
   const ctx: GlobalChatJobCtx = {
     db: d, schema, sessionId: id, cwd: workdir,
     provider,
     // 不混用：codex 会话兜底用 codex 模型（空=Codex 默认），别把 claude 模型塞进 codex。
-    model: session.model || (provider === 'codex' ? (cfg.codexModel as string) : (cfg.anthropicModel as string)) || '',
-    effort: session.effort || (cfg.globalEffort as string) || undefined,
+    model: (canReuseSessionConfig ? session.model : null) || providerDefaults.model || '',
+    effort: (canReuseSessionConfig ? session.effort : null) || providerDefaults.effort,
+    codexServiceTier: provider === defaults.provider ? defaults.codexServiceTier : null,
     lang: getCookie(event, 'mr-locale') || 'zh',
     allowDanger: !!allowDanger,
     ultracode: !!ultracode,

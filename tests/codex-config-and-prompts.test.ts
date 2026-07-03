@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { codexCliConfig, isForbiddenRemoteOrGitMutation } from '../core/agent/codexAgent'
 import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt, isAllowedFeaturePublishCommand } from '../core/agent/codexChat'
+import { projectGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../server/utils/globalAgentConfig'
 
 assert.deepEqual(codexCliConfig({} as NodeJS.ProcessEnv), {
   project_doc_fallback_filenames: ['CLAUDE.md', '.claude/CLAUDE.md'],
@@ -22,6 +23,25 @@ assert.equal('service_tier' in codexCliConfig({ CODEX_SERVICE_TIER: '   ' } as N
 assert.equal('service_tier' in codexCliConfig({ CODEX_SERVICE_TIER: 'fast' } as NodeJS.ProcessEnv, { serviceTier: null }), false)
 assert.equal(codexCliConfig({} as NodeJS.ProcessEnv, { serviceTier: 'fast' }).service_tier, 'fast')
 assert.equal(codexCliConfig({ CODEX_PROJECT_DOC_MAX_BYTES: 'nope' } as NodeJS.ProcessEnv).project_doc_max_bytes, 65536)
+
+assert.deepEqual(runtimeGlobalAgentDefaults({ inferenceProvider: 'codex', codexModel: 'gpt-5', anthropicModel: 'claude-sonnet', globalEffort: 'high' }), {
+  provider: 'codex',
+  model: 'gpt-5',
+  effort: 'high',
+  codexServiceTier: null,
+})
+assert.deepEqual(projectGlobalAgentDefaults({ provider: 'codex', model: '', effort: 'xhigh', codexServiceTier: 'fast' }, { codexModel: 'gpt-5' }), {
+  provider: 'codex',
+  model: 'gpt-5',
+  effort: 'xhigh',
+  codexServiceTier: 'fast',
+})
+assert.deepEqual(projectGlobalAgentDefaults({ provider: 'claude', model: 'claude-opus', effort: '', codexServiceTier: 'fast' }, { anthropicModel: 'claude-sonnet' }), {
+  provider: 'claude',
+  model: 'claude-opus',
+  effort: undefined,
+  codexServiceTier: null,
+})
 
 const featurePrompt = buildCodexFeaturePrompt({
   cwd: '/tmp/project',

@@ -84,7 +84,7 @@ cp .env.example .env
 | 变量 | 何时修改 |
 |---|---|
 | `PORT` | `3001` 被占用时 |
-| `INFERENCE_PROVIDER` | `claude`（本地订阅，默认）或 `anthropic-api` |
+| `INFERENCE_PROVIDER` | `claude`（本地订阅，默认）、`codex` 或 `anthropic-api` |
 | `ANTHROPIC_API_KEY` | **仅**在 `anthropic-api` 模式，或本地 `claude` 未登录时 |
 
 全部变量详见 [配置（.env）](#配置env) 一节。
@@ -135,7 +135,7 @@ pnpm dev                  # 默认 http://localhost:3001
 | 变量 | 示例 | 说明 |
 |---|---|---|
 | `PORT` | `3001` | 端口 |
-| `INFERENCE_PROVIDER` | `claude` | `claude`(本地订阅) / `anthropic-api` |
+| `INFERENCE_PROVIDER` | `claude` | `claude`(本地订阅) / `codex` / `anthropic-api` |
 | `ANTHROPIC_MODEL` | `sonnet` | 审核默认模型（项目里可覆盖） |
 | `CODEX_MODEL` |  | Codex 项目默认模型；留空走 Codex 默认 |
 | `CODEX_SERVICE_TIER` |  | 可选，Codex/OpenAI 全局默认速度档；项目配置页的 Fast 开关会按项目覆盖它。取消全局 fast 就留空/删除，若 `~/.codex/config.toml` 也设置了 `service_tier`，那里也要删除 |

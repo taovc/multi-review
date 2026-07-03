@@ -52,6 +52,7 @@ export type GlobalChatJobCtx = {
   cwd: string
   model: string
   effort?: string // 空 = 默认
+  codexServiceTier?: string | null
   lang: string
   allowDanger?: boolean // 用户开了「允许危险命令」开关 → 放行守卫
   ultracode?: boolean // 后台激活 ultracode（前缀由运行器注入）
@@ -109,6 +110,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
         cwd: ctx.cwd,
         model: ctx.model,
         effort: ctx.effort,
+        codexServiceTier: ctx.codexServiceTier,
         lang: ctx.lang,
         sessionId: resumeId,
         message: agentMessage,
