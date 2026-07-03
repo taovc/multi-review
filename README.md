@@ -147,6 +147,11 @@ pnpm dev                  # 默认 http://localhost:3001
 | `REPOS_DIR` | `./data/worktrees` | review 的 git worktree 落地根 |
 | `MAX_CONCURRENCY` | `3` | 并行审核上限 |
 
+### Codex 日志提示
+
+- `Not inside a trusted directory and --skip-git-repo-check was not specified`：Codex 从非 git 目录启动。项目页全局助手会优先用项目本地路径作为工作目录；如果手动 `/cd` 到非 git 目录，运行器会自动跳过 git repo 检查。
+- `CodexWarning failed to parse plugin hooks config .../claude-plugins-official/.../hooks.json`：Codex 扫到了 Claude 插件的 hook 配置，但不认识这个 Claude hook 格式；这类 warning 通常只表示该 hook 被忽略，不代表当前任务失败。
+
 ## 目录
 
 ```
