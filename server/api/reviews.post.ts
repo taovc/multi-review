@@ -114,6 +114,7 @@ export default defineEventHandler(async (event) => {
         provider: rc.provider,
         model: rc.model,
         effort: rc.effort,
+        codexServiceTier: rc.codexServiceTier,
         lang: getCookie(event, 'mr-locale') || 'zh',
       })
     }

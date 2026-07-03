@@ -4,6 +4,7 @@ import { appendTurns } from '../db/turns'
 import { makeEmit } from '../streaming/emit'
 import { runGlobalChat } from '../agent/globalChat'
 import { sessionFields } from '../agent/session'
+import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchIssueContext } from '../github/issueAssets'
 import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
@@ -23,13 +24,17 @@ export function isGlobalChatting(id: string): boolean {
 
 export function stopGlobalChat(id: string): boolean {
   const stop = activeChatStops.get(id)
-  if (stop) { stopRequested.add(id); stop(); return true }
   const cp = activeChats.get(id)
-  if (!cp || cp.pid == null) return false
+  if (!stop && (!cp || cp.pid == null)) return false
   stopRequested.add(id)
-  const pid = cp.pid
-  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* 已退出 */ } }
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* 已退出 */ } }, 1500)
+  if (stop) {
+    try { stop() } catch { /* 已退出 */ }
+  }
+  if (cp?.pid != null) {
+    const pid = cp.pid
+    try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* 已退出 */ } }
+    setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* 已退出 */ } }, 1500)
+  }
   return true
 }
 
@@ -93,6 +98,12 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
     const cur = row()
     const resumeId: string | null = (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null
     let newSessionId: string | null = resumeId
+    const historyAccess = await prepareAgentHistoryAccess({
+      db, schema, scope: 'global', id: sessionId, cwd: ctx.cwd, writeSnapshot: false, limit: 80,
+    }).catch((e) => {
+      emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
+      return undefined
+    })
     try {
       const r = await runGlobalChat(ctx.provider, {
         cwd: ctx.cwd,
@@ -101,6 +112,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
         lang: ctx.lang,
         sessionId: resumeId,
         message: agentMessage,
+        historyAccess,
         allowDanger: ctx.allowDanger,
         ultracode: ctx.ultracode,
         onSpawn: (cp) => activeChats.set(sessionId, cp),

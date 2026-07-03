@@ -23,11 +23,13 @@ export function resolveReviewConfig(d: any, project: any) {
       ? ((project.model || cfg.codexModel || '') as string)
       : ((project.model || cfg.anthropicModel) as string)
   const translateModel = provider === 'codex' ? model : (cfg.translateModel as string)
+  const codexServiceTier = provider === 'codex' && project.codexServiceTier === 'fast' ? 'fast' : null
   return {
     methodology,
     provider,
     model,
     translateModel,
     effort: (project.effort || '') as string,
+    codexServiceTier,
   }
 }

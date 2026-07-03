@@ -21,6 +21,7 @@ export type AgentChatOptions = AgentChatCallbacks & {
   effort?: string
   sessionId: string | null // 有就 --resume
   message: string // 干净的用户消息（图片增强由调用方在此之前拼好；ultracode 前缀由本运行器按 flag 注入）
+  historyAccess?: string
   systemPrompt: string // 各 chat 的方法学（含 askUserClause）→ --append-system-prompt
   allowDanger?: boolean // 放行危险命令守卫（含 git push / gh pr create）
   ultracode?: boolean // 后台激活 → 给 agent 的消息注入 `ultracode:` 前缀（存库/展示仍是干净消息）
@@ -56,7 +57,8 @@ export async function runClaudeAgentChat(opts: AgentChatOptions): Promise<AgentC
   if (opts.sessionId) args.push('--resume', opts.sessionId)
 
   // ultracode 后台激活：harness 认这个关键词 → agent 走 xhigh + 多代理。前缀只加在送给 agent 的输入上。
-  const input = opts.ultracode ? `ultracode: ${opts.message}` : opts.message
+  const agentInput = opts.ultracode ? `ultracode: ${opts.message}` : opts.message
+  const input = opts.historyAccess ? `${agentInput}\n\n${opts.historyAccess}` : agentInput
 
   let text = ''
   // 尽早交出 session_id（持久化）：stream-json 首条消息就带；否则中途停止 → 非 0 退出 → 拿不到 → 下一轮丢上下文。

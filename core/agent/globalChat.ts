@@ -13,6 +13,7 @@ export type GlobalChatOptions = {
   lang: string
   sessionId: string | null // 有就 --resume
   message: string
+  historyAccess?: string
   allowDanger?: boolean // 放行危险命令守卫（用户开了开关）
   ultracode?: boolean // 后台激活 ultracode（前缀由运行器注入）
   onSpawn?: (cp: ChildProcess) => void
@@ -37,6 +38,7 @@ function runGlobalClaudeChat(opts: GlobalChatOptions): Promise<GlobalChatResult>
     effort: opts.effort,
     sessionId: opts.sessionId,
     message: opts.message,
+    historyAccess: opts.historyAccess,
     systemPrompt: globalSystemPrompt(opts.lang),
     allowDanger: opts.allowDanger,
     ultracode: opts.ultracode,
@@ -52,7 +54,7 @@ function runGlobalClaudeChat(opts: GlobalChatOptions): Promise<GlobalChatResult>
 function runGlobalCodexChat(opts: GlobalChatOptions): Promise<GlobalChatResult> {
   return runCodexChat({
     cwd: opts.cwd, model: opts.model, effort: opts.effort, lang: opts.lang,
-    sessionId: opts.sessionId, message: opts.message,
+    sessionId: opts.sessionId, message: opts.message, historyAccess: opts.historyAccess,
     promptKind: 'global', fullAccess: !!opts.allowDanger, networkAccess: !!opts.allowDanger, ultracode: opts.ultracode,
     onSpawn: opts.onSpawn, onStop: opts.onStop, onSessionId: opts.onSessionId, onText: opts.onText, onTool: opts.onTool,
   })

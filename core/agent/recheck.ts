@@ -46,6 +46,7 @@ export type RecheckAgentOptions = {
   methodology: string
   model: string
   effort?: string
+  codexServiceTier?: string | null
   lang?: string
   onTool?: (name: string, info: string) => void
 }

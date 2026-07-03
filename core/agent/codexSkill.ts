@@ -13,6 +13,7 @@ export async function generateSkillCodex(opts: SkillGenOptions): Promise<{ conte
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
+      serviceTier: opts.codexServiceTier,
       label: 'skill generation',
       onTool: opts.onTool,
     })

@@ -7,6 +7,7 @@ import { genFeatureTitle } from '../agent/featureTitle'
 import { appendTurns } from '../db/turns'
 import { makeEmit } from '../streaming/emit'
 import { sessionFields } from '../agent/session'
+import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchIssueContext } from '../github/issueAssets'
 import { findPrByBranch } from '../github/gh'
 import type { ChildProcess } from 'node:child_process'
@@ -94,9 +95,10 @@ export type FeatureDevelopJobCtx = {
   model: string
   translateModel: string // 便宜/快模型（生成任务标题用；跟随 provider，同 assembleReview 的 translate）
   effort?: string
+  codexServiceTier?: string | null
   lang: string
   allowDanger?: boolean // 用户开了「允许危险命令」/ 点了「开 PR」→ 放行危险命令守卫（含 git push / gh pr create）
-  ultracode?: boolean // 后台激活 ultracode → 给 agent 的消息前缀注入 `ultracode:`（存库仍是干净消息）
+  ultracode?: boolean // 后台激活 ultracode；存库仍是干净消息，具体执行方式交给 provider runner
   assetsDir: string // issue/PR 配图下载根目录（首轮抓 issue 用）
 }
 
@@ -158,15 +160,23 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
 
     let stopped = false
     let newSessionId: string | null = (ctx.provider === 'codex' ? t0?.codexSessionId : t0?.sessionId) ?? null
+    const historyAccess = await prepareAgentHistoryAccess({
+      db, schema, scope: 'feature', id: taskId, cwd: wtPath, writeSnapshot: true, limit: 80,
+    }).catch((e) => {
+      emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
+      return undefined
+    })
     try {
       const cur = task()
       const r = await runFeatureChat(ctx.provider, {
         cwd: wtPath,
         model: ctx.model,
         effort: ctx.effort,
+        codexServiceTier: ctx.codexServiceTier,
         lang: ctx.lang,
         sessionId: (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null,
         message: agentMessage,
+        historyAccess,
         allowDanger: ctx.allowDanger,
         ultracode: ctx.ultracode, // 前缀由运行器注入
         baseBranch: cur?.baseBranch || ctx.defaultBranch, // 开 PR 时 gh pr create --base 用它

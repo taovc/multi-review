@@ -242,6 +242,8 @@
     "codexSdkInstalled": "SDK installé",
     "codexAuthenticated": "Auth",
     "codexStatusUnknown": "Le statut du SDK Codex n'est pas encore chargé.",
+    "codexFastLabel": "Mode Fast",
+    "codexFastHint": "Uniquement pour les projets Codex. Une fois activé, les revues, rechecks, génération de skill, chat de correction, développement de feature et traduction des commentaires de ce projet demandent le niveau de service Codex fast.",
     "claudeStatus": "Statut Claude",
     "claudeCli": "Claude local",
     "claudeModels": "Modèles",

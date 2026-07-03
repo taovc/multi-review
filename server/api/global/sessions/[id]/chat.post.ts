@@ -25,13 +25,14 @@ export default defineEventHandler(async (event) => {
     d.update(schema.globalSessions).set({ cwd: workdir }).where(eq(schema.globalSessions.id, id)).run()
   }
 
-  // 助手项目无关：model/effort 优先用会话自带的，没有就回退到中心默认配置（与项目类模块同源的默认）。
+  // 助手项目无关：model/effort 优先用会话自带的，没有就回退到当前 provider 的中心默认配置。
   const cfg = useRuntimeConfig()
+  const provider = session.provider === 'codex' ? 'codex' : 'claude'
   const ctx: GlobalChatJobCtx = {
     db: d, schema, sessionId: id, cwd: workdir,
-    provider: (session.provider as 'claude' | 'codex') || 'claude',
+    provider,
     // 不混用：codex 会话兜底用 codex 模型（空=Codex 默认），别把 claude 模型塞进 codex。
-    model: session.model || (session.provider === 'codex' ? (cfg.codexModel as string) : (cfg.anthropicModel as string)) || '',
+    model: session.model || (provider === 'codex' ? (cfg.codexModel as string) : (cfg.anthropicModel as string)) || '',
     effort: session.effort || (cfg.globalEffort as string) || undefined,
     lang: getCookie(event, 'mr-locale') || 'zh',
     allowDanger: !!allowDanger,

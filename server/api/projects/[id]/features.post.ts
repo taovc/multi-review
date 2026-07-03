@@ -57,7 +57,7 @@ export default defineEventHandler(async (event) => {
   const ctx: FeatureDevelopJobCtx = {
     db: d, schema, taskId: id,
     localPath: project.localPath, reposDir: cfg.reposDir as string, defaultBranch: project.defaultBranch, repo: project.repo,
-    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, lang,
+    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang,
     allowDanger: !!allowDanger, ultracode: !!ultracode, assetsDir,
   }
   void runFeatureDevelopJob(ctx, description).catch((e) => console.error('[feature-develop] job failed', e))

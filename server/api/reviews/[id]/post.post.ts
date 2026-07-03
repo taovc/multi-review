@@ -77,10 +77,14 @@ export default defineEventHandler(async (event) => {
     })
 
     // 输入签名：勾选的 finding 内容 + 复审结论 + 整体注释 + headSha（影响行级映射）。变了才重新生成。
+    const rc = resolveReviewConfig(d, project)
     const sig = createHash('sha256')
       .update(JSON.stringify({
         gn: review.globalNotes || '',
         sha: review.headSha || '',
+        provider: rc.provider,
+        model: rc.translateModel,
+        codexServiceTier: rc.codexServiceTier || '',
         f: findings.map((f) => [f.fid, f.severity, f.title, f.problem, f.detail, f.fix, f.notes, f.location, f.introducedByPr, f.recheck?.status || '', f.recheck?.text || '']),
       }))
       .digest('hex')
@@ -92,10 +96,10 @@ export default defineEventHandler(async (event) => {
     } else {
       const { diff } = await fetchPrDiff(project.repo, review.prNumber)
       // 翻译跟随项目 provider（不混用）：claude 用快模型 TRANSLATE_MODEL；codex 用 codex 主模型。
-      const rc = resolveReviewConfig(d, project)
       assembled = await assembleReview({
         provider: rc.provider,
         model: rc.translateModel,
+        codexServiceTier: rc.codexServiceTier,
         cwd: project.localPath || undefined,
         findings,
         globalNotes: review.globalNotes || '',
