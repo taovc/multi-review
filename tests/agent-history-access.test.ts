@@ -3,7 +3,6 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as schema from '../core/db/schema'
@@ -97,12 +96,11 @@ try {
   assert.equal(validateAgentHistoryToken('fix', 'fix-1', token), true)
   assert.equal(validateAgentHistoryToken('feature', 'fix-1', token), false)
 
-  const access = await prepareAgentHistoryAccess({ db, schema, scope: 'fix', id: 'fix-1', cwd, writeSnapshot: true })
+  const access = await prepareAgentHistoryAccess({ db, schema, scope: 'fix', id: 'fix-1', cwd })
   assert.match(access, /Controlled previous-conversation history/)
   assert.match(access, /\/api\/agent\/history\/fix\/fix-1/)
   const snapshot = join(cwd, '.pr-cockpit-history.md')
-  assert.equal(existsSync(snapshot), true)
-  assert.match(await readFile(snapshot, 'utf8'), /Claude changed label copy/)
+  assert.equal(existsSync(snapshot), false)
 } finally {
   rmSync(cwd, { recursive: true, force: true })
 }

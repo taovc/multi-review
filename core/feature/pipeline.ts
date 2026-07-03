@@ -161,7 +161,7 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     let stopped = false
     let newSessionId: string | null = (ctx.provider === 'codex' ? t0?.codexSessionId : t0?.sessionId) ?? null
     const historyAccess = await prepareAgentHistoryAccess({
-      db, schema, scope: 'feature', id: taskId, cwd: wtPath, writeSnapshot: true, limit: 80,
+      db, schema, scope: 'feature', id: taskId, cwd: wtPath, limit: 80,
     }).catch((e) => {
       emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
       return undefined

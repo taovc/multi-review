@@ -100,7 +100,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
     const resumeId: string | null = (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null
     let newSessionId: string | null = resumeId
     const historyAccess = await prepareAgentHistoryAccess({
-      db, schema, scope: 'global', id: sessionId, cwd: ctx.cwd, writeSnapshot: false, limit: 80,
+      db, schema, scope: 'global', id: sessionId, cwd: ctx.cwd, limit: 80,
     }).catch((e) => {
       emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
       return undefined

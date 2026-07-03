@@ -131,6 +131,7 @@ function emitCodexChatEvent(
   onTool?: (name: string, info: string) => void,
   onText?: (text: string) => void,
   allowFeaturePublishCommands = false,
+  allowLocalGitMutations = false,
 ): string | null {
   if (event.type === 'turn.failed') throw new CodexChatError(`Codex chat turn failed: ${extractCodexErrorMessage(event.error.message)}`)
   if (event.type === 'error') throw new CodexChatError(`Codex chat stream failed: ${extractCodexErrorMessage(event.message)}`)
@@ -149,7 +150,7 @@ function emitCodexChatEvent(
 
   if (item.type === 'command_execution') {
     onTool?.('CodexCommand', item.command.slice(0, 100))
-    if (enforceGitGuard && isForbiddenRemoteOrGitMutation(item.command) && !(allowFeaturePublishCommands && isAllowedFeaturePublishCommand(item.command))) {
+    if (enforceGitGuard && isForbiddenRemoteOrGitMutation(item.command, { allowLocalGitMutation: allowLocalGitMutations }) && !(allowFeaturePublishCommands && isAllowedFeaturePublishCommand(item.command))) {
       throw new CodexChatError(`Codex chat attempted a forbidden git/GitHub mutation: ${item.command}`)
     }
   } else if (item.type === 'file_change') {
@@ -211,9 +212,10 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const seenTextByItem = new Map<string, number>()
     let text = ''
     const allowFeaturePublishCommands = runOpts.promptKind === 'feature' && !!runOpts.allowDanger && !!runOpts.networkAccess
+    const allowLocalGitMutations = runOpts.promptKind !== 'feature' && !!runOpts.allowDanger
     for await (const event of events) {
       if (event.type === 'thread.started') runOpts.onSessionId?.(event.thread_id)
-      const finalText = emitCodexChatEvent(event, seenTextByItem, runOpts.promptKind !== 'global', runOpts.onTool, runOpts.onText, allowFeaturePublishCommands)
+      const finalText = emitCodexChatEvent(event, seenTextByItem, runOpts.promptKind !== 'global', runOpts.onTool, runOpts.onText, allowFeaturePublishCommands, allowLocalGitMutations)
       if (finalText != null) text = finalText
     }
 

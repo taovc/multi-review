@@ -183,7 +183,7 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       let newSessionId: string | null = resumeId
       const headBeforeCodex = ctx.provider === 'codex' ? await currentHead(wt.path) : null
       const historyAccess = await prepareAgentHistoryAccess({
-        db, schema, scope: 'fix', id: fixId, cwd: wt.path, writeSnapshot: true, limit: 80,
+        db, schema, scope: 'fix', id: fixId, cwd: wt.path, limit: 80,
       }).catch((e) => {
         h.emit('stage', `历史入口准备失败，继续本轮：${(e as Error).message}`)
         return undefined
