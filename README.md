@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="Multi Review" />
   <h1>Multi Review</h1>
-  <p>本地批量 PR 审核工作台 · 终端 Claude agent 为核心，web 做人工把关与状态管理</p>
+  <p>本地 AI PR 工作台 · 批量审核、修复对话、Feature 开发与全局助手，Claude/Codex 双 provider</p>
 </div>
 
 <div align="center">
@@ -12,44 +12,52 @@
 
 ---
 
-不再逐个在终端审 PR：把一个仓库的 PR 拉进来批量勾选 → AI 在隔离的只读 git worktree 里逐个审 → 你在 web 里把关 findings、写反馈 → 行级+汇总评论发回 GitHub → 作者改后一键复查。每个项目挂自己的审核方法学（skill）和模型/力度。
+不再逐个在终端审 PR，也不把修复和新功能开发散落在多个窗口里：把仓库 PR 拉进来 → AI 在隔离 worktree 里审核、复查或修复 → 你在 Web 里把关 findings、对话、diff、push/PR → 对外内容通过 GitHub 落地。每个项目可以选择 Claude 或 Codex，配置自己的模型、力度和审核方法学。
 
 ## 功能支持
 
-**PR 工作台**
-- 直接拉仓库 PR 列表（`gh pr list`，GraphQL cursor 分页，每页 20），按状态（进行中/已合并/已关闭/全部）和作者筛选
-- 勾选若干 PR 一键建审核任务；右侧 drawer 看 PR 详情（时间线 / 改动 diff），评论与描述 markdown 渲染
-- 「全部 PR」「审核任务」两个 Tab；任务列表自动轮询刷新，状态变化无需手动刷新
-
-**AI 审核**
-- agent 在隔离 git worktree 里**只读**审核（带 git/grep 工具），输出结构化 findings（严重度 + path:line + 问题/详情/修复）+ 需求描述 + 手动测试路径
-- 实时进度日志（SSE，像终端一行行）；进度与结果落库
-- **按我反馈复审**：保留你的勾选/notes，按你每条 note + 审核指令做针对性复审，AI 逐条回应（维持/撤回/调整/想讨论）
-- **复查作者改动**：读你评论后的新 commit，逐条判断已修复/部分/未处理
+**PR 工作台与审核**
+- 直接拉仓库 PR 列表（`gh pr list` / GraphQL），按作者、PR 状态、审核状态、修复状态、worktree 状态筛选，列表自动轮询刷新
+- 右侧 drawer 看 PR 详情（AI 审核 / 修复 / 时间线 / diff），评论与描述 markdown 渲染
+- AI 在隔离 git worktree 里只读审核，输出结构化 findings（严重度 + path:line + 问题/详情/修复）+ 需求描述 + 手动测试路径
+- 支持按你的勾选和 note 做反馈复审，也支持作者 push 后按最新 commit 复查每条 finding
 
 **人工把关 + 发布**
 - 逐条 finding 勾选「发到 PR comment」+ 写 note（note 作为编辑指令融进评论，不原样泄漏）
-- 发布前预览（dry-run，可缓存/重新生成）；中文 findings 自动翻成专业英文；行级评论挂到代码行、挂不上的进汇总
-- 发布走 `gh api .../reviews`，自愈处理残留 pending review
+- 发布前预览（dry-run，可缓存/重新生成）；任意工作语言的 findings 都会转成专业英文 GitHub 评论；行级评论挂到代码行，挂不上的进汇总
+- 发布走 `gh api .../reviews`，带 posting 认领和 pending review 自愈，避免并发重复发
+
+**修复 PR**
+- 修复 tab 是常驻对话：agent 在 PR worktree 里改代码，但默认不 commit/push
+- 「提交并上传」先生成 diff + conventional commit message 预览，用户确认后才 `git add/commit/push`
+- 支持停止、继续对话、可展开运行日志、决策卡、ultracode 后台开关和危险命令开关
+
+**Feature 开发与全局助手**
+- 项目页有「Feature 开发」tab：输入需求后创建隔离 feature worktree，agent 单段式开发，遇到关键决策用 `ask-user` 卡片让你拍板
+- 「开 PR」是显式动作：那一轮放行 push/`gh pr create`，commit message、PR title/body 保持英文
+- 右下角全局助手支持项目继承 provider/cwd，也可 `/cd`、`/resume`、`/clear`，用于自由排查和操作
 
 **每项目配置**
-- 模型 + 审核力度（effort）从本地登录的 `claude` 真实读取（`supportedModels()`），带 CLI 同款描述
-- 多套审核 skill，选一套启用；**AI 生成/赋能**：读本地仓库文档+架构生成贴合该项目的方法学（可给自定义指令介入），存为新候选 + diff 对比后再启用，绝不覆盖
+- 项目级选择 Claude 或 Codex；review、fix chat、recheck、skill generation、publish reply 都跟随当前 provider，不混用
+- Claude 模型来自本地 `claude`，Codex 模型使用预设/默认；effort、Codex Fast/service tier、方法学都可按项目配置
+- 多套审核 skill，选一套启用；AI 生成时读取本地仓库文档和架构，生成候选后 diff 对比再启用，绝不覆盖
 
 **安全与一致性**
-- 审核 agent 只读：工具层硬拦截 git 写 / 文件改 / 联网 / 危险命令（不靠 prompt，物理拦截）+ 操作契约前置 + skill 体检
-- 同仓库 git 操作互斥（防并发 fetch 抢引用）；findings 写入用事务；删除任务同步清 worktree；服务重启恢复中断任务
-- 所有破坏性操作（删项目/删任务/清理）走项目内确认弹窗，不用原生 window 弹框
+- 审核 agent 只读：工具层硬拦截 git 写 / 文件改 / 联网 / 危险命令 + 操作契约前置 + skill 体检
+- 写代码路径只在隔离 worktree 中运行；push、开 PR、危险命令都需要显式 UI 动作或开关
+- 同仓库 git 操作互斥；findings 写入用事务；删除任务同步清 worktree；服务重启会恢复/止损中断任务
+- PR 自动化是高风险能力，默认关闭；配置后由服务端轮询复用现有 review/post/fix/push 端点
 
 ## 技术栈
 
-Nuxt 4 + @nuxt/ui（Tailwind v4，极简单色风）· better-sqlite3 + drizzle · `@anthropic-ai/claude-agent-sdk`（带 git 工具、cwd=worktree）· 本地 `gh` CLI。
+Nuxt 4 + @nuxt/ui（Tailwind v4）· better-sqlite3 + drizzle · `@anthropic-ai/claude-agent-sdk` · `@openai/codex-sdk` · 本地 `gh` CLI · Electron 打包（Electron 作为 Node 运行 Nitro server）。
 
 ## 前置
 
 - Node ≥ 22、pnpm 9
 - `gh auth login` 已登录（GitHub 读写全走它）
-- 本地已登录 `claude`（走订阅，基本不额外花 API 钱）或填 `ANTHROPIC_API_KEY`
+- Claude provider：本地已登录 `claude`（走订阅）或填 `ANTHROPIC_API_KEY`
+- Codex provider：本地 Codex 已登录，或提供 `OPENAI_API_KEY`
 
 ## 安装
 
@@ -64,7 +72,7 @@ gh --version
 gh auth status   # 应显示「Logged in」；否则：gh auth login
 ```
 
-同时确认本地 `claude` CLI 已登录（走订阅，基本不额外花 API 钱）。若未登录，则在第 3 步填 `ANTHROPIC_API_KEY`。
+同时按计划使用的 provider 确认登录状态：Claude 路径需要本地 `claude` 或 `ANTHROPIC_API_KEY`；Codex 路径需要本地 Codex 登录或 `OPENAI_API_KEY`。
 
 **2. 获取项目**
 
@@ -84,8 +92,9 @@ cp .env.example .env
 | 变量 | 何时修改 |
 |---|---|
 | `PORT` | `3001` 被占用时 |
-| `INFERENCE_PROVIDER` | `claude`（本地订阅，默认）、`codex` 或 `anthropic-api` |
-| `ANTHROPIC_API_KEY` | **仅**在 `anthropic-api` 模式，或本地 `claude` 未登录时 |
+| `INFERENCE_PROVIDER` | `claude`（默认）或 `codex` |
+| `ANTHROPIC_API_KEY` | Claude 路径可选；本地 `claude` 登录不可用时使用 |
+| `OPENAI_API_KEY` | Codex 本地登录不可用、但要走 OpenAI API key 时 |
 
 全部变量详见 [配置（.env）](#配置env) 一节。
 
@@ -112,6 +121,13 @@ pnpm build
 pnpm preview
 ```
 
+Electron 本地预览 / 打包：
+
+```bash
+pnpm electron:preview
+pnpm electron:dist
+```
+
 **排错**
 
 - **端口被占用** → 改 `.env` 里的 `PORT`。
@@ -126,7 +142,7 @@ pnpm install
 pnpm dev                  # 默认 http://localhost:3001
 ```
 
-进去左侧「＋」创建项目（填仓库 owner/repo + 本地 clone 路径），到项目配置里「AI 生成」一套审核 skill 并启用，再去「全部 PR」勾选 PR 开审。
+进去左侧「＋」创建项目（填仓库 owner/repo + 本地 clone 路径），到项目配置里选择 provider/model/effort 并生成审核 skill。之后可以在「全部 PR」里审核/修复 PR，也可以在「Feature 开发」里从需求创建 feature worktree。
 
 ## 配置（.env）
 
@@ -135,13 +151,14 @@ pnpm dev                  # 默认 http://localhost:3001
 | 变量 | 示例 | 说明 |
 |---|---|---|
 | `PORT` | `3001` | 端口 |
-| `INFERENCE_PROVIDER` | `claude` | `claude`(本地订阅) / `codex` / `anthropic-api` |
+| `INFERENCE_PROVIDER` | `claude` | `claude` / `codex` |
 | `ANTHROPIC_MODEL` | `sonnet` | 审核默认模型（项目里可覆盖） |
 | `CODEX_MODEL` |  | Codex 项目默认模型；留空走 Codex 默认 |
 | `CODEX_SERVICE_TIER` |  | 可选，Codex/OpenAI 全局默认速度档；项目配置页的 Fast 开关会按项目覆盖它。取消全局 fast 就留空/删除，若 `~/.codex/config.toml` 也设置了 `service_tier`，那里也要删除 |
 | `CODEX_PROJECT_DOC_FALLBACK_FILENAMES` | `CLAUDE.md,.claude/CLAUDE.md` | 无 `AGENTS.md` 时 Codex 读取的项目说明 fallback |
-| `TRANSLATE_MODEL` | `sonnet` | 发评论中→英翻译用的轻量模型 |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` | 仅 api 模式或本地未登录时 |
+| `OPENAI_API_KEY` | `sk-...` | Codex 本地登录不可用时可用 |
+| `TRANSLATE_MODEL` | `sonnet` | 发 GitHub 评论时转成英文用的轻量模型 |
+| `ANTHROPIC_API_KEY` | `sk-ant-...` | Claude 路径可选；本地登录不可用时使用 |
 | `DEFAULT_REPO` | `owner/repo` | 可选，粘纯数字 PR 时的默认仓库 |
 | `DB_PATH` | `./data/cockpit.db` | SQLite 路径 |
 | `REPOS_DIR` | `./data/worktrees` | review 的 git worktree 落地根 |
@@ -155,9 +172,10 @@ pnpm dev                  # 默认 http://localhost:3001
 ## 目录
 
 ```
-core/      引擎：db / github / git(worktree) / agent(review·recheck·skillgen·capabilities·guard·jsonSalvage) / pipeline / queue / events / skillLint
-server/    Nuxt API：projects / reviews / skills / agent(capabilities) / SSE / 启动恢复 plugin
-app/       UI：左侧项目导航；项目页(全部 PR / 审核任务 / 项目配置)；PR drawer(AI审核 / 时间线 / 改动)
+core/      引擎：db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
+server/    Nuxt API：projects / reviews / fixes / features / global sessions / skills / SSE / 启动恢复 plugin
+app/       UI：左侧项目导航；项目页(Feature 开发 / 全部 PR / 项目配置)；PR drawer(AI审核 / 修复 / 时间线 / 改动)
+electron/  桌面壳：启动 Nitro server，窗口加载本地 HTTP UI
 docs/      ARCHITECTURE.md — 设计目的 + 不变量 + 安全防御说明
 data/      SQLite + worktrees（git 忽略）
 ```
