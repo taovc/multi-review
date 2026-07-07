@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { withContract, reviewCanUseTool, ISOLATED } from './guard'
+import { langName } from './lang'
 
 export const SKILL_SYSTEM = `你是一名资深架构师 + 代码审核负责人。你的任务是为一个具体项目量身定制一套"代码审核方法学"（review skill），供后续 AI 审核该项目的 PR 时作为 system prompt 使用。`
 const SYSTEM = SKILL_SYSTEM
@@ -18,11 +19,12 @@ export type SkillGenOptions = {
   codexServiceTier?: string | null
   baseContent?: string | null
   instruction?: string | null // 用户自定义指令（介入生成方向）
+  lang?: string | null // 产出语言（跟 UI locale 走）；缺省 zh
   onTool?: (name: string, info: string) => void
 }
 
 // 用户侧 prompt（不含 SYSTEM）：Claude 把 SYSTEM 当 systemPrompt 传；Codex 没有 systemPrompt 字段，需把 SYSTEM 折进 prompt。
-export function buildSkillPrompt(opts: Pick<SkillGenOptions, 'baseContent' | 'instruction'>): string {
+export function buildSkillPrompt(opts: Pick<SkillGenOptions, 'baseContent' | 'instruction' | 'lang'>): string {
   const base = opts.baseContent?.trim()
   const task = base
     ? `下面是这个项目"当前"的审核方法学。请结合你对仓库的实际理解**优化**它：保留有用的，补齐缺口，纠正过时/不准确的地方，让它更贴合这个项目的真实架构与约定。\n\n--- 当前方法学 ---\n${base}\n--- 结束 ---`
@@ -41,7 +43,7 @@ ${userInstruction}
 - 对拿不准的约定，多读几个真实文件确认，而不是猜
 
 调研要充分（宁可多读多 grep），想清楚再写。然后产出一套**面向本项目的审核方法学**：
-- 中文
+- 用${langName(opts.lang)}撰写整套方法学（所有标题、正文、检查项都用这门语言；专有名词/代码标识符保留原文）
 - 包含：横向影响检查、该项目特有的架构/约定专项检查（按你调研到的实际情况，不要套用无关技术栈）、安全/权限、测试、风险点
 - 具体、可执行，引用真实的目录/文件/标识符约定
 - 不要泛泛而谈
