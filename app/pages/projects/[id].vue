@@ -23,6 +23,7 @@ type Pull = {
   authorUpdated: boolean
   reviewerUpdated: boolean
   hasWorktree: boolean
+  worktreeStale: boolean
   autoReviewOn: boolean
   autoFixOn: boolean
   autoNote: string | null
@@ -167,7 +168,8 @@ function fixKey(p: Pull) {
   return p.fixStatus ?? 'none'
 }
 function worktreeKey(p: Pull) {
-  return p.hasWorktree ? 'has' : 'none'
+  if (!p.hasWorktree) return ['none']
+  return p.worktreeStale ? ['has', 'stale'] : ['has']
 }
 
 const visiblePulls = computed(() => {
@@ -176,7 +178,7 @@ const visiblePulls = computed(() => {
   if (fPr.value.length) list = list.filter((p) => fPr.value.includes(pullKey(p)))
   if (fReview.value.length) list = list.filter((p) => fReview.value.includes(reviewKey(p)))
   if (fFix.value.length) list = list.filter((p) => fFix.value.includes(fixKey(p)))
-  if (fWorktree.value.length) list = list.filter((p) => fWorktree.value.includes(worktreeKey(p)))
+  if (fWorktree.value.length) list = list.filter((p) => worktreeKey(p).some((k) => fWorktree.value.includes(k)))
   return list
 })
 // 前端分页：总数/翻页都基于过滤后的结果
@@ -188,7 +190,7 @@ watch([fAuthors, fReview, fFix, fWorktree], () => { page.value = 0 }) // 改 fil
 const PR_OPTS = ['open', 'draft', 'merged', 'closed']
 const REVIEW_OPTS = ['none', 'reviewing', 'reviewed', 'posted', 'approved', 'changes']
 const FIX_OPTS = ['none', 'open', 'ready', 'pushing', 'pushed', 'error']
-const WT_OPTS = ['has', 'none']
+const WT_OPTS = ['has', 'stale', 'none']
 
 // ── 三列状态显示 ──
 const PR_STATE: Record<string, { label: string; cls: string }> = {
@@ -237,7 +239,9 @@ function fixOptLabel(k: string) {
   return k === 'none' ? t('project.fixNone') : fixStatusLabel(k)
 }
 function worktreeOptLabel(k: string) {
-  return t(k === 'has' ? 'project.worktree.has' : 'project.worktree.none')
+  if (k === 'has') return t('project.worktree.has')
+  if (k === 'stale') return t('project.worktree.stale')
+  return t('project.worktree.none')
 }
 // filter 维度（sel 取 unref 数组用于显示 includes；toggle 走 toggleFilter）
 const filterDims = computed(() => [

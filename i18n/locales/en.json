@@ -107,6 +107,7 @@
     "fixNone": "no fix",
     "worktree": {
       "has": "Present",
+      "stale": "Stale",
       "none": "None"
     },
     "reviewerUpdated": "Re-reviewed",

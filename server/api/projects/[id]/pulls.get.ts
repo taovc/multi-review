@@ -5,6 +5,8 @@ import { listPulls, getCurrentUserLogin } from '~core/github/gh'
 import { getProjectAutomation, getPrAutomationMap, pullStatusKey } from '~core/automation/state'
 import { effectiveReviewOn, effectiveFixOnGuarded } from '~core/automation/decide'
 
+const WORKTREE_STALE_DAYS = 30
+
 // 分页拉该项目仓库的 PR（GraphQL cursor），标注哪些已建审核任务。
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -48,6 +50,7 @@ export default defineEventHandler(async (event) => {
       prNumber: schema.fixes.prNumber,
       status: schema.fixes.status,
       createdAt: schema.fixes.createdAt,
+      updatedAt: schema.fixes.updatedAt,
       pushedAt: schema.fixes.pushedAt,
       reviewsAtPush: schema.fixes.reviewsAtPush,
       worktreePath: schema.fixes.worktreePath,
@@ -98,6 +101,12 @@ export default defineEventHandler(async (event) => {
       // 本地 fix worktree 是否还在磁盘上（review worktree 用完即弃，不会残留；只有 fix 保留到 push/discard）。
       // 合并后想找残留清理就靠它。检查实际目录，不是只看 DB 字段（DB 有路径但目录可能已被手动删）。
       const hasWorktree = !!fix?.worktreePath && existsSync(fix.worktreePath)
+      const fixUpdatedMs = fix?.updatedAt ? Date.parse(fix.updatedAt) : Number.NaN
+      const worktreeStale = hasWorktree && (
+        prKey.status === 'merged'
+        || prKey.status === 'closed'
+        || (Number.isFinite(fixUpdatedMs) && fixUpdatedMs < nowMs - WORKTREE_STALE_DAYS * 24 * 60 * 60 * 1000)
+      )
       // 冷却中：引擎看到的 head 还是当前 head，且首见时间 + 冷却期 还没到 → 给 UI 显示「冷却中，剩 X」
       let autoCoolingUntil: string | null = null
       if (autoCooldownMin > 0 && (autoReviewOn || autoFixOn) && autoRow?.headSeenSha && autoRow.headSeenSha === p.headSha && autoRow.headSeenAt) {
@@ -109,7 +118,7 @@ export default defineEventHandler(async (event) => {
         hasTask: !!task, taskId: task?.id ?? null, taskStatus: task?.status ?? null,
         fixId: fix?.id ?? null, fixStatus: fix?.status ?? null,
         fixChatting: fix ? chattingFixIds.has(fix.id) : false,
-        authorUpdated, reviewerUpdated, hasWorktree,
+        authorUpdated, reviewerUpdated, hasWorktree, worktreeStale,
         autoReviewOn, autoFixOn, autoNote: autoRow?.note ?? null, autoRound: autoRow?.round ?? 0, autoMaxRounds, autoCoolingUntil,
       }
     }),

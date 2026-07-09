@@ -107,6 +107,7 @@
     "fixNone": "pas de correction",
     "worktree": {
       "has": "Présent",
+      "stale": "Obsolète",
       "none": "Aucun"
     },
     "reviewerUpdated": "Ré-examiné",

@@ -107,6 +107,7 @@
     "fixNone": "未修复",
     "worktree": {
       "has": "存在",
+      "stale": "陈旧",
       "none": "无"
     },
     "reviewerUpdated": "审核已更新",

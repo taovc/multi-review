@@ -234,6 +234,7 @@ async function doDeleteWorktree() {
     rmwtConfirm.value = false
     notify(t('fix.worktreeDeleted'), true)
     await load()
+    emit('changed')
   } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
   finally { busy.value = '' }
 }
