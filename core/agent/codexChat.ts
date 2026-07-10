@@ -1,10 +1,13 @@
 import { type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { classifyCodexError, extractCodexErrorMessage, formatCodexProviderError } from './codexErrors'
-import { codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, newCodex, toCodexEffort } from './codexAgent'
+import { codexWorkingDirectoryOptions, newCodex, toCodexEffort } from './codexAgent'
+import { shouldBlockCodexCommand, type CodexCommandGuardScope } from './commandGuard'
 import { outputLangClause } from './lang'
 import { askUserClause } from './chat'
 import type { ChatRunner } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
+
+export { isAllowedFeaturePublishCommand } from './commandGuard'
 
 export class CodexChatError extends Error {
   override cause?: unknown
@@ -127,11 +130,9 @@ ${askUserClause(opts.lang)}`
 function emitCodexChatEvent(
   event: ThreadEvent,
   seenTextByItem: Map<string, number>,
-  enforceGitGuard: boolean, // fix/feature 有上传门控 → 拦 git 写；global 是「啥都能干」助手 → 不拦（沙箱/断网即边界，对齐 claude-global）
+  commandGuard: { scope: CodexCommandGuardScope; allowDanger?: boolean; networkAccess?: boolean } | null,
   onTool?: (name: string, info: string) => void,
   onText?: (text: string) => void,
-  allowFeaturePublishCommands = false,
-  allowLocalGitMutations = false,
 ): string | null {
   if (event.type === 'turn.failed') throw new CodexChatError(`Codex chat turn failed: ${extractCodexErrorMessage(event.error.message)}`)
   if (event.type === 'error') throw new CodexChatError(`Codex chat stream failed: ${extractCodexErrorMessage(event.message)}`)
@@ -150,7 +151,7 @@ function emitCodexChatEvent(
 
   if (item.type === 'command_execution') {
     onTool?.('CodexCommand', item.command.slice(0, 100))
-    if (enforceGitGuard && isForbiddenRemoteOrGitMutation(item.command, { allowLocalGitMutation: allowLocalGitMutations }) && !(allowFeaturePublishCommands && isAllowedFeaturePublishCommand(item.command))) {
+    if (commandGuard && shouldBlockCodexCommand(item.command, commandGuard)) {
       throw new CodexChatError(`Codex chat attempted a forbidden git/GitHub mutation: ${item.command}`)
     }
   } else if (item.type === 'file_change') {
@@ -165,128 +166,6 @@ function emitCodexChatEvent(
     onTool?.('CodexWarning', item.message.slice(0, 140))
   }
   return null
-}
-
-function shellWords(input: string): string[] | null {
-  const words: string[] = []
-  let cur = ''
-  let i = 0
-  let inWord = false
-  const push = () => {
-    if (inWord) words.push(cur)
-    cur = ''
-    inWord = false
-  }
-  while (i < input.length) {
-    const ch = input[i]!
-    if (/\s/.test(ch)) {
-      push()
-      i++
-      continue
-    }
-    inWord = true
-    if (ch === "'") {
-      i++
-      while (i < input.length && input[i] !== "'") cur += input[i++]
-      if (input[i] !== "'") return null
-      i++
-      continue
-    }
-    if (ch === '"') {
-      i++
-      while (i < input.length && input[i] !== '"') {
-        if (input[i] === '\\' && i + 1 < input.length) i++
-        cur += input[i++]
-      }
-      if (input[i] !== '"') return null
-      i++
-      continue
-    }
-    if (ch === '$' && input[i + 1] === "'") {
-      i += 2
-      while (i < input.length && input[i] !== "'") {
-        if (input[i] === '\\' && i + 1 < input.length) i++
-        cur += input[i++]
-      }
-      if (input[i] !== "'") return null
-      i++
-      continue
-    }
-    if (ch === '\\' && i + 1 < input.length) i++
-    cur += input[i++]
-  }
-  push()
-  return words
-}
-
-function splitShellAndSegments(input: string): string[] | null {
-  const out: string[] = []
-  let cur = ''
-  let quote: "'" | '"' | '$\'' | null = null
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i]!
-    const next = input[i + 1]
-    if (quote === "'") {
-      if (ch === "'") quote = null
-      cur += ch
-      continue
-    }
-    if (quote === '"') {
-      if (ch === '\\' && next) { cur += ch + next; i++; continue }
-      if (ch === '`' || ch === '$') return null
-      if (ch === '"') quote = null
-      cur += ch
-      continue
-    }
-    if (quote === '$\'') {
-      if (ch === '\\' && next) { cur += ch + next; i++; continue }
-      if (ch === "'") quote = null
-      cur += ch
-      continue
-    }
-    if (ch === "'") { quote = "'"; cur += ch; continue }
-    if (ch === '"') { quote = '"'; cur += ch; continue }
-    if (ch === '$' && next === "'") { quote = "$'"; cur += ch + next; i++; continue }
-    if (ch === '$' || ch === '`' || ch === ';' || ch === '|' || ch === '<' || ch === '>' || ch === '\n') return null
-    if (ch === '&') {
-      if (next !== '&') return null
-      out.push(cur.trim())
-      cur = ''
-      i++
-      continue
-    }
-    cur += ch
-  }
-  if (quote) return null
-  out.push(cur.trim())
-  return out.filter(Boolean)
-}
-
-function unwrapShellLc(command: string): string | null {
-  const words = shellWords(command)
-  if (!words || words.length !== 3) return null
-  const shell = words[0]!.split('/').pop()
-  return shell && ['sh', 'bash', 'zsh'].includes(shell) && words[1] === '-lc' ? words[2]! : null
-}
-
-function isAllowedFeaturePublishSegment(segment: string): boolean {
-  const words = shellWords(segment)
-  if (!words?.length) return false
-  const [cmd, sub, action] = words
-  if (cmd === 'git' && sub === 'add') return words.length >= 2
-  if (cmd === 'git' && sub === 'commit') return words.length >= 2
-  if (cmd === 'git' && sub === 'push') {
-    return words.length === 5 && ['-u', '--set-upstream'].includes(words[2]!) && words[3] === 'origin' && words[4] === 'HEAD'
-  }
-  return cmd === 'gh' && sub === 'pr' && action === 'create'
-}
-
-export function isAllowedFeaturePublishCommand(command: string): boolean {
-  const trimmed = command.trim()
-  if (!trimmed) return false
-  const unwrapped = unwrapShellLc(trimmed) ?? trimmed
-  const segments = splitShellAndSegments(unwrapped)
-  return !!segments?.length && segments.every(isAllowedFeaturePublishSegment)
 }
 
 export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult> {
@@ -321,11 +200,16 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const { events } = await thread.runStreamed(buildCodexChatPrompt(runOpts), { signal: controller.signal })
     const seenTextByItem = new Map<string, number>()
     let text = ''
-    const allowFeaturePublishCommands = runOpts.promptKind === 'feature' && !!runOpts.allowDanger && !!runOpts.networkAccess
-    const allowLocalGitMutations = runOpts.promptKind !== 'feature' && !!runOpts.allowDanger
+    const commandGuard = runOpts.promptKind === 'global'
+      ? null
+      : {
+          scope: runOpts.promptKind === 'feature' ? 'feature' : 'fix',
+          allowDanger: !!runOpts.allowDanger,
+          networkAccess: !!runOpts.networkAccess,
+        } as const
     for await (const event of events) {
       if (event.type === 'thread.started') runOpts.onSessionId?.(event.thread_id)
-      const finalText = emitCodexChatEvent(event, seenTextByItem, runOpts.promptKind !== 'global', runOpts.onTool, runOpts.onText, allowFeaturePublishCommands, allowLocalGitMutations)
+      const finalText = emitCodexChatEvent(event, seenTextByItem, commandGuard, runOpts.onTool, runOpts.onText)
       if (finalText != null) text = finalText
     }
 

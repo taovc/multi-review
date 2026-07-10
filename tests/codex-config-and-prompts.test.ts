@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { codexCliConfig, codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation } from '../core/agent/codexAgent'
 import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt, isAllowedFeaturePublishCommand } from '../core/agent/codexChat'
+import { shouldBlockCodexCommand } from '../core/agent/commandGuard'
 import { projectGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../server/utils/globalAgentConfig'
 
 assert.deepEqual(codexCliConfig({} as NodeJS.ProcessEnv), {
@@ -93,6 +94,8 @@ assert.match(globalPrompt, /Ultracode mode is enabled/)
 assert.match(globalPrompt, /```ask-user/)
 
 assert.equal(isForbiddenRemoteOrGitMutation('gh pr create --base dev --title test --body body'), true)
+assert.equal(isForbiddenRemoteOrGitMutation('gh --repo owner/repo pr create --base dev --title test --body body'), true)
+assert.equal(isForbiddenRemoteOrGitMutation('gh --repo owner/repo api repos/owner/repo/issues --method POST'), true)
 assert.equal(isForbiddenRemoteOrGitMutation('/bin/zsh -lc \'git rev-parse HEAD origin/dev && git merge-base HEAD origin/dev\''), false)
 assert.equal(isForbiddenRemoteOrGitMutation('git merge origin/dev'), true)
 assert.equal(isForbiddenRemoteOrGitMutation('git merge-base HEAD origin/dev'), false)
@@ -109,6 +112,8 @@ assert.equal(isForbiddenRemoteOrGitMutation('gh pr comment 1 --body ok', { allow
 assert.equal(isAllowedFeaturePublishCommand('git push -u origin HEAD'), true)
 assert.equal(isAllowedFeaturePublishCommand('git push --set-upstream origin HEAD'), true)
 assert.equal(isAllowedFeaturePublishCommand('git add . && git commit -m "feat: add export" && git push -u origin HEAD && gh pr create --base dev --title Export --body Done'), true)
+assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'git push -u origin HEAD\''), true)
+assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'git add memory-vault/INDEX.md && git commit -m "fix: count only active e-signatures in commercial activity"\''), true)
 assert.equal(isAllowedFeaturePublishCommand(`gh pr create --draft --base dev --title "Fix duplicate dialog" --body $'## Context\n\nFixes #7380.'`), true)
 assert.equal(isAllowedFeaturePublishCommand(`/bin/zsh -lc 'gh pr create --draft --base dev --title "Fix duplicate dialog" --body $'"'"'## Context\n\nFixes #7380.'"'"''`), true)
 assert.equal(isAllowedFeaturePublishCommand('git push origin main'), false)
@@ -117,3 +122,9 @@ assert.equal(isAllowedFeaturePublishCommand('git add . && git push origin main')
 assert.equal(isAllowedFeaturePublishCommand('gh pr create --body "$(cat /tmp/body.md)"'), false)
 assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'gh pr create --body "$(cat /tmp/body.md)"\''), false)
 assert.equal(isAllowedFeaturePublishCommand('gh pr merge 123'), false)
+
+assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'feature', allowDanger: true, networkAccess: true }), false)
+assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'feature', allowDanger: true, networkAccess: false }), true)
+assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'fix', allowDanger: true, networkAccess: false }), true)
+assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git commit -m "fix: update tests"\'', { scope: 'fix', allowDanger: true, networkAccess: false }), false)
+assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'global', allowDanger: true, networkAccess: true }), false)
