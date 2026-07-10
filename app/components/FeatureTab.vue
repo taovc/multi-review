@@ -40,7 +40,14 @@ function fmt(iso: string) { return new Date(iso).toLocaleString(locale.value, { 
 function startNew() { activeId.value = null; drawerOpen.value = true }
 function openTask(id: string) { activeId.value = id; drawerOpen.value = true }
 // 抽屉里首条消息创建了任务 → 切到它 + 刷新列表。
-function onCreated(id: string) { activeId.value = id; refresh() }
+function refreshList() { void refresh() }
+function onCreated(id: string) { activeId.value = id; refreshList() }
+function onDeleted(id: string) {
+  tasks.value = (tasks.value ?? []).filter((task) => task.id !== id)
+  if (activeId.value === id) activeId.value = null
+  drawerOpen.value = false
+  refreshList()
+}
 </script>
 
 <template>
@@ -97,6 +104,6 @@ function onCreated(id: string) { activeId.value = id; refresh() }
       </div>
     </div>
 
-    <FeatureDrawer v-model:open="drawerOpen" :project-id="projectId" :feature-id="activeId" @changed="refresh" @created="onCreated" />
+    <FeatureDrawer v-model:open="drawerOpen" :project-id="projectId" :feature-id="activeId" @changed="refreshList" @created="onCreated" @deleted="onDeleted" />
   </div>
 </template>

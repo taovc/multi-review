@@ -3,7 +3,7 @@
 // agent 遇到真决策点会输出 ```ask-user 块 → 渲染成决策卡（点选项=下一条消息）；点「开 PR」让 agent 自己开。
 const props = defineProps<{ projectId: string; featureId: string | null }>()
 const open = defineModel<boolean>('open', { required: true })
-const emit = defineEmits<{ changed: []; created: [id: string] }>()
+const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string] }>()
 const { t, locale } = useI18n()
 const toast = useToast()
 
@@ -174,8 +174,19 @@ async function stop() {
 }
 async function doDelete() {
   if (!props.featureId) { open.value = false; return }
+  const id = props.featureId
   busy.value = true
-  try { await $fetch(`/api/features/${props.featureId}`, { method: 'DELETE' }); emit('changed'); open.value = false }
+  try {
+    await $fetch(`/api/features/${id}`, { method: 'DELETE' })
+    closeSSE()
+    loadToken++
+    data.value = null
+    liveAssistant.value = ''
+    logLines.value = []
+    emit('deleted', id)
+    emit('changed')
+    open.value = false
+  }
   catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
   finally { busy.value = false; confirming.value = '' }
 }
