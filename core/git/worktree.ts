@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { appendFileSync, mkdirSync, existsSync, readFileSync, rmSync } from 'node:fs'
-import { dirname, relative, resolve } from 'node:path'
+import { mkdirSync, existsSync, rmSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const pexec = promisify(execFile)
 const REPO_WORKTREES_DIR = 'pr-cockpit-worktrees'
@@ -41,28 +41,9 @@ export function resolveWorktreePath(localPath: string | null, reposDir: string, 
   return resolve(resolveWorktreeRoot(localPath, reposDir, location), taskId)
 }
 
-function isInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child)
-  return rel === '' || (!!rel && !rel.startsWith('..') && !rel.startsWith('/'))
-}
-
-async function ensureRepoWorktreeExclude(localPath: string) {
-  const excludePath = resolve(localPath, (await git(localPath, ['rev-parse', '--git-path', 'info/exclude'])).trim())
-  if (!excludePath) return
-  mkdirSync(dirname(excludePath), { recursive: true })
-  const pattern = `/${REPO_WORKTREES_DIR}/`
-  const body = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : ''
-  if (body.split(/\r?\n/).some((line) => line.trim() === pattern)) return
-  const prefix = body && !body.endsWith('\n') ? '\n' : ''
-  appendFileSync(excludePath, `${prefix}${pattern}\n`)
-}
-
 export async function ensureWorktreeRoot(localPath: string, reposDir: string, location?: string | null): Promise<string> {
   const root = resolveWorktreeRoot(localPath, reposDir, location)
   mkdirSync(root, { recursive: true })
-  if (normalizeWorktreeLocation(location) === 'repo' && isInside(resolve(localPath), root)) {
-    await ensureRepoWorktreeExclude(localPath)
-  }
   return root
 }
 

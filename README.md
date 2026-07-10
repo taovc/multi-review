@@ -112,7 +112,7 @@ pnpm install
 pnpm dev      # http://localhost:3001
 ```
 
-首次启动时，**SQLite 数据库（`./data/cockpit.db`）会自动创建**。默认 worktree 位置是每个项目本地 clone 内的 `pr-cockpit-worktrees/`，启动恢复会把仍存在的旧 `./data/worktrees` 持久 worktree 迁过去 —— 无需手动跑 migration。Drizzle schema 在运行时自建（`core/db/client.ts` 中的 `ensureSchema()` / `ensureColumns()`）。
+首次启动时，**SQLite 数据库（`./data/cockpit.db`）会自动创建**。默认 worktree 位置是每个项目本地 clone 内的 `pr-cockpit-worktrees/`，让 IDE 能像普通 repo 内 worktree 一样发现；启动恢复会把仍存在的旧 `./data/worktrees` 持久 worktree 迁过去 —— 无需手动跑 migration。Drizzle schema 在运行时自建（`core/db/client.ts` 中的 `ensureSchema()` / `ensureColumns()`）。
 
 **6. 生产构建（可选）**
 
@@ -161,7 +161,7 @@ pnpm dev                  # 默认 http://localhost:3001
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Claude 路径可选；本地登录不可用时使用 |
 | `DEFAULT_REPO` | `owner/repo` | 可选，粘纯数字 PR 时的默认仓库 |
 | `DB_PATH` | `./data/cockpit.db` | SQLite 路径 |
-| `WORKTREE_LOCATION` | `repo` | `repo`=每个本地 clone 内的 `pr-cockpit-worktrees/`；`central`=使用 `REPOS_DIR` |
+| `WORKTREE_LOCATION` | `repo` | `repo`=每个本地 clone 内、IDE 可发现的 `pr-cockpit-worktrees/`；`central`=使用 `REPOS_DIR` |
 | `REPOS_DIR` | `./data/worktrees` | `central` 模式的 worktree 根；`repo` 模式下作为旧数据迁移源 |
 | `MAX_CONCURRENCY` | `3` | 并行审核上限 |
 

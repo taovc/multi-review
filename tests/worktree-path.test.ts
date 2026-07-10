@@ -42,7 +42,8 @@ try {
   assert.equal(migrated, resolve(repo, 'pr-cockpit-worktrees', 'task-1'))
   assert.equal(existsSync(legacyPath), false)
   assert.equal(existsSync(migrated!), true)
-  assert.equal(git(repo, ['status', '--short']).trim(), '')
+  assert.match(git(repo, ['status', '--short']), /\?\? pr-cockpit-worktrees\//)
+  assert.equal(git(migrated!, ['status', '--short', '--branch']).startsWith('## task-1'), true)
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
