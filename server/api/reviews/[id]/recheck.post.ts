@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
     repo: project.repo, prNumber: review.prNumber, branch,
     defaultBranch: project.defaultBranch, localPath: project.localPath,
     methodology: rc.methodology,
-    reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, provider: rc.provider, model: rc.model, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: getCookie(event, 'mr-locale') || 'zh',
+    reposDir: cfg.reposDir as string, provider: rc.provider, model: rc.model, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: getCookie(event, 'mr-locale') || 'zh',
   })
   return { ok: true, status: 'recheck_requested' }
 })

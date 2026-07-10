@@ -112,7 +112,7 @@ The `postinstall` step automatically runs `nuxt prepare` (Nuxt type generation).
 pnpm dev      # http://localhost:3001
 ```
 
-On first start, **the SQLite database (`./data/cockpit.db`) is created automatically**. The default worktree location is `pr-cockpit-worktrees/` inside each project's local clone, so IDEs can discover it like normal repo-local worktrees; startup recovery moves existing persistent worktrees from the old `./data/worktrees` location when they still exist. No manual migration is required. The Drizzle schema is set up on the fly (`ensureSchema()` / `ensureColumns()` in `core/db/client.ts`).
+On first start, **the SQLite database (`./data/cockpit.db`) and the worktrees folder (`./data/worktrees`) are created automatically** — no manual migration to run. The Drizzle schema is set up on the fly (`ensureSchema()` / `ensureColumns()` in `core/db/client.ts`).
 
 **6. Production build (optional)**
 
@@ -161,8 +161,7 @@ See `.env.example`; key entries:
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Optional for the Claude path when local login is unavailable |
 | `DEFAULT_REPO` | `owner/repo` | Optional, default repo when pasting a bare PR number |
 | `DB_PATH` | `./data/cockpit.db` | SQLite path |
-| `WORKTREE_LOCATION` | `repo` | `repo` = IDE-visible `pr-cockpit-worktrees/` inside each local clone; `central` = use `REPOS_DIR` |
-| `REPOS_DIR` | `./data/worktrees` | Worktree root for `central` mode; legacy migration source in `repo` mode |
+| `REPOS_DIR` | `./data/worktrees` | Root where review git worktrees land |
 | `MAX_CONCURRENCY` | `3` | Maximum number of parallel reviews |
 
 ## Directory layout

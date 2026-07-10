@@ -5,7 +5,7 @@
 - 这是用户的本地批量 PR 审核工作台，产品名是 Multi Review，仓库路径通常是 `/Users/openstudio/work/products/tools/pr-cockpit`。
 - 核心流程：拉取 GitHub PR 列表，给每个 PR 建隔离 worktree，AI 产出结构化 review，人类在 Web UI 里把关后再发 GitHub 行级/汇总评论。
 - 技术栈：Nuxt 4 + @nuxt/ui/Tailwind v4，better-sqlite3 + drizzle，Nitro `server/api/`，本地 `gh` CLI，`@anthropic-ai/claude-agent-sdk` 和 `@openai/codex-sdk`。
-- 主要目录：`core/` 是业务和 agent 引擎，`server/api/` 是 Nitro API，`app/` 是 Vue UI，`tests/` 是轻量合同/回归测试，`data/` 是本地 SQLite 和旧集中 worktree 迁移源。
+- 主要目录：`core/` 是业务和 agent 引擎，`server/api/` 是 Nitro API，`app/` 是 Vue UI，`tests/` 是轻量合同/回归测试，`data/` 是本地 SQLite 和 worktrees。
 
 ## 本地运行
 
@@ -13,7 +13,6 @@
 - Dev server：`pnpm dev`，README 默认是 `http://localhost:3001`。
 - 用户机器上的常驻 pr-cockpit 实例通常在端口 `5332`，`4737` 是另一个项目。动进程前先确认端口，不要按 `.output/server/index.mjs` 进程名误杀。
 - SQLite 没有正式 drizzle migration 流程。实际建表在 `core/db/client.ts` 的 `ensureSchema()` 和 `ensureColumns()`，`core/db/schema.ts` 只提供查询类型。改 DB 时要同步这两处，并保持启动重跑幂等。
-- 默认 worktree 位置是每个项目本地 clone 内的 `pr-cockpit-worktrees/<taskId>`，不要自动写入目标 repo 的 ignore/exclude；启动恢复会把仍存在的旧 `./data/worktrees/<taskId>` 持久 fix/feature worktree 用 `git worktree move` 迁过去。`WORKTREE_LOCATION=central` 才继续使用 `REPOS_DIR`。
 
 ## 改代码时的约束
 

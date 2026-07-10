@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
     .map((r) => r.id)
 
   if (ids.length) {
-    for (const rid of ids) await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, rid, { location: cfg.worktreeLocation as string })
+    for (const rid of ids) await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, rid)
     d.delete(schema.reviews).where(inArray(schema.reviews.id, ids)).run()
   }
   return { deleted: ids.length }

@@ -49,7 +49,6 @@ export default defineNuxtConfig({
     defaultRepo: process.env.DEFAULT_REPO || '',
     // local infra
     dbPath: process.env.DB_PATH || './data/cockpit.db',
-    worktreeLocation: process.env.WORKTREE_LOCATION || 'repo',
     reposDir: process.env.REPOS_DIR || './data/worktrees',
     maxConcurrency: Number(process.env.MAX_CONCURRENCY || 3),
     // PR 自动化引擎（自动审核 / 自动修复的常驻轮询）。AUTOMATION_ENABLED=false 整体关停。

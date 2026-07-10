@@ -76,7 +76,6 @@ export type FixJobCtx = {
   defaultBranch: string
   localPath: string
   reposDir: string
-  worktreeLocation?: string | null
   provider?: ReviewProvider
   model: string // 当前 provider 的实模型（不混用）
   effort?: string
@@ -106,7 +105,6 @@ async function ensureWorktree(ctx: FixJobCtx, h: ReturnType<typeof helpers>) {
   const wt = await prepareWorktree({
     localPath: ctx.localPath,
     reposDir: ctx.reposDir,
-    location: ctx.worktreeLocation,
     reviewId: ctx.fixId,
     branch: ctx.branch,
     defaultBranch: ctx.defaultBranch,
@@ -266,11 +264,6 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
 }
 
 // discard / 删除任务时清 worktree
-export async function cleanupFixWorktree(
-  localPath: string | null,
-  reposDir: string,
-  fixId: string,
-  opts: { worktreeLocation?: string | null; worktreePath?: string | null } = {},
-) {
-  await removeWorktree(localPath, reposDir, fixId, { location: opts.worktreeLocation, worktreePath: opts.worktreePath })
+export async function cleanupFixWorktree(localPath: string | null, reposDir: string, fixId: string) {
+  await removeWorktree(localPath, reposDir, fixId)
 }

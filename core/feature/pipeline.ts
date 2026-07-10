@@ -45,7 +45,6 @@ function slugify(s: string): string {
 async function ensureFeatureWorktree(p: {
   db: any; schema: any; taskId: string
   localPath: string; reposDir: string; defaultBranch: string
-  worktreeLocation?: string | null
   now: () => string; emit: (kind: string, message: string) => void
 }): Promise<string> {
   const { db, schema, taskId } = p
@@ -55,7 +54,6 @@ async function ensureFeatureWorktree(p: {
   const branch = t?.branch || `feat/${slugify(t?.title || t?.description)}-${slugify(taskId.slice(0, 6))}`
   const wt = await prepareFeatureWorktree({
     localPath: p.localPath, reposDir: p.reposDir, taskId,
-    location: p.worktreeLocation,
     newBranch: branch, defaultBranch: t?.baseBranch || p.defaultBranch,
     onStep: (m) => p.emit('stage', m),
   })
@@ -91,7 +89,6 @@ export type FeatureDevelopJobCtx = {
   taskId: string
   localPath: string
   reposDir: string
-  worktreeLocation?: string | null
   defaultBranch: string
   repo: string // owner/name，回查 gh PR 用
   provider: ReviewProvider
@@ -158,7 +155,7 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
 
     // 确保新分支 worktree（首轮建；之后复用）。绝不碰真实本地 clone。
     const wtPath = await ensureFeatureWorktree({
-      db, schema, taskId, localPath: ctx.localPath, reposDir: ctx.reposDir, worktreeLocation: ctx.worktreeLocation, defaultBranch: ctx.defaultBranch, now, emit,
+      db, schema, taskId, localPath: ctx.localPath, reposDir: ctx.reposDir, defaultBranch: ctx.defaultBranch, now, emit,
     })
 
     let stopped = false
