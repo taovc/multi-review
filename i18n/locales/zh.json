@@ -290,6 +290,10 @@
     "effortLabel": "审核力度 (effort)",
     "effortNone": "（不设，用模型默认）",
     "noEffortSupport": "该模型不支持 effort 设置",
+    "refreshCodexModels": "刷新模型目录",
+    "refreshingCodexModels": "刷新中…",
+    "codexModelsRefreshed": "已刷新 Codex 模型目录（{n} 个）",
+    "codexModelsRefreshFailed": "刷新 Codex 模型目录失败",
     "saving": "保存中…",
     "saveConfig": "保存配置",
     "saved": "已保存",
@@ -495,7 +499,7 @@
     "dangerOn": "⚠️ 已允许危险命令（rm -rf / git push 等不再拦）",
     "rename": "重命名",
     "ultracode": "ultracode模式",
-    "ultracodeHint": "开关 ultracode 模式（开了就一直生效）—— 用 xhigh + 多代理 workflow 跑（更强，但更慢更贵）。正常打字即可，后台自动激活。"
+    "ultracodeHint": "开关 ultracode 模式（开了就一直生效）—— Codex 模型支持时使用原生 ultra，否则使用 xhigh + 增强工作流（更强，但更慢更贵）。正常打字即可，后台自动激活。"
   },
   "feature": {
     "tab": "Feature 开发",

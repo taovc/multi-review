@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { codexCliConfig, codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation } from '../core/agent/codexAgent'
+import { codexCliConfig, codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, toCodexEffort } from '../core/agent/codexAgent'
 import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt, isAllowedFeaturePublishCommand } from '../core/agent/codexChat'
 import { shouldBlockCodexCommand } from '../core/agent/commandGuard'
 import { projectGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../server/utils/globalAgentConfig'
@@ -26,6 +26,11 @@ assert.equal('service_tier' in codexCliConfig({ CODEX_SERVICE_TIER: '' } as Node
 assert.equal('service_tier' in codexCliConfig({ CODEX_SERVICE_TIER: '   ' } as NodeJS.ProcessEnv), false)
 assert.equal('service_tier' in codexCliConfig({ CODEX_SERVICE_TIER: 'fast' } as NodeJS.ProcessEnv, { serviceTier: null }), false)
 assert.equal(codexCliConfig({} as NodeJS.ProcessEnv, { serviceTier: 'fast' }).service_tier, 'fast')
+assert.equal(codexCliConfig({} as NodeJS.ProcessEnv, { reasoningEffort: 'max' }).model_reasoning_effort, 'max')
+assert.equal(codexCliConfig({} as NodeJS.ProcessEnv, { reasoningEffort: 'ultra' }).model_reasoning_effort, 'ultra')
+assert.equal(toCodexEffort('max'), 'max')
+assert.equal(toCodexEffort('ultra'), 'ultra')
+assert.equal(toCodexEffort('not-a-real-effort'), undefined)
 assert.equal(codexCliConfig({ CODEX_PROJECT_DOC_MAX_BYTES: 'nope' } as NodeJS.ProcessEnv).project_doc_max_bytes, 65536)
 assert.deepEqual(codexWorkingDirectoryOptions(), { skipGitRepoCheck: true })
 assert.deepEqual(codexWorkingDirectoryOptions(process.cwd()), { workingDirectory: process.cwd() })

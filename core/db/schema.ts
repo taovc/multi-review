@@ -12,7 +12,7 @@ export const projects = sqliteTable('projects', {
   activeSkillId: text('active_skill_id'), // 当前启用的审核 skill
   provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
   model: text('model'), // 审核用模型别名/全名（空=全局默认）
-  effort: text('effort'), // 审核力度 low/medium/high/xhigh/max（空=不设）
+  effort: text('effort'), // 审核力度由 provider 模型目录决定；Codex 可含 minimal/low/medium/high/xhigh/max/ultra（空=不设）
   codexServiceTier: text('codex_service_tier'), // Codex 专用服务档位；null=不覆盖，fast=启用快速档
   // 自动化「修复↔复查」每条 PR 的回合上限（防自驱闭环烧 token）。在项目配置里和模型选择同处编辑。
   autoMaxRounds: integer('auto_max_rounds').notNull().default(2),

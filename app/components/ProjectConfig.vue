@@ -8,7 +8,7 @@ type ModelCap = { value: string; displayName: string; description: string; suppo
 type Provider = 'claude' | 'codex'
 type ProviderStageId = 'review' | 'fix_chat' | 'recheck' | 'skill_generation' | 'publish_reply'
 type ProviderCapabilityStage = { id: ProviderStageId; claude: boolean; codex: boolean; providerControlled: boolean }
-type CodexSdkStatus = { installed: boolean; authStatus: 'authenticated' | 'missing' | 'unknown'; detail: string; sdkVersion?: string }
+type CodexSdkStatus = { installed: boolean; authStatus: 'authenticated' | 'missing' | 'unknown'; detail: string; sdkVersion?: string; cliVersion?: string }
 type AgentCapabilities = {
   models: ModelCap[]
   providers?: { stages: ProviderCapabilityStage[] }
@@ -16,7 +16,7 @@ type AgentCapabilities = {
   codexModels?: ModelCap[] // 从 `codex debug models` 动态拉取的当前账号真实可用模型
   error?: string // 实时读本地 claude 失败时由后端带回（用于 Claude 状态卡）
 }
-const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] // 选「全局默认」时的兜底档
+const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] // 模型目录暂不可用时的兜底档
 
 // 表单（项目信息 + 模型）
 const form = reactive({
@@ -33,6 +33,7 @@ const form = reactive({
 })
 const savingInfo = ref(false)
 const msg = ref('')
+const refreshingCaps = ref(false)
 
 const { data: caps, pending: capsPending } = useFetch<AgentCapabilities>('/api/agent/capabilities')
 const modelOptions = computed<ModelCap[]>(() => [
@@ -57,18 +58,37 @@ const codexModelOptions = computed<ModelCap[]>(() => [
   ...(caps.value?.codexModels ?? []),
 ])
 const activeModelOptions = computed<ModelCap[]>(() => form.provider === 'codex' ? codexModelOptions.value : modelOptions.value)
+const defaultCodexEfforts = computed(() => {
+  const efforts = new Set((caps.value?.codexModels ?? []).flatMap((model) => model.effortLevels))
+  return efforts.size ? [...efforts] : CODEX_EFFORTS
+})
 const effortOptions = computed(() => {
   const list = form.provider === 'codex' ? (caps.value?.codexModels ?? []) : (caps.value?.models ?? [])
   const m = list.find((x) => x.value === form.model)
   if (m) return m.supportsEffort ? m.effortLevels : []
-  // 选了「全局默认」（没具体模型）：codex 给通用兜底档，claude 不显示
-  return form.provider === 'codex' ? CODEX_EFFORTS : []
+  // 选了「全局默认」（没具体模型）：codex 使用当前目录所有可用档位，claude 不显示
+  return form.provider === 'codex' ? defaultCodexEfforts.value : []
 })
 watch(() => form.model, () => { if (!effortOptions.value.includes(form.effort)) form.effort = '' })
 watch(() => form.provider, () => {
   form.model = ''
   form.effort = ''
 })
+
+async function refreshCodexModels() {
+  refreshingCaps.value = true; msg.value = ''
+  const projectId = props.project.id
+  try {
+    const next = await $fetch<AgentCapabilities>('/api/agent/capabilities?force=1')
+    if (props.project.id !== projectId) return
+    caps.value = next
+    msg.value = t('config.codexModelsRefreshed', { n: next.codexModels?.length ?? 0 })
+  } catch (e: any) {
+    msg.value = e?.data?.statusMessage || t('config.codexModelsRefreshFailed')
+  } finally {
+    refreshingCaps.value = false
+  }
+}
 
 async function saveInfo() {
   savingInfo.value = true; msg.value = ''
@@ -357,7 +377,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
           <template v-if="form.provider === 'codex'">
             <div class="flex items-center justify-between gap-3">
               <div class="text-[10px] uppercase tracking-[0.12em] text-dimmed">{{ $t('config.codexSdkStatus') }}</div>
-              <span v-if="codexStatus?.sdkVersion" class="font-mono text-[10px] text-dimmed">v{{ codexStatus.sdkVersion }}</span>
+              <span v-if="codexStatus?.cliVersion || codexStatus?.sdkVersion" class="font-mono text-[10px] text-dimmed">v{{ codexStatus.cliVersion || codexStatus.sdkVersion }}</span>
             </div>
             <div class="mt-3 space-y-2 text-sm">
               <div class="flex items-center justify-between gap-3">
@@ -401,11 +421,20 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </div>
     </section>
 
-    <!-- 模型列表：同一个组件，跟随 provider（claude=本地真实模型；codex=预设列表） -->
+    <!-- 模型列表：同一个组件，跟随 provider（claude/codex 都读取本地 CLI 的真实模型目录） -->
     <section class="mt-8">
-      <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-2">{{ form.provider === 'codex' ? $t('config.codexModelSection') : $t('config.claudeModelSection') }}</div>
-      <p class="text-xs text-dimmed mb-3 max-w-2xl">{{ form.provider === 'codex' ? $t('config.codexModelHint') : $t('config.claudeModelHint') }}</p>
-      <div class="space-y-1 max-w-2xl">
+      <div class="flex items-center justify-between gap-3 mb-2">
+        <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ form.provider === 'codex' ? $t('config.codexModelSection') : $t('config.claudeModelSection') }}</div>
+        <button
+          v-if="form.provider === 'codex'"
+          type="button"
+          class="text-xs text-muted hover:text-highlighted disabled:opacity-40"
+          :disabled="refreshingCaps"
+          @click="refreshCodexModels"
+        >{{ refreshingCaps ? $t('config.refreshingCodexModels') : $t('config.refreshCodexModels') }}</button>
+      </div>
+      <p class="text-xs text-dimmed mb-3">{{ form.provider === 'codex' ? $t('config.codexModelHint') : $t('config.claudeModelHint') }}</p>
+      <div class="space-y-1">
         <button
           v-for="m in activeModelOptions"
           :key="m.value"

@@ -11,6 +11,7 @@ export type CodexSdkStatus = {
   authStatus: CodexAuthStatus
   detail: string
   sdkVersion?: string
+  cliVersion?: string
 }
 
 let _cache: { value: CodexSdkStatus; at: number } | null = null
@@ -37,6 +38,7 @@ async function resolveCodexSdkStatus(): Promise<CodexSdkStatus> {
       detail: '找不到 Codex CLI 二进制。请确认 `pnpm install` 装上了 @openai/codex 的平台包，或设置 CODEX_EXECUTABLE 指向 codex 可执行文件。',
     }
   }
+  const cliVersion = await runCodexVersion(executablePath)
 
   const envAuthenticated = Boolean(
     process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || process.env.CODEX_ACCESS_TOKEN,
@@ -46,6 +48,7 @@ async function resolveCodexSdkStatus(): Promise<CodexSdkStatus> {
       installed: true,
       authStatus: 'authenticated',
       sdkVersion,
+      cliVersion,
       detail: 'Codex API credentials are present in the server environment.',
     }
   }
@@ -53,15 +56,21 @@ async function resolveCodexSdkStatus(): Promise<CodexSdkStatus> {
   try {
     const login = await runCodexLoginStatus(executablePath)
     if (login.ok && /logged in/i.test(login.output)) {
-      return { installed: true, authStatus: 'authenticated', sdkVersion, detail: login.output.split('\n')[0] || 'Codex login is configured.' }
+      return { installed: true, authStatus: 'authenticated', sdkVersion, cliVersion, detail: login.output.split('\n')[0] || 'Codex login is configured.' }
     }
     if (login.ok) {
-      return { installed: true, authStatus: 'missing', sdkVersion, detail: login.output.split('\n')[0] || 'Codex login is not configured.' }
+      return { installed: true, authStatus: 'missing', sdkVersion, cliVersion, detail: login.output.split('\n')[0] || 'Codex login is not configured.' }
     }
-    return { installed: true, authStatus: 'unknown', sdkVersion, detail: login.output || 'Codex CLI found, but login status could not be checked.' }
+    return { installed: true, authStatus: 'unknown', sdkVersion, cliVersion, detail: login.output || 'Codex CLI found, but login status could not be checked.' }
   } catch (error) {
-    return { installed: true, authStatus: 'unknown', sdkVersion, detail: error instanceof Error ? error.message : String(error) }
+    return { installed: true, authStatus: 'unknown', sdkVersion, cliVersion, detail: error instanceof Error ? error.message : String(error) }
   }
+}
+
+async function runCodexVersion(executablePath: string): Promise<string | undefined> {
+  const result = await runCodexCommand(executablePath, ['--version'], 5_000)
+  if (!result.ok) return undefined
+  return /\bcodex-cli\s+(\S+)/i.exec(result.output)?.[1]
 }
 
 async function resolveCodexSdkVersion(): Promise<string | undefined> {
@@ -87,16 +96,20 @@ async function resolveCodexSdkVersion(): Promise<string | undefined> {
 }
 
 async function runCodexLoginStatus(executablePath: string): Promise<{ ok: boolean; output: string }> {
+  return runCodexCommand(executablePath, ['login', 'status'], 5_000)
+}
+
+async function runCodexCommand(executablePath: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; output: string }> {
   return await new Promise((resolve) => {
-    const child = spawn(executablePath, ['login', 'status'], {
+    const child = spawn(executablePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
     })
     const chunks: Buffer[] = []
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
-      resolve({ ok: false, output: 'Codex login status timed out.' })
-    }, 5_000)
+      resolve({ ok: false, output: 'Codex command timed out.' })
+    }, timeoutMs)
 
     child.stdout?.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
     child.stderr?.on('data', (chunk) => chunks.push(Buffer.from(chunk)))

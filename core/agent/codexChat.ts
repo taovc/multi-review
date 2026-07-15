@@ -1,6 +1,7 @@
 import { type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { classifyCodexError, extractCodexErrorMessage, formatCodexProviderError } from './codexErrors'
 import { codexWorkingDirectoryOptions, newCodex, toCodexEffort } from './codexAgent'
+import { codexUltracodeEffort, getCodexModels } from './codexModels'
 import { shouldBlockCodexCommand, type CodexCommandGuardScope } from './commandGuard'
 import { outputLangClause } from './lang'
 import { askUserClause } from './chat'
@@ -172,8 +173,15 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
   const runTurn = async (sessionId: string | null): Promise<FixChatResult> => {
     const runOpts = { ...opts, sessionId }
     // 用共享的 newCodex()：它带 codexPathOverride，绕开 nitro 打包后找不到二进制的问题。
-    const codex = newCodex('codexServiceTier' in runOpts ? { serviceTier: runOpts.codexServiceTier } : undefined)
-    const effort = toCodexEffort(runOpts.ultracode ? 'xhigh' : runOpts.effort)
+    // 5.6 Sol/Terra 支持 CLI 原生 ultra；其他模型继续使用 xhigh + 项目提示词工作流。
+    const requestedEffort = runOpts.ultracode
+      ? codexUltracodeEffort(await getCodexModels(), runOpts.model)
+      : runOpts.effort
+    const effort = toCodexEffort(requestedEffort)
+    const codex = newCodex({
+      ...('codexServiceTier' in runOpts ? { serviceTier: runOpts.codexServiceTier } : {}),
+      ...(effort ? { reasoningEffort: effort } : {}),
+    })
     // 网络只跟随「feature 开 PR」这类显式意图（feature 会同时传 fullAccess+networkAccess）。
     // fix 的 allowDanger 只放开本地沙箱（rm 等危险本地操作），**不开网络**——fix 从不需要 agent 自己 push
     // （上传走独立 Node 路径），且 codex 的 git-mutation 守卫是「执行后」才拦，开了网络会让 push 先落地再报错。
@@ -181,7 +189,6 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const fullSandbox = !!(runOpts.fullAccess || runOpts.allowDanger)
     const threadOptions: ThreadOptions = {
       ...(runOpts.model ? { model: runOpts.model } : {}),
-      ...(effort ? { modelReasoningEffort: effort } : {}),
       ...codexWorkingDirectoryOptions(runOpts.cwd),
       sandboxMode: fullSandbox ? 'danger-full-access' : 'workspace-write',
       approvalPolicy: 'never',

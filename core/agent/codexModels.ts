@@ -25,6 +25,10 @@ async function resolveCodexModels(): Promise<CodexModel[]> {
   const bin = resolveCodexExecutable()
   if (!bin) return []
   const raw = await runDebugModels(bin).catch(() => '')
+  return parseCodexModels(raw)
+}
+
+export function parseCodexModels(raw: string): CodexModel[] {
   if (!raw.trim()) return []
   let parsed: { models?: unknown }
   try {
@@ -51,6 +55,16 @@ async function resolveCodexModels(): Promise<CodexModel[]> {
         effortLevels,
       }
     })
+}
+
+// Ultracode 开关优先使用模型目录声明的原生 ultra；旧模型或未知模型保持原来的 xhigh 行为。
+// 空模型表示走 Codex 默认，此时用目录优先级最高的模型能力作为判断依据。
+export function codexUltracodeEffort(models: CodexModel[], model?: string): 'ultra' | 'xhigh' {
+  const selected = model
+    ? models.find((m) => m.value === model)
+      || (model === 'gpt-5.6' ? models.find((m) => m.value === 'gpt-5.6-sol') : undefined)
+    : models[0]
+  return selected?.effortLevels.includes('ultra') ? 'ultra' : 'xhigh'
 }
 
 function runDebugModels(bin: string): Promise<string> {

@@ -290,6 +290,10 @@
     "effortLabel": "Review effort",
     "effortNone": "(unset, model default)",
     "noEffortSupport": "This model does not support effort settings",
+    "refreshCodexModels": "Refresh model catalog",
+    "refreshingCodexModels": "Refreshing…",
+    "codexModelsRefreshed": "Refreshed Codex model catalog ({n} models)",
+    "codexModelsRefreshFailed": "Failed to refresh the Codex model catalog",
     "saving": "Saving…",
     "saveConfig": "Save configuration",
     "saved": "Saved",
@@ -495,7 +499,7 @@
     "dangerOn": "⚠️ Dangerous commands ALLOWED (rm -rf / git push not blocked)",
     "rename": "Rename",
     "ultracode": "ultracode mode",
-    "ultracodeHint": "Toggle ultracode mode (stays on) — runs with xhigh reasoning + multi-agent workflow (stronger, but slower and pricier). Just type normally; it's applied in the background."
+    "ultracodeHint": "Toggle ultracode mode (stays on) — Codex uses native ultra when the model supports it, otherwise xhigh plus the enhanced workflow (stronger, but slower and pricier). Just type normally; it's applied in the background."
   },
   "feature": {
     "tab": "Feature dev",

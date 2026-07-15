@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join, delimiter } from 'node:path'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { Codex, type ModelReasoningEffort, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
+import { Codex, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { shouldBlockCodexCommand } from './commandGuard'
 import { extractCodexErrorMessage } from './codexErrors'
 
@@ -11,13 +11,18 @@ export { isForbiddenRemoteOrGitMutation } from './commandGuard'
 const DEFAULT_PROJECT_DOC_FALLBACKS = ['CLAUDE.md', '.claude/CLAUDE.md']
 const DEFAULT_PROJECT_DOC_MAX_BYTES = 64 * 1024
 export type CodexServiceTier = 'fast'
-export type CodexConfigOverrides = { serviceTier?: CodexServiceTier | string | null }
+export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+export type CodexConfigOverrides = {
+  serviceTier?: CodexServiceTier | string | null
+  reasoningEffort?: CodexReasoningEffort | null
+}
 
-// 把 UI 的 effort（含 max）映射到 Codex SDK 的档位；空/不认识则交给 SDK 默认。
-export function toCodexEffort(effort?: string): ModelReasoningEffort | undefined {
-  if (effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh') return effort
-  if (effort === 'max') return 'xhigh'
-  return undefined
+const CODEX_REASONING_EFFORTS = new Set<CodexReasoningEffort>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+
+// 只接受 CLI 模型目录会返回的 effort；空/不认识则交给 Codex 默认。
+// max / ultra 通过 Codex config 传递，因为 SDK 0.144.4 的 ThreadOptions 类型暂时仍只列到 xhigh。
+export function toCodexEffort(effort?: string): CodexReasoningEffort | undefined {
+  return CODEX_REASONING_EFFORTS.has(effort as CodexReasoningEffort) ? effort as CodexReasoningEffort : undefined
 }
 
 function splitConfigList(value?: string): string[] {
@@ -37,6 +42,8 @@ export function codexCliConfig(env: NodeJS.ProcessEnv = process.env, overrides?:
     project_doc_max_bytes: Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : DEFAULT_PROJECT_DOC_MAX_BYTES,
   }
   if (serviceTier) config.service_tier = serviceTier
+  const reasoningEffort = toCodexEffort(overrides?.reasoningEffort || undefined)
+  if (reasoningEffort) config.model_reasoning_effort = reasoningEffort
   return config
 }
 
@@ -79,10 +86,12 @@ function codexBinCandidates(triple: string, binName: string): string[] {
   // pnpm store：.pnpm/@openai+codex@<ver>-<platform>-<arch>/node_modules/@openai/codex/vendor/<triple>/bin/codex
   const pnpmDir = join(cwd, 'node_modules', '.pnpm')
   try {
-    for (const entry of readdirSync(pnpmDir)) {
-      if (entry.startsWith('@openai+codex@') && entry.endsWith(`-${key}`)) {
-        out.push(join(pnpmDir, entry, 'node_modules', '@openai', 'codex', 'vendor', triple, 'bin', binName))
-      }
+    // pnpm 更新中断时可能短暂留下多个版本；优先最新版本，避免重新命中旧模型目录。
+    const entries = readdirSync(pnpmDir)
+      .filter((entry) => entry.startsWith('@openai+codex@') && entry.endsWith(`-${key}`))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
+    for (const entry of entries) {
+      out.push(join(pnpmDir, entry, 'node_modules', '@openai', 'codex', 'vendor', triple, 'bin', binName))
     }
   } catch { /* 没有 .pnpm 目录（非 pnpm 布局）→ 走下面的 hoisted 候选 */ }
   // npm/yarn 扁平布局
@@ -179,11 +188,13 @@ export async function runCodexReadonly(opts: {
   onTool?: (name: string, info: string) => void
   onStop?: (stop: () => void) => void // 暴露中断回调：停止时打标记，事件循环检测到就中断消费（feature 分析阶段的停止按钮用）
 }): Promise<string> {
-  const codex = newCodex('serviceTier' in opts ? { serviceTier: opts.serviceTier } : undefined)
   const effort = toCodexEffort(opts.effort)
+  const codex = newCodex({
+    ...('serviceTier' in opts ? { serviceTier: opts.serviceTier } : {}),
+    ...(effort ? { reasoningEffort: effort } : {}),
+  })
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
-    ...(effort ? { modelReasoningEffort: effort } : {}),
     ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',
@@ -217,11 +228,13 @@ export async function runCodexText(opts: {
   effort?: string
   serviceTier?: CodexServiceTier | string | null
 }): Promise<string> {
-  const codex = newCodex('serviceTier' in opts ? { serviceTier: opts.serviceTier } : undefined)
   const effort = toCodexEffort(opts.effort)
+  const codex = newCodex({
+    ...('serviceTier' in opts ? { serviceTier: opts.serviceTier } : {}),
+    ...(effort ? { reasoningEffort: effort } : {}),
+  })
   const thread = codex.startThread({
     ...(opts.model ? { model: opts.model } : {}),
-    ...(effort ? { modelReasoningEffort: effort } : {}),
     ...codexWorkingDirectoryOptions(opts.cwd),
     sandboxMode: 'read-only',
     approvalPolicy: 'never',

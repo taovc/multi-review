@@ -290,6 +290,10 @@
     "effortLabel": "Intensité de revue (effort)",
     "effortNone": "(non défini, défaut du modèle)",
     "noEffortSupport": "Ce modèle ne supporte pas le réglage d'effort",
+    "refreshCodexModels": "Actualiser le catalogue de modèles",
+    "refreshingCodexModels": "Actualisation…",
+    "codexModelsRefreshed": "Catalogue Codex actualisé ({n} modèles)",
+    "codexModelsRefreshFailed": "Échec de l'actualisation du catalogue Codex",
     "saving": "Enregistrement…",
     "saveConfig": "Enregistrer la configuration",
     "saved": "Enregistré",
@@ -495,7 +499,7 @@
     "dangerOn": "⚠️ Commandes dangereuses AUTORISÉES (rm -rf / git push non bloqués)",
     "rename": "Renommer",
     "ultracode": "mode ultracode",
-    "ultracodeHint": "Active le mode ultracode (reste activé) — raisonnement xhigh + workflow multi-agents (plus puissant, mais plus lent et plus coûteux). Tapez normalement, c'est appliqué en arrière-plan."
+    "ultracodeHint": "Active le mode ultracode (reste activé) — Codex utilise ultra nativement si le modèle le permet, sinon xhigh avec le workflow renforcé (plus puissant, mais plus lent et plus coûteux). Tapez normalement, c'est appliqué en arrière-plan."
   },
   "feature": {
     "tab": "Dév. fonctionnalité",
