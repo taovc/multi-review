@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { codexCliConfig, codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, toCodexEffort } from '../core/agent/codexAgent'
-import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt, isAllowedFeaturePublishCommand } from '../core/agent/codexChat'
+import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt } from '../core/agent/codexChat'
 import { shouldBlockCodexCommand } from '../core/agent/commandGuard'
 import { projectGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../server/utils/globalAgentConfig'
 
@@ -114,22 +114,23 @@ assert.equal(isForbiddenRemoteOrGitMutation('git merge origin/dev', { allowLocal
 assert.equal(isForbiddenRemoteOrGitMutation('git branch fix-conflict', { allowLocalGitMutation: true }), false)
 assert.equal(isForbiddenRemoteOrGitMutation('git push origin HEAD', { allowLocalGitMutation: true }), true)
 assert.equal(isForbiddenRemoteOrGitMutation('gh pr comment 1 --body ok', { allowLocalGitMutation: true }), true)
-assert.equal(isAllowedFeaturePublishCommand('git push -u origin HEAD'), true)
-assert.equal(isAllowedFeaturePublishCommand('git push --set-upstream origin HEAD'), true)
-assert.equal(isAllowedFeaturePublishCommand('git add . && git commit -m "feat: add export" && git push -u origin HEAD && gh pr create --base dev --title Export --body Done'), true)
-assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'git push -u origin HEAD\''), true)
-assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'git add memory-vault/INDEX.md && git commit -m "fix: count only active e-signatures in commercial activity"\''), true)
-assert.equal(isAllowedFeaturePublishCommand(`gh pr create --draft --base dev --title "Fix duplicate dialog" --body $'## Context\n\nFixes #7380.'`), true)
-assert.equal(isAllowedFeaturePublishCommand(`/bin/zsh -lc 'gh pr create --draft --base dev --title "Fix duplicate dialog" --body $'"'"'## Context\n\nFixes #7380.'"'"''`), true)
-assert.equal(isAllowedFeaturePublishCommand('git push origin main'), false)
-assert.equal(isAllowedFeaturePublishCommand('git push -u origin main && git push origin HEAD'), false)
-assert.equal(isAllowedFeaturePublishCommand('git add . && git push origin main'), false)
-assert.equal(isAllowedFeaturePublishCommand('gh pr create --body "$(cat /tmp/body.md)"'), false)
-assert.equal(isAllowedFeaturePublishCommand('/bin/zsh -lc \'gh pr create --body "$(cat /tmp/body.md)"\''), false)
-assert.equal(isAllowedFeaturePublishCommand('gh pr merge 123'), false)
+const featurePushWithChecks = "/bin/zsh -lc 'git status --short --branch && git log --oneline --decorate origin/dev..HEAD && git diff --stat origin/dev...HEAD && git push -u origin HEAD'"
+const featureCommitWithChecks = "/bin/zsh -lc 'git add apps/web/i18n/en.json apps/web/i18n/fr.json && git diff --cached --check && git diff --cached --stat && git commit -m \"fix(web): deduplicate expired subscription toasts\"'"
+const featureRebaseWithChecks = "/bin/zsh -lc 'git rebase origin/dev && git status --short --branch && git rev-list --left-right --count origin/dev...HEAD'"
 
-assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'feature', allowDanger: true, networkAccess: true }), false)
-assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'feature', allowDanger: true, networkAccess: false }), true)
-assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'fix', allowDanger: true, networkAccess: false }), true)
-assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git commit -m "fix: update tests"\'', { scope: 'fix', allowDanger: true, networkAccess: false }), false)
-assert.equal(shouldBlockCodexCommand('/bin/zsh -lc \'git push -u origin HEAD\'', { scope: 'global', allowDanger: true, networkAccess: true }), false)
+// With dangerous commands enabled, the guard must not block local git, remote git, gh, or command chains.
+assert.equal(shouldBlockCodexCommand(featureRebaseWithChecks, { scope: 'feature', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand(featurePushWithChecks, { scope: 'feature', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand(featureCommitWithChecks, { scope: 'feature', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand('git push origin main', { scope: 'feature', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand('gh pr merge 123', { scope: 'feature', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand('git push -u origin HEAD', { scope: 'fix', allowDanger: true }), false)
+assert.equal(shouldBlockCodexCommand('gh api repos/owner/repo/issues/1 --method DELETE', { scope: 'readonly', allowDanger: true }), false)
+
+// Without the flag, git/GitHub mutations remain blocked; global chat never attaches this guard.
+assert.equal(shouldBlockCodexCommand(featureRebaseWithChecks, { scope: 'feature' }), true)
+assert.equal(shouldBlockCodexCommand(featurePushWithChecks, { scope: 'feature' }), true)
+assert.equal(shouldBlockCodexCommand(featureCommitWithChecks, { scope: 'feature' }), true)
+assert.equal(shouldBlockCodexCommand('git push -u origin HEAD', { scope: 'fix' }), true)
+assert.equal(shouldBlockCodexCommand('gh pr merge 123', { scope: 'readonly' }), true)
+assert.equal(shouldBlockCodexCommand('git push -u origin HEAD', { scope: 'global' }), false)

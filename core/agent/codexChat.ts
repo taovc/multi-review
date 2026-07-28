@@ -8,8 +8,6 @@ import { askUserClause } from './chat'
 import type { ChatRunner } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
 
-export { isAllowedFeaturePublishCommand } from './commandGuard'
-
 export class CodexChatError extends Error {
   override cause?: unknown
 
@@ -131,7 +129,7 @@ ${askUserClause(opts.lang)}`
 function emitCodexChatEvent(
   event: ThreadEvent,
   seenTextByItem: Map<string, number>,
-  commandGuard: { scope: CodexCommandGuardScope; allowDanger?: boolean; networkAccess?: boolean } | null,
+  commandGuard: { scope: CodexCommandGuardScope } | null,
   onTool?: (name: string, info: string) => void,
   onText?: (text: string) => void,
 ): string | null {
@@ -182,9 +180,8 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
       ...('codexServiceTier' in runOpts ? { serviceTier: runOpts.codexServiceTier } : {}),
       ...(effort ? { reasoningEffort: effort } : {}),
     })
-    // 网络只跟随「feature 开 PR」这类显式意图（feature 会同时传 fullAccess+networkAccess）。
-    // fix 的 allowDanger 只放开本地沙箱（rm 等危险本地操作），**不开网络**——fix 从不需要 agent 自己 push
-    // （上传走独立 Node 路径），且 codex 的 git-mutation 守卫是「执行后」才拦，开了网络会让 push 先落地再报错。
+    // Network access remains caller-controlled. allowDanger disables the command guard and opens
+    // the local sandbox, but does not implicitly enable networking; fix uploads still use the Node path.
     const network = !!runOpts.networkAccess
     const fullSandbox = !!(runOpts.fullAccess || runOpts.allowDanger)
     const threadOptions: ThreadOptions = {
@@ -207,12 +204,11 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const { events } = await thread.runStreamed(buildCodexChatPrompt(runOpts), { signal: controller.signal })
     const seenTextByItem = new Map<string, number>()
     let text = ''
-    const commandGuard = runOpts.promptKind === 'global'
+    // Do not attach the command guard when the user explicitly allows dangerous commands.
+    const commandGuard = runOpts.promptKind === 'global' || runOpts.allowDanger
       ? null
       : {
           scope: runOpts.promptKind === 'feature' ? 'feature' : 'fix',
-          allowDanger: !!runOpts.allowDanger,
-          networkAccess: !!runOpts.networkAccess,
         } as const
     for await (const event of events) {
       if (event.type === 'thread.started') runOpts.onSessionId?.(event.thread_id)
