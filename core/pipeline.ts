@@ -24,6 +24,7 @@ export type ReviewJobCtx = {
   localPath: string | null
   methodology: string // 已解析的方法学（active skill 或默认）
   reposDir: string
+  worktreeLocation?: string | null
   provider?: ReviewProvider
   model: string // 当前 provider 的实模型（不混用）
   effort: string
@@ -67,6 +68,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
     wt = await prepareWorktree({
       localPath: ctx.localPath || '',
       reposDir: ctx.reposDir,
+      location: ctx.worktreeLocation,
       reviewId,
       branch: ctx.branch,
       defaultBranch: ctx.defaultBranch,
@@ -218,7 +220,7 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     setStatus('rechecking')
     emit('stage', '复审：准备最新代码')
     wt = await prepareWorktree({
-      localPath: ctx.localPath || '', reposDir: ctx.reposDir, reviewId,
+      localPath: ctx.localPath || '', reposDir: ctx.reposDir, location: ctx.worktreeLocation, reviewId,
       branch: ctx.branch, defaultBranch: ctx.defaultBranch, onStep: (m) => emit('stage', m),
     })
 

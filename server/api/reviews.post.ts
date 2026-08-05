@@ -111,6 +111,7 @@ export default defineEventHandler(async (event) => {
         localPath: project.localPath,
         methodology: rc.methodology,
         reposDir: cfg.reposDir as string,
+        worktreeLocation: cfg.worktreeLocation as string,
         provider: rc.provider,
         model: rc.model,
         effort: rc.effort,

@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
   const review = d.select().from(schema.reviews).where(eq(schema.reviews.id, id)).get()
   if (review) {
     const project = d.select().from(schema.projects).where(eq(schema.projects.id, review.projectId)).get()
-    await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id)
+    await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id, { location: cfg.worktreeLocation as string })
     // 删任务即退出自动化：标该 PR opt-out，防全局配置在下一轮把它复活（直到用户手动再开）
     optOutPr(d, schema, review.projectId, review.prNumber, new Date().toISOString())
   }

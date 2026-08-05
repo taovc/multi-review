@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { getDb, schema } from '~core/db/client'
-import { removeWorktree } from '~core/git/worktree'
+import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
 
 const pexec = promisify(execFile)
 
@@ -19,6 +19,56 @@ export default defineNitroPlugin(async () => {
   const now = () => new Date().toISOString()
   const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024, timeout: 15000 })
 
+  // 0) 默认迁移到项目 repo 内的 .pr-cockpit-worktrees/。
+  // 只移动仍存在的持久 worktree（fix / feature）；review worktree 是临时的，重启恢复会清理。
+  try {
+    const projects = new Map(d.select().from(schema.projects).all().map((p: any) => [p.id, p]))
+    let moved = 0
+    let cleared = 0
+    const writePath = (kind: 'fix' | 'feature', id: string, worktreePath: string | null) => {
+      if (kind === 'fix') {
+        d.update(schema.fixes).set({ worktreePath, updatedAt: now() }).where(eq(schema.fixes.id, id)).run()
+      } else {
+        d.update(schema.featureTasks).set({ worktreePath, updatedAt: now() }).where(eq(schema.featureTasks.id, id)).run()
+      }
+    }
+    const moveOne = async (kind: 'fix' | 'feature', row: any) => {
+      // 目录早没了（重启清理 / 手工删）却还留着旧集中目录的路径：迁移搬不动它，留着又会让「上传」
+      // 直接报 worktree 不在了。置空 → 下次对话走 existsSync 的重建分支，在新落点按原分支重建。
+      if (!existsSync(row.worktreePath)) {
+        writePath(kind, row.id, null)
+        cleared++
+        return
+      }
+      const proj: any = projects.get(row.projectId)
+      const nextPath = await migrateWorktreeToRepo({
+        localPath: proj?.localPath ?? null,
+        reposDir: cfg.reposDir as string,
+        taskId: row.id,
+        currentPath: row.worktreePath ?? null,
+        location: cfg.worktreeLocation as string,
+      })
+      if (!nextPath) return
+      writePath(kind, row.id, nextPath)
+      moved++
+    }
+
+    for (const f of d.select().from(schema.fixes).all() as any[]) {
+      if (f.worktreePath) {
+        try { await moveOne('fix', f) } catch (e) { console.error(`[recover] fix worktree 迁移失败 ${f.id}`, e) }
+      }
+    }
+    for (const t of d.select().from(schema.featureTasks).all() as any[]) {
+      if (t.worktreePath) {
+        try { await moveOne('feature', t) } catch (e) { console.error(`[recover] feature worktree 迁移失败 ${t.id}`, e) }
+      }
+    }
+    if (moved) console.log(`[recover] 迁移了 ${moved} 个持久 worktree 到项目 repo 内`)
+    if (cleared) console.log(`[recover] 清空了 ${cleared} 条指向已消失 worktree 的路径（下次使用时按原分支重建）`)
+  } catch (e) {
+    console.error('[recover] worktree 启动迁移失败', e)
+  }
+
   // 1) 审核任务：重置 + 清 worktree（审核 worktree 用完即弃）
   try {
     const stuck = d.select().from(schema.reviews).where(inArray(schema.reviews.status, REVIEW_IN_FLIGHT as any)).all()
@@ -30,7 +80,7 @@ export default defineNitroPlugin(async () => {
           .where(eq(schema.reviews.id, r.id))
           .run()
         const proj: any = projects.get(r.projectId)
-        await removeWorktree(proj?.localPath ?? null, cfg.reposDir as string, r.id)
+        await removeWorktree(proj?.localPath ?? null, cfg.reposDir as string, r.id, { location: cfg.worktreeLocation as string })
       }
       console.log(`[recover] 重置了 ${stuck.length} 个中断的审核任务并清理 worktree`)
     }
