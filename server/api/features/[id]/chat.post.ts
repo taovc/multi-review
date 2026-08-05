@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
 
   const ctx: FeatureDevelopJobCtx = {
     db: d, schema, taskId: id,
-    localPath: project.localPath, reposDir: cfg.reposDir as string, defaultBranch: project.defaultBranch, repo: project.repo,
+    localPath: project.localPath, reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, defaultBranch: project.defaultBranch, repo: project.repo,
     provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: task.lang || 'zh',
     allowDanger, ultracode, assetsDir,
   }

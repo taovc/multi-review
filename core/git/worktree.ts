@@ -1,9 +1,14 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdirSync, existsSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { appendFileSync, mkdirSync, existsSync, readFileSync, rmSync } from 'node:fs'
+import { dirname, relative, resolve } from 'node:path'
 
 const pexec = promisify(execFile)
+// 点开头：worktree 是整份源码副本，落在项目仓库里会被项目自己的 tsc / eslint / vitest / 构建
+// 一路扫进去（重复定义、重复用例、搜索结果翻倍）。大多数工具默认跳过 dot 目录，而 IDE 的文件树
+// 和仓库扫描不受 dot 影响 —— 可见性不打折，工具链干扰最小。
+const REPO_WORKTREES_DIR = '.pr-cockpit-worktrees'
+export type WorktreeLocation = 'repo' | 'central'
 
 // 每个本地仓库一把互斥锁：并发审核会对同一个 .git 跑 git fetch / worktree add，
 // 同时更新 refs/remotes/origin/* 会撞 "cannot lock ref"。同仓库的 git 准备串行化。
@@ -19,13 +24,68 @@ async function withRepoLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+async function git(cwd: string, args: string[]) {
+  const { stdout } = await pexec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 * 64 })
+  return stdout
+}
+
+export function normalizeWorktreeLocation(value?: string | null): WorktreeLocation {
+  return value === 'central' ? 'central' : 'repo'
+}
+
+export function resolveWorktreeRoot(localPath: string | null, reposDir: string, location?: string | null): string {
+  if (normalizeWorktreeLocation(location) === 'repo' && localPath) {
+    return resolve(localPath, REPO_WORKTREES_DIR)
+  }
+  return resolve(reposDir)
+}
+
+export function resolveWorktreePath(localPath: string | null, reposDir: string, taskId: string, location?: string | null): string {
+  return resolve(resolveWorktreeRoot(localPath, reposDir, location), taskId)
+}
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!!rel && !rel.startsWith('..') && !rel.startsWith('/'))
+}
+
+// worktree 根落在项目仓库内 → 主仓库 `git status` 会把它当一坨未跟踪目录列出来，agent 在主仓库
+// 跑 `git add -A` 就有误提交风险。写进 .git/info/exclude 挡掉（info/exclude 不进版本库，不碰
+// 项目共享的 .gitignore）。
+// 这不影响 IDE 发现这些 worktree：编辑器找仓库靠文件系统扫描，不读 gitignore/exclude。
+async function ensureRepoWorktreeExclude(localPath: string) {
+  const excludePath = resolve(localPath, (await git(localPath, ['rev-parse', '--git-path', 'info/exclude'])).trim())
+  if (!excludePath) return
+  mkdirSync(dirname(excludePath), { recursive: true })
+  const pattern = `/${REPO_WORKTREES_DIR}/`
+  const body = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : ''
+  if (body.split(/\r?\n/).some((line) => line.trim() === pattern)) return
+  const prefix = body && !body.endsWith('\n') ? '\n' : ''
+  appendFileSync(excludePath, `${prefix}${pattern}\n`)
+}
+
+export async function ensureWorktreeRoot(localPath: string, reposDir: string, location?: string | null): Promise<string> {
+  const root = resolveWorktreeRoot(localPath, reposDir, location)
+  mkdirSync(root, { recursive: true })
+  if (normalizeWorktreeLocation(location) === 'repo' && isInside(resolve(localPath), root)) {
+    // 挡不住只是主仓库 git status 脏一点，不该让整个任务挂掉 → 失败吞掉。
+    await ensureRepoWorktreeExclude(localPath).catch(() => { /* 非致命 */ })
+  }
+  return root
+}
+
 // 删除某个 review 的 worktree（git 注销 + 删目录）。task 关闭/删除时调用，避免泄漏。
-export async function removeWorktree(localPath: string | null, reposDir: string, reviewId: string) {
-  const wtPath = resolve(reposDir, reviewId)
+export async function removeWorktree(
+  localPath: string | null,
+  reposDir: string,
+  reviewId: string,
+  opts: { location?: string | null; worktreePath?: string | null } = {},
+) {
+  const wtPath = resolve(opts.worktreePath || resolveWorktreePath(localPath, reposDir, reviewId, opts.location))
   if (localPath && existsSync(localPath)) {
     await withRepoLock(localPath, async () => {
       try {
-        await pexec('git', ['-C', localPath, 'worktree', 'remove', '--force', wtPath])
+        await git(localPath, ['worktree', 'remove', '--force', wtPath])
       } catch {
         /* 未注册/已删 */
       }
@@ -38,9 +98,30 @@ export async function removeWorktree(localPath: string | null, reposDir: string,
   }
 }
 
-async function git(cwd: string, args: string[]) {
-  const { stdout } = await pexec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 * 64 })
-  return stdout
+export async function migrateWorktreeToRepo(opts: {
+  localPath: string | null
+  reposDir: string
+  taskId: string
+  currentPath: string | null
+  location?: string | null
+}): Promise<string | null> {
+  const { localPath, reposDir, taskId, currentPath, location } = opts
+  if (normalizeWorktreeLocation(location) !== 'repo') return null
+  if (!localPath || !currentPath || !existsSync(localPath) || !existsSync(currentPath)) return null
+  const targetPath = resolveWorktreePath(localPath, reposDir, taskId, location)
+  const oldPath = resolve(currentPath)
+  if (oldPath === targetPath) {
+    await ensureWorktreeRoot(localPath, reposDir, location)
+    return null
+  }
+  if (existsSync(targetPath)) {
+    throw new Error(`target worktree already exists: ${targetPath}`)
+  }
+  await ensureWorktreeRoot(localPath, reposDir, location)
+  await withRepoLock(localPath, async () => {
+    await git(localPath, ['worktree', 'move', oldPath, targetPath])
+  })
+  return targetPath
 }
 
 // Feature 开发用：从最新 origin/<defaultBranch> 拉一个**新功能分支**并建 worktree（区别于审核/修复的
@@ -51,13 +132,13 @@ export async function prepareFeatureWorktree(opts: {
   taskId: string
   newBranch: string
   defaultBranch: string
+  location?: string | null
   onStep?: (msg: string) => void
 }): Promise<Worktree> {
   const { localPath, reposDir, taskId, newBranch, defaultBranch, onStep } = opts
   if (!localPath || !existsSync(localPath)) throw new Error(`项目未配置有效的本地 clone 路径：${localPath || '(空)'}`)
   if (!newBranch) throw new Error('新分支名为空')
-  if (!existsSync(reposDir)) mkdirSync(reposDir, { recursive: true })
-  const wtPath = resolve(reposDir, taskId)
+  const wtPath = resolve(await ensureWorktreeRoot(localPath, reposDir, opts.location), taskId)
 
   const cleanup = async () => {
     await withRepoLock(localPath, async () => {
@@ -115,6 +196,7 @@ export async function prepareWorktree(opts: {
   defaultBranch: string
   // 审核默认 merge 默认分支再看 diff；「修复」要 push，传 false 不 merge → 推上去的提交才干净。
   mergeDefault?: boolean
+  location?: string | null
   onStep?: (msg: string) => void
 }): Promise<Worktree> {
   const { localPath, reposDir, reviewId, branch, defaultBranch, onStep } = opts
@@ -127,8 +209,7 @@ export async function prepareWorktree(opts: {
   if (!branch) {
     throw new Error('PR 分支为空，无法准备 worktree（PR 元数据缺失或分支已删除）')
   }
-  if (!existsSync(reposDir)) mkdirSync(reposDir, { recursive: true })
-  const wtPath = resolve(reposDir, reviewId)
+  const wtPath = resolve(await ensureWorktreeRoot(localPath, reposDir, opts.location), reviewId)
 
   // 清理也走仓库锁（worktree remove 也动 .git/worktrees）
   const cleanup = async () => {

@@ -112,7 +112,7 @@ Le `postinstall` lance automatiquement `nuxt prepare` (génération des types Nu
 pnpm dev      # http://localhost:3001
 ```
 
-Au premier démarrage, **la base SQLite (`./data/cockpit.db`) et le dossier des worktrees (`./data/worktrees`) sont créés automatiquement** — aucune migration manuelle à lancer. Le schéma Drizzle est monté à la volée (`ensureSchema()` / `ensureColumns()` dans `core/db/client.ts`).
+Au premier démarrage, **la base SQLite (`./data/cockpit.db`) est créée automatiquement**. Par défaut, les worktrees sont placés dans `.pr-cockpit-worktrees/` à l'intérieur de chaque clone local de projet, afin que l'IDE puisse les détecter comme des worktrees locaux classiques (VS Code exige `git.repositoryScanMaxDepth` à `2` ou `-1` ; la valeur par défaut 1 ne scanne qu'un niveau). Ce répertoire est ajouté au `.git/info/exclude` du projet, ce qui garde propre le `git status` du dépôt principal. La récupération au démarrage déplace les anciens worktrees persistants depuis `./data/worktrees` quand ils existent encore. Aucune migration manuelle à lancer. Le schéma Drizzle est monté à la volée (`ensureSchema()` / `ensureColumns()` dans `core/db/client.ts`).
 
 **6. Build de production (optionnel)**
 
@@ -161,7 +161,8 @@ Voir `.env.example` ; éléments clés :
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Optionnel pour le chemin Claude si la connexion locale n'est pas disponible |
 | `DEFAULT_REPO` | `owner/repo` | Optionnel, dépôt par défaut quand on colle un numéro de PR brut |
 | `DB_PATH` | `./data/cockpit.db` | Chemin SQLite |
-| `REPOS_DIR` | `./data/worktrees` | Racine où atterrissent les git worktrees des revues |
+| `WORKTREE_LOCATION` | `repo` | `repo` = `.pr-cockpit-worktrees/` visible par l'IDE dans chaque clone local ; `central` = utiliser `REPOS_DIR` |
+| `REPOS_DIR` | `./data/worktrees` | Racine des worktrees en mode `central` ; source de migration legacy en mode `repo` |
 | `MAX_CONCURRENCY` | `3` | Nombre maximum de revues en parallèle |
 
 ## Arborescence

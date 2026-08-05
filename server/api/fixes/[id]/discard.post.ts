@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
   if (isChatting(id)) throw createError({ statusCode: 409, statusMessage: '对话进行中，请等它完成或停止' })
 
   const project = d.select().from(schema.projects).where(eq(schema.projects.id, fix.projectId)).get()
-  await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id).catch(() => {})
+  await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id, { location: cfg.worktreeLocation as string, worktreePath: fix.worktreePath }).catch(() => {})
   // 删修复任务即退出自动化（同审核删除）：标该 PR opt-out，防被全局配置复活
   optOutPr(d, schema, fix.projectId, fix.prNumber, new Date().toISOString())
   d.delete(schema.fixes).where(eq(schema.fixes.id, id)).run()

@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
 
   const project = d.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get()
   // worktree 以 taskId 为 key（同 fix），removeWorktree 注销 + 删目录
-  await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id).catch(() => {})
+  await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id, { location: cfg.worktreeLocation as string, worktreePath: task.worktreePath }).catch(() => {})
   // 清掉这个任务下载的 issue/PR 配图（落在 <data>/issue-assets/<taskId>）
   await rm(resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets', id), { recursive: true, force: true }).catch(() => {})
   d.delete(schema.featureTasks).where(eq(schema.featureTasks.id, id)).run()
