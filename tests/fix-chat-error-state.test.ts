@@ -8,7 +8,7 @@ import * as schema from '../core/db/schema'
 import type { FixJobCtx } from '../core/fix/pipeline'
 import type { FixChatOptions } from '../core/agent/fixer'
 
-const wt = mkdtempSync(path.join(tmpdir(), 'multi-review-chat-error-'))
+const wt = mkdtempSync(path.join(tmpdir(), 'pr-cockpit-chat-error-'))
 
 const fixRow: Record<string, any> = {
   id: 'fix-1',
@@ -60,7 +60,7 @@ const ctx: FixJobCtx = {
   db: fakeDb,
   schema,
   fixId: 'fix-1',
-  repo: 'taovc/multi-review',
+  repo: 'taovc/pr-cockpit',
   prNumber: 34,
   branch: 'feature-branch',
   defaultBranch: 'main',

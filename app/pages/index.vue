@@ -8,7 +8,7 @@ const { data: projects } = await useFetch<Project[]>('/api/projects')
   <div class="max-w-xl mx-auto px-10 py-24">
     <div class="flex items-center gap-3">
       <img src="/logo.svg" alt="" class="w-10 h-10 rounded-lg" />
-      <h1 class="text-4xl font-light tracking-tight">Multi Review</h1>
+      <h1 class="text-4xl font-light tracking-tight">PR Cockpit</h1>
     </div>
     <div class="w-10 border-t border-accented my-6" />
     <p class="text-sm text-muted leading-relaxed">

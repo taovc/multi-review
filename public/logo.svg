@@ -1,4 +1,4 @@
-<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Multi Review">
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PR Cockpit">
   <rect width="64" height="64" rx="14" fill="#111111"/>
   <!-- 后置对勾（偏移、灰色）= 多个 review -->
   <path d="M16 33 l9 9 l20-21" stroke="#5a5a5a" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" transform="translate(7,-7)"/>

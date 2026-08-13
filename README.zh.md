@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="public/logo.svg" width="64" height="64" alt="Multi Review" />
-  <h1>Multi Review</h1>
+  <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
+  <h1>PR Cockpit</h1>
   <p>本地 AI PR 工作台 · 批量审核、修复对话、Feature 开发与全局助手，Claude/Codex 双 provider</p>
 </div>
 
@@ -77,8 +77,8 @@ gh auth status   # 应显示「Logged in」；否则：gh auth login
 **2. 获取项目**
 
 ```bash
-git clone https://github.com/taovc/multi-review.git
-cd multi-review
+git clone https://github.com/taovc/pr-cockpit.git
+cd pr-cockpit
 ```
 
 **3. 配置环境**

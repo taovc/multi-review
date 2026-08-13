@@ -4,11 +4,11 @@ import { withContract, reviewCanUseTool, ISOLATED } from './guard'
 export const SKILL_SYSTEM = `你是一名资深架构师 + 代码审核负责人。你的任务是为一个具体项目量身定制一套"代码审核方法学"（review skill），供后续 AI 审核该项目的 PR 时作为 system prompt 使用。`
 const SYSTEM = SKILL_SYSTEM
 
-// Multi Review 的运行边界：生成的 skill 必须只写"审核准则"，不能写"操作流程"。
-export const SKILL_BOUNDARY = `【Multi Review 边界 · 生成 skill 时必须遵守】
+// PR Cockpit 的运行边界：生成的 skill 必须只写"审核准则"，不能写"操作流程"。
+export const SKILL_BOUNDARY = `【PR Cockpit 边界 · 生成 skill 时必须遵守】
 你产出的方法学，将来会被一个**只读、在隔离 worktree 里、绝不做 git 写、只审不改**的审核 agent 当作准则。因此：
 - ✅ 只写"审什么、怎么判"：检查项、严重度判断、该项目特有的架构/约定关注点。
-- ❌ 绝不写任何"操作流程"：不要写 commit/push/git 任何写操作、不要写"创建/跳过 worktree"、不要写"修复 bug/顺手改"、不要写"发评论/合并"。这些由 Multi Review 引擎统一控制，写进 skill 也会被忽略和拦截，只会污染方法学。`
+- ❌ 绝不写任何"操作流程"：不要写 commit/push/git 任何写操作、不要写"创建/跳过 worktree"、不要写"修复 bug/顺手改"、不要写"发评论/合并"。这些由 PR Cockpit 引擎统一控制，写进 skill 也会被忽略和拦截，只会污染方法学。`
 const BOUNDARY = SKILL_BOUNDARY
 
 export type SkillGenOptions = {

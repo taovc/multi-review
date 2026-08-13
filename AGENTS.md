@@ -1,8 +1,8 @@
-# pr-cockpit / Multi Review
+# pr-cockpit / PR Cockpit
 
 ## 项目定位
 
-- 这是用户的本地批量 PR 审核工作台，产品名是 Multi Review，仓库路径通常是 `/Users/openstudio/work/products/tools/pr-cockpit`。
+- 这是用户的本地批量 PR 审核工作台，产品名是 PR Cockpit，仓库路径通常是 `/Users/openstudio/work/products/tools/pr-cockpit`。
 - 核心流程：拉取 GitHub PR 列表，给每个 PR 建隔离 worktree，AI 产出结构化 review，人类在 Web UI 里把关后再发 GitHub 行级/汇总评论。
 - 技术栈：Nuxt 4 + @nuxt/ui/Tailwind v4，better-sqlite3 + drizzle，Nitro `server/api/`，本地 `gh` CLI，`@anthropic-ai/claude-agent-sdk` 和 `@openai/codex-sdk`。
 - 主要目录：`core/` 是业务和 agent 引擎，`server/api/` 是 Nitro API，`app/` 是 Vue UI，`tests/` 是轻量合同/回归测试，`data/` 是本地 SQLite 和旧集中 worktree 迁移源。

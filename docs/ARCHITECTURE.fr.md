@@ -1,4 +1,4 @@
-# Multi Review — Architecture et objectifs de design
+# PR Cockpit — Architecture et objectifs de design
 
 > [中文](ARCHITECTURE.md) · **Français** · [English](ARCHITECTURE.en.md)
 

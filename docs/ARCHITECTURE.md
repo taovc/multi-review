@@ -1,4 +1,4 @@
-# Multi Review — 架构与设计目的
+# PR Cockpit — 架构与设计目的
 
 > **中文** · [Français](ARCHITECTURE.fr.md) · [English](ARCHITECTURE.en.md)
 

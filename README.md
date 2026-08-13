@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="public/logo.svg" width="64" height="64" alt="Multi Review" />
-  <h1>Multi Review</h1>
-  <p>Local AI PR cockpit · batch review, fix chat, feature development and a global assistant with Claude/Codex providers</p>
+  <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
+  <h1>PR Cockpit</h1>
+  <p>Local AI PR workbench · batch review, fix chat, feature development and a global assistant with Claude/Codex providers</p>
 </div>
 
 <div align="center">
@@ -78,8 +78,8 @@ Also confirm the provider you plan to use is available: Claude needs a local `cl
 **2. Get the project**
 
 ```bash
-git clone https://github.com/taovc/multi-review.git
-cd multi-review
+git clone https://github.com/taovc/pr-cockpit.git
+cd pr-cockpit
 ```
 
 **3. Configure the environment**

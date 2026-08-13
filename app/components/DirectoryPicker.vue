@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 服务端目录选择器：浏览运行 Multi Review 那台机器的文件系统，挑一个本地 git 克隆目录。
+// 服务端目录选择器：浏览运行 PR Cockpit 那台机器的文件系统，挑一个本地 git 克隆目录。
 // 选中的目录若是 git 仓库，连带它的 origin → owner/repo 一起回填。
 interface Entry {
   name: string

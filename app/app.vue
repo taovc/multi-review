@@ -4,7 +4,7 @@ import type { Project } from '~core/db/schema'
 const { t } = useI18n()
 
 useHead({
-  title: 'Multi Review',
+  title: 'PR Cockpit',
   meta: [{ name: 'description', content: () => t('layout.metaDescription') }],
   link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
 })

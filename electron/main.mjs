@@ -172,7 +172,7 @@ function createWindow(url) {
     height: 920,
     minWidth: 1024,
     minHeight: 720,
-    title: 'Multi Review',
+    title: 'PR Cockpit',
     // macOS：隐藏原生标题栏，traffic light 嵌进 app 自己的顶栏(h-16=64px)垂直居中
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 18, y: 24 } }
@@ -284,7 +284,7 @@ function setupAppMenu() {
       role: 'help',
       submenu: [
         ...(isMac ? [] : [checkItem, { type: 'separator' }]),
-        { label: 'Multi Review on GitHub', click: () => shell.openExternal('https://github.com/taovc/multi-review') },
+        { label: 'PR Cockpit on GitHub', click: () => shell.openExternal('https://github.com/taovc/pr-cockpit') },
       ],
     },
   ]
@@ -323,7 +323,7 @@ if (!app.requestSingleInstanceLock()) {
       maybeAutoCheckUpdates()
     } catch (err) {
       console.error('[main] failed to start:', err)
-      dialog.showErrorBox('Multi Review — startup failed', String(err?.message || err))
+      dialog.showErrorBox('PR Cockpit — startup failed', String(err?.message || err))
       app.quit()
     }
   })
@@ -336,7 +336,7 @@ if (!app.requestSingleInstanceLock()) {
       await openMainWindow()
     } catch (err) {
       console.error('[main] failed to reopen:', err)
-      dialog.showErrorBox('Multi Review — failed to reopen', String(err?.message || err))
+      dialog.showErrorBox('PR Cockpit — failed to reopen', String(err?.message || err))
     }
   })
 

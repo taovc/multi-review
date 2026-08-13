@@ -5,9 +5,9 @@ const release = {
   body: 'Rolling build from the latest `main` (e69f14c). Overwritten on every merge.',
   assets: [
     { name: 'latest-mac.yml', updated_at: '2026-07-01T12:46:20Z', browser_download_url: 'x' },
-    { name: 'multi-review-0.1.0-arm64.dmg', updated_at: '2026-07-01T12:46:31Z', browser_download_url: 'dmg-arm64' },
-    { name: 'multi-review-0.1.0-x64.exe', updated_at: '2026-07-01T12:46:28Z', browser_download_url: 'exe' },
-    { name: 'multi-review-0.1.0-x86_64.AppImage', updated_at: '2026-07-01T12:46:35Z', browser_download_url: 'appimage' },
+    { name: 'pr-cockpit-0.1.0-arm64.dmg', updated_at: '2026-07-01T12:46:31Z', browser_download_url: 'dmg-arm64' },
+    { name: 'pr-cockpit-0.1.0-x64.exe', updated_at: '2026-07-01T12:46:28Z', browser_download_url: 'exe' },
+    { name: 'pr-cockpit-0.1.0-x86_64.AppImage', updated_at: '2026-07-01T12:46:35Z', browser_download_url: 'appimage' },
   ],
 }
 
@@ -25,8 +25,8 @@ assert.equal(pickAsset(release.assets, 'linux', 'x64')?.browser_download_url, 'a
 const dualArch = {
   body: '(deadbee)',
   assets: [
-    { name: 'multi-review-0.1.0-aarch64.AppImage', browser_download_url: 'appimage-arm64' },
-    { name: 'multi-review-0.1.0-x86_64.AppImage', browser_download_url: 'appimage-x64' },
+    { name: 'pr-cockpit-0.1.0-aarch64.AppImage', browser_download_url: 'appimage-arm64' },
+    { name: 'pr-cockpit-0.1.0-x86_64.AppImage', browser_download_url: 'appimage-x64' },
   ],
 }
 assert.equal(pickAsset(dualArch.assets, 'linux', 'x64')?.browser_download_url, 'appimage-x64')

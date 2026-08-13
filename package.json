@@ -1,10 +1,10 @@
 {
-  "name": "multi-review",
+  "name": "pr-cockpit",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Multi Review — desktop cockpit for multi-agent code review",
-  "author": "Thomas",
+  "description": "PR Cockpit — local AI PR workbench: multi-agent review in isolated git worktrees, human-gated GitHub comments",
+  "author": "Weijie Tao",
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "nuxt dev",
@@ -57,8 +57,8 @@
     ]
   },
   "build": {
-    "appId": "com.multireview.app",
-    "productName": "Multi Review",
+    "appId": "com.prcockpit.app",
+    "productName": "PR Cockpit",
     "artifactName": "${name}-${version}-${arch}.${ext}",
     "npmRebuild": false,
     "directories": {
@@ -96,5 +96,11 @@
         "AppImage"
       ]
     }
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taovc/pr-cockpit.git"
+  },
+  "homepage": "https://github.com/taovc/pr-cockpit"
 }

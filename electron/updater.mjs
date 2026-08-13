@@ -11,8 +11,8 @@ import { computeUpdate } from './updateLogic.mjs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // 更新源:上游的滚动 nightly 预发布(固定地址、带各平台安装包)。可用 env 覆盖。
-const UPDATE_REPO = process.env.MR_UPDATE_REPO || 'taovc/multi-review'
-const RELEASE_TAG = process.env.MR_UPDATE_TAG || 'nightly'
+const UPDATE_REPO = process.env.PRC_UPDATE_REPO || process.env.MR_UPDATE_REPO || 'taovc/pr-cockpit'
+const RELEASE_TAG = process.env.PRC_UPDATE_TAG || process.env.MR_UPDATE_TAG || 'nightly'
 
 // 主进程没有 vue-i18n,用系统语言挑一份对话框文案。
 const STRINGS = {
@@ -25,7 +25,7 @@ const STRINGS = {
     uptodate_title: '已是最新',
     uptodate_detail: '当前已是最新的构建。',
     downloaded_title: '下载完成',
-    downloaded_detail: (name) => `已下载 ${name}。\n将打开安装包,请把 Multi Review 拖进「应用程序」覆盖旧版本。`,
+    downloaded_detail: (name) => `已下载 ${name}。\n将打开安装包,请把 PR Cockpit 拖进「应用程序」覆盖旧版本。`,
     reveal: '在访达中显示',
     ok: '好的',
     failed_title: '检查更新失败',
@@ -40,7 +40,7 @@ const STRINGS = {
     uptodate_title: 'Up to date',
     uptodate_detail: 'You are running the latest build.',
     downloaded_title: 'Download complete',
-    downloaded_detail: (name) => `Downloaded ${name}.\nThe installer will open — drag Multi Review into Applications to replace the old version.`,
+    downloaded_detail: (name) => `Downloaded ${name}.\nThe installer will open — drag PR Cockpit into Applications to replace the old version.`,
     reveal: 'Show in Finder',
     ok: 'OK',
     failed_title: 'Update check failed',
@@ -55,7 +55,7 @@ const STRINGS = {
     uptodate_title: 'À jour',
     uptodate_detail: 'Vous utilisez la dernière version.',
     downloaded_title: 'Téléchargement terminé',
-    downloaded_detail: (name) => `${name} téléchargé.\nL’installateur va s’ouvrir — glissez Multi Review dans Applications pour remplacer l’ancienne version.`,
+    downloaded_detail: (name) => `${name} téléchargé.\nL’installateur va s’ouvrir — glissez PR Cockpit dans Applications pour remplacer l’ancienne version.`,
     reveal: 'Afficher dans le Finder',
     ok: 'OK',
     failed_title: 'Échec de la vérification',
@@ -87,7 +87,7 @@ function fetchJson(url) {
   return new Promise((resolve, reject) => {
     const req = net.request({ url, redirect: 'follow' })
     req.setHeader('Accept', 'application/vnd.github+json')
-    req.setHeader('User-Agent', 'MultiReview-Updater')
+    req.setHeader('User-Agent', 'PRCockpit-Updater')
     req.on('response', (res) => {
       if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
         res.on('data', () => {})
@@ -118,7 +118,7 @@ function downloadAndOpen(win, asset) {
   const dest = path.join(app.getPath('downloads'), asset.name)
   return new Promise((resolve) => {
     const req = net.request({ url: asset.browser_download_url, redirect: 'follow' })
-    req.setHeader('User-Agent', 'MultiReview-Updater')
+    req.setHeader('User-Agent', 'PRCockpit-Updater')
     req.on('response', (res) => {
       if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
         res.on('data', () => {})

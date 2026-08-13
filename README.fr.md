@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="public/logo.svg" width="64" height="64" alt="Multi Review" />
-  <h1>Multi Review</h1>
-  <p>Cockpit local IA pour PR · revue en batch, chat de correction, développement de feature et assistant global avec Claude/Codex</p>
+  <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
+  <h1>PR Cockpit</h1>
+  <p>Atelier IA local pour les PR · revue en batch, chat de correction, développement de feature et assistant global avec Claude/Codex</p>
 </div>
 
 <div align="center">
@@ -78,8 +78,8 @@ Vérifier aussi que le provider prévu est disponible : Claude nécessite une co
 **2. Récupérer le projet**
 
 ```bash
-git clone https://github.com/taovc/multi-review.git
-cd multi-review
+git clone https://github.com/taovc/pr-cockpit.git
+cd pr-cockpit
 ```
 
 **3. Configurer l'environnement**

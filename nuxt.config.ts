@@ -58,7 +58,7 @@ export default defineNuxtConfig({
     // 引擎由定时器驱动、没有发起请求的用户上下文，故无法从 cookie 取 locale；用这个中心默认决定自动审核/修复的工作语言。
     automationLang: process.env.AUTOMATION_LANG || 'zh',
     public: {
-      appName: 'Multi Review',
+      appName: 'PR Cockpit',
     },
   },
   nitro: {
