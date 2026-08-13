@@ -1,184 +1,185 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="Multi Review" />
   <h1>Multi Review</h1>
-  <p>本地 AI PR 工作台 · 批量审核、修复对话、Feature 开发与全局助手，Claude/Codex 双 provider</p>
+  <p>Local AI PR cockpit · batch review, fix chat, feature development and a global assistant with Claude/Codex providers</p>
 </div>
 
 <div align="center">
 
-**中文** · [Français](README.fr.md) · [English](README.en.md)
+**English** · [中文](README.zh.md) · [Français](README.fr.md)
 
 </div>
 
 ---
 
-不再逐个在终端审 PR，也不把修复和新功能开发散落在多个窗口里：把仓库 PR 拉进来 → AI 在隔离 worktree 里审核、复查或修复 → 你在 Web 里把关 findings、对话、diff、push/PR → 对外内容通过 GitHub 落地。每个项目可以选择 Claude 或 Codex，配置自己的模型、力度和审核方法学。
+No more reviewing PRs one at a time in the terminal, and no more scattering fixes and feature work across separate shells. Pull a repo's PRs into the cockpit → the AI reviews, rechecks, fixes, or develops inside isolated worktrees → you gate findings, conversations, diffs, pushes and PR creation in the web UI → GitHub remains the external system of record. Each project can choose Claude or Codex with its own model, effort and review methodology.
 
-## 功能支持
+## Features
 
-**PR 工作台与审核**
-- 直接拉仓库 PR 列表（`gh pr list` / GraphQL），按作者、PR 状态、审核状态、修复状态、worktree 状态筛选，列表自动轮询刷新
-- 右侧 drawer 看 PR 详情（AI 审核 / 修复 / 时间线 / diff），评论与描述 markdown 渲染
-- AI 在隔离 git worktree 里只读审核，输出结构化 findings（严重度 + path:line + 问题/详情/修复）+ 需求描述 + 手动测试路径
-- 支持按你的勾选和 note 做反馈复审，也支持作者 push 后按最新 commit 复查每条 finding
+**PR workbench and review**
+- Pull a repo's PR list through `gh` / GraphQL, then filter by author, PR state, review state, fix state and worktree state.
+- The right-side drawer shows AI review, fix chat, timeline and diff, with descriptions and comments rendered as markdown.
+- The AI reviews in an isolated read-only git worktree and produces structured findings — severity, `path:line`, problem, detail and fix guidance — plus a plain-language summary of what the PR is trying to do and the shortest manual test path for it.
+- Feedback-guided re-review keeps your checkboxes/notes; author-change recheck reads the latest commits and judges each finding.
 
-**人工把关 + 发布**
-- 逐条 finding 勾选「发到 PR comment」+ 写 note（note 作为编辑指令融进评论，不原样泄漏）
-- 发布前预览（dry-run，可缓存/重新生成）；任意工作语言的 findings 都会转成专业英文 GitHub 评论；行级评论挂到代码行，挂不上的进汇总
-- 发布走 `gh api .../reviews`，带 posting 认领和 pending review 自愈，避免并发重复发
+**Human gate + publishing**
+- Per-finding checkbox to "post as a PR comment" + a note (the note is woven into the comment as an edit instruction, not leaked verbatim).
+- Pre-publish preview (dry-run, cacheable / regenerable); findings in any working language are rewritten as professional English GitHub comments.
+- Findings whose `path:line` lands on a line the PR actually changed are posted as inline review comments; the rest are collected into a summary section instead of being dropped.
+- Publishing goes through `gh api .../reviews`, with a posting claim and self-healing cleanup of leftover pending reviews.
 
-**修复 PR**
-- 修复 tab 是常驻对话：agent 在 PR worktree 里改代码，但默认不 commit/push
-- 「提交并上传」先生成 diff + conventional commit message 预览，用户确认后才 `git add/commit/push`
-- 支持停止、继续对话、可展开运行日志、决策卡、ultracode 后台开关和危险命令开关
+**Fix PRs**
+- The fix tab is a persistent chat: the agent edits the PR worktree, but does not commit or push by default.
+- "Commit and upload" first shows the diff plus an editable conventional commit message; only confirmation runs `git add/commit/push`.
+- Supports stop/resume, expandable run logs, decision cards, an ultracode toggle that escalates the turn to higher reasoning effort, and an explicit dangerous-command toggle.
 
-**Feature 开发与全局助手**
-- 项目页有「Feature 开发」tab：输入需求后创建隔离 feature worktree，agent 单段式开发，遇到关键决策用 `ask-user` 卡片让你拍板
-- 「开 PR」是显式动作：那一轮放行 push/`gh pr create`，commit message、PR title/body 保持英文
-- 右下角全局助手支持项目继承 provider/cwd，也可 `/cd`、`/resume`、`/clear`，用于自由排查和操作
+**Feature development and global assistant**
+- The "Feature development" tab creates an isolated feature worktree from a requirement and lets the agent develop in a single native chat loop.
+- Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn.
+- The bottom-right global assistant inherits project provider/cwd when available and supports commands such as `/cd`, `/resume` and `/clear`, for ad-hoc troubleshooting and one-off operations.
 
-**每项目配置**
-- 项目级选择 Claude 或 Codex；review、fix chat、recheck、skill generation、publish reply 都跟随当前 provider，不混用
-- Claude 模型来自本地 `claude`，Codex 模型使用预设/默认；effort、Codex Fast/service tier、方法学都可按项目配置
-- 多套审核 skill，选一套启用；AI 生成时读取本地仓库文档和架构，生成候选后 diff 对比再启用，绝不覆盖
+**Per-project config**
+- Each project chooses Claude or Codex. Review, fix chat, recheck, skill generation and publish-time rewriting follow that provider without mixing sessions or models.
+- Claude models come from the local `claude`; Codex uses preset/default models. Effort, Codex Fast/service tier and methodology are configurable per project.
+- Multiple review skills, one active at a time; AI generation reads the local repo docs and architecture, saves a candidate and lets you diff before activation.
 
-**安全与一致性**
-- 审核 agent 只读：工具层硬拦截 git 写 / 文件改 / 联网 / 危险命令 + 操作契约前置 + skill 体检
-- 写代码路径只在隔离 worktree 中运行；push、开 PR、危险命令都需要显式 UI 动作或开关
-- 同仓库 git 操作互斥；findings 写入用事务；删除任务同步清 worktree；服务重启会恢复/止损中断任务
-- PR 自动化是高风险能力，默认关闭；配置后由服务端轮询复用现有 review/post/fix/push 端点
+**Safety & consistency**
+- Review agents are read-only: tool-level blocking for git writes, file edits, network access and dangerous commands, plus an operating contract and skill linting.
+- Write-capable paths run inside isolated worktrees; push, PR creation and dangerous commands require explicit UI action or toggles.
+- Git operations on the same repo are serialized; findings are transactional; deleted tasks clean worktrees; restarts recover or stop interrupted work.
+- PR automation is high-risk and disabled by default; when enabled it reuses the existing review/post/fix/push endpoints from a server-side poller.
 
-## 技术栈
+## Tech stack
 
-Nuxt 4 + @nuxt/ui（Tailwind v4）· better-sqlite3 + drizzle · `@anthropic-ai/claude-agent-sdk` · `@openai/codex-sdk` · 本地 `gh` CLI · Electron 打包（Electron 作为 Node 运行 Nitro server）。
+Nuxt 4 + @nuxt/ui (Tailwind v4) · better-sqlite3 + drizzle · `@anthropic-ai/claude-agent-sdk` · `@openai/codex-sdk` · local `gh` CLI · Electron packaging that runs Nitro under Electron's Node mode.
 
-## 前置
+## Prerequisites
 
-- Node ≥ 22、pnpm 9
-- `gh auth login` 已登录（GitHub 读写全走它）
-- Claude provider：本地已登录 `claude`（走订阅）或填 `ANTHROPIC_API_KEY`
-- Codex provider：本地 Codex 已登录，或提供 `OPENAI_API_KEY`
+- Node ≥ 22, pnpm 9
+- `gh auth login` completed (all GitHub reads/writes go through it)
+- Claude provider: local `claude` login or `ANTHROPIC_API_KEY`
+- Codex provider: local Codex login or `OPENAI_API_KEY`
 
-## 安装
+## Installation
 
-首次运行的分步指南。精简版见下方「起步」。
+Step-by-step guide for a first run. See "Getting started" below for the condensed version.
 
-**1. 检查前置条件**
+**1. Check the prerequisites**
 
 ```bash
 node -v      # ≥ 22
-pnpm -v      # 9.x  （否则：corepack enable && corepack prepare pnpm@9 --activate）
+pnpm -v      # 9.x  (otherwise: corepack enable && corepack prepare pnpm@9 --activate)
 gh --version
-gh auth status   # 应显示「Logged in」；否则：gh auth login
+gh auth status   # must show "Logged in"; otherwise: gh auth login
 ```
 
-同时按计划使用的 provider 确认登录状态：Claude 路径需要本地 `claude` 或 `ANTHROPIC_API_KEY`；Codex 路径需要本地 Codex 登录或 `OPENAI_API_KEY`。
+Also confirm the provider you plan to use is available: Claude needs a local `claude` login or `ANTHROPIC_API_KEY`; Codex needs a local Codex login or `OPENAI_API_KEY`.
 
-**2. 获取项目**
+**2. Get the project**
 
 ```bash
-git clone <仓库地址>
+git clone https://github.com/taovc/multi-review.git
 cd multi-review
 ```
 
-**3. 配置环境**
+**3. Configure the environment**
 
 ```bash
 cp .env.example .env
 ```
 
-所有变量都有合理默认值；实际只需按需调整：
+Every variable has a sensible default; in practice you only adjust:
 
-| 变量 | 何时修改 |
+| Variable | When to change it |
 |---|---|
-| `PORT` | `3001` 被占用时 |
-| `INFERENCE_PROVIDER` | `claude`（默认）或 `codex` |
-| `ANTHROPIC_API_KEY` | Claude 路径可选；本地 `claude` 登录不可用时使用 |
-| `OPENAI_API_KEY` | Codex 本地登录不可用、但要走 OpenAI API key 时 |
+| `PORT` | If `3001` is already taken |
+| `INFERENCE_PROVIDER` | `claude` (default) or `codex` |
+| `ANTHROPIC_API_KEY` | Optional for the Claude path; use when local `claude` login is unavailable |
+| `OPENAI_API_KEY` | When local Codex login is unavailable and you want to use an OpenAI API key |
 
-全部变量详见 [配置（.env）](#配置env) 一节。
+The full list of variables is in the [Configuration (.env)](#configuration-env) section.
 
-**4. 安装依赖**
+**4. Install dependencies**
 
 ```bash
 pnpm install
 ```
 
-`postinstall` 会自动执行 `nuxt prepare`（生成 Nuxt 类型）。
+The `postinstall` step automatically runs `nuxt prepare` (Nuxt type generation).
 
-**5. 首次启动**
+**5. First run**
 
 ```bash
 pnpm dev      # http://localhost:3001
 ```
 
-首次启动时，**SQLite 数据库（`./data/cockpit.db`）会自动创建**。默认 worktree 位置是每个项目本地 clone 内的 `.pr-cockpit-worktrees/`，让 IDE 能像普通 repo 内 worktree 一样发现（VS Code 需要把 `git.repositoryScanMaxDepth` 设为 `2` 或 `-1`，默认值 1 只扫一级子目录）。该目录会写进项目的 `.git/info/exclude`，主仓库 `git status` 保持干净。启动恢复会把仍存在的旧 `./data/worktrees` 持久 worktree 迁过去 —— 无需手动跑 migration。Drizzle schema 在运行时自建（`core/db/client.ts` 中的 `ensureSchema()` / `ensureColumns()`）。
+On first start, **the SQLite database (`./data/cockpit.db`) is created automatically**. The default worktree location is `.pr-cockpit-worktrees/` inside each project's local clone, so IDEs can discover it like normal repo-local worktrees (VS Code needs `git.repositoryScanMaxDepth` set to `2` or `-1`; the default of 1 only scans one level down). The directory is added to the project's `.git/info/exclude`, keeping the main repo's `git status` clean. Startup recovery moves existing persistent worktrees from the old `./data/worktrees` location when they still exist. No manual migration is required. The Drizzle schema is set up on the fly (`ensureSchema()` / `ensureColumns()` in `core/db/client.ts`).
 
-**6. 生产构建（可选）**
+**6. Production build (optional)**
 
 ```bash
 pnpm build
 pnpm preview
 ```
 
-Electron 本地预览 / 打包：
+Electron preview / packaging:
 
 ```bash
 pnpm electron:preview
 pnpm electron:dist
 ```
 
-**排错**
+**Troubleshooting**
 
-- **端口被占用** → 改 `.env` 里的 `PORT`。
-- **`gh` 未认证** → `gh auth login`（GitHub 读写都依赖它）。
-- **查看数据库** → `pnpm db:studio`（打开 Drizzle Studio）。
+- **Port already in use** → change `PORT` in `.env`.
+- **`gh` not authenticated** → `gh auth login` (GitHub reads/writes depend on it).
+- **Inspect the database** → `pnpm db:studio` (opens Drizzle Studio).
 
-## 起步
+## Getting started
 
 ```bash
-cp .env.example .env      # 按需改 PORT / 模型 / 路径
+cp .env.example .env      # adjust PORT / model / paths as needed
 pnpm install
-pnpm dev                  # 默认 http://localhost:3001
+pnpm dev                  # defaults to http://localhost:3001
 ```
 
-进去左侧「＋」创建项目（填仓库 owner/repo + 本地 clone 路径），到项目配置里选择 provider/model/effort 并生成审核 skill。之后可以在「全部 PR」里审核/修复 PR，也可以在「Feature 开发」里从需求创建 feature worktree。
+Once inside, click the "＋" on the left to create a project (fill in `owner/repo` + the local clone path), configure provider/model/effort and generate a review skill. Then use "All PRs" for review/fix work or "Feature development" for new feature worktrees.
 
-## 配置（.env）
+## Configuration (.env)
 
-见 `.env.example`，关键项：
+See `.env.example`; key entries:
 
-| 变量 | 示例 | 说明 |
+| Variable | Example | Description |
 |---|---|---|
-| `PORT` | `3001` | 端口 |
+| `PORT` | `3001` | Port |
 | `INFERENCE_PROVIDER` | `claude` | `claude` / `codex` |
-| `ANTHROPIC_MODEL` | `sonnet` | 审核默认模型（项目里可覆盖） |
-| `CODEX_MODEL` |  | Codex 项目默认模型；留空走 Codex 默认 |
-| `CODEX_SERVICE_TIER` |  | 可选，Codex/OpenAI 全局默认速度档；项目配置页的 Fast 开关会按项目覆盖它。取消全局 fast 就留空/删除，若 `~/.codex/config.toml` 也设置了 `service_tier`，那里也要删除 |
-| `CODEX_PROJECT_DOC_FALLBACK_FILENAMES` | `CLAUDE.md,.claude/CLAUDE.md` | 无 `AGENTS.md` 时 Codex 读取的项目说明 fallback |
-| `OPENAI_API_KEY` | `sk-...` | Codex 本地登录不可用时可用 |
-| `TRANSLATE_MODEL` | `sonnet` | 发 GitHub 评论时转成英文用的轻量模型 |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` | Claude 路径可选；本地登录不可用时使用 |
-| `DEFAULT_REPO` | `owner/repo` | 可选，粘纯数字 PR 时的默认仓库 |
-| `DB_PATH` | `./data/cockpit.db` | SQLite 路径 |
-| `WORKTREE_LOCATION` | `repo` | `repo`=每个本地 clone 内、IDE 可发现的 `.pr-cockpit-worktrees/`；`central`=使用 `REPOS_DIR` |
-| `REPOS_DIR` | `./data/worktrees` | `central` 模式的 worktree 根；`repo` 模式下作为旧数据迁移源 |
-| `MAX_CONCURRENCY` | `3` | 并行审核上限 |
+| `ANTHROPIC_MODEL` | `sonnet` | Default review model (overridable per project) |
+| `CODEX_MODEL` |  | Default model for Codex projects; empty uses the Codex default |
+| `CODEX_SERVICE_TIER` |  | Optional global default Codex/OpenAI speed tier; the project-level Fast toggle overrides it. To disable global fast, leave/delete it and also remove `service_tier` from `~/.codex/config.toml` if set globally |
+| `CODEX_PROJECT_DOC_FALLBACK_FILENAMES` | `CLAUDE.md,.claude/CLAUDE.md` | Project docs Codex reads when `AGENTS.md` is absent |
+| `OPENAI_API_KEY` | `sk-...` | Optional when local Codex login is unavailable |
+| `TRANSLATE_MODEL` | `sonnet` | Lightweight model for rewriting GitHub comments into English |
+| `ANTHROPIC_API_KEY` | `sk-ant-...` | Optional for the Claude path when local login is unavailable |
+| `DEFAULT_REPO` | `owner/repo` | Optional, default repo when pasting a bare PR number |
+| `DB_PATH` | `./data/cockpit.db` | SQLite path |
+| `WORKTREE_LOCATION` | `repo` | `repo` = IDE-visible `.pr-cockpit-worktrees/` inside each local clone; `central` = use `REPOS_DIR` |
+| `REPOS_DIR` | `./data/worktrees` | Worktree root for `central` mode; legacy migration source in `repo` mode |
+| `MAX_CONCURRENCY` | `3` | Maximum number of parallel reviews |
 
-### Codex 日志提示
+### Codex log hints
 
-- `Not inside a trusted directory and --skip-git-repo-check was not specified`：Codex 从非 git 目录启动。项目页全局助手会优先用项目本地路径作为工作目录；如果手动 `/cd` 到非 git 目录，运行器会自动跳过 git repo 检查。
-- `CodexWarning failed to parse plugin hooks config .../claude-plugins-official/.../hooks.json`：Codex 扫到了 Claude 插件的 hook 配置，但不认识这个 Claude hook 格式；这类 warning 通常只表示该 hook 被忽略，不代表当前任务失败。
+- `Not inside a trusted directory and --skip-git-repo-check was not specified`: Codex started from a non-git directory. The project-page global assistant prefers the project's local path as its working directory; if you `/cd` to a non-git directory by hand, the runner skips the git repo check automatically.
+- `CodexWarning failed to parse plugin hooks config .../claude-plugins-official/.../hooks.json`: Codex picked up a Claude plugin's hook config and does not recognize that format. This warning normally just means the hook was ignored — it does not mean the current task failed.
 
-## 目录
+## Directory layout
 
 ```
-core/      引擎：db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
-server/    Nuxt API：projects / reviews / fixes / features / global sessions / skills / SSE / 启动恢复 plugin
-app/       UI：左侧项目导航；项目页(Feature 开发 / 全部 PR / 项目配置)；PR drawer(AI审核 / 修复 / 时间线 / 改动)
-electron/  桌面壳：启动 Nitro server，窗口加载本地 HTTP UI
-docs/      ARCHITECTURE.md — 设计目的 + 不变量 + 安全防御说明
-data/      SQLite + 旧版集中 worktrees 迁移源（git 忽略）
+core/      Engine: db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
+server/    Nuxt API: projects / reviews / fixes / features / global sessions / skills / SSE / startup recovery plugin
+app/       UI: project nav; project page (Feature development / All PRs / Config); PR drawer (AI review / Fix / Timeline / Changes)
+electron/  Desktop shell: starts Nitro and loads the local HTTP UI
+docs/      ARCHITECTURE.md — design goals + invariants + safety mechanisms
+data/      SQLite + migration source for legacy centralized worktrees (git-ignored)
 ```
 
-设计目的、不变量与安全防御详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+Design goals, invariants and safety defenses are detailed in [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md).

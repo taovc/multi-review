@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[中文](README.md) · **Français** · [English](README.en.md)
+[English](README.md) · [中文](README.zh.md) · **Français**
 
 </div>
 
@@ -19,23 +19,24 @@ Fini la revue des PR une par une dans le terminal, et fini les corrections dispe
 **Atelier PR et revue**
 - Import direct de la liste des PR via `gh` / GraphQL, avec filtres par auteur, état PR, état de revue, état de correction et état de worktree.
 - Le drawer de droite affiche revue IA, correction, timeline et diff ; descriptions et commentaires sont rendus en markdown.
-- L'IA audite en lecture seule dans un git worktree isolé et produit des findings structurés : sévérité, `path:line`, problème, détail et piste de correction.
+- L'IA audite en lecture seule dans un git worktree isolé et produit des findings structurés — sévérité, `path:line`, problème, détail et piste de correction — ainsi qu'un résumé en langage clair de ce que vise la PR et le chemin de test manuel le plus court.
 - La re-revue guidée conserve tes coches/notes ; le recheck après push de l'auteur relit les derniers commits et juge chaque finding.
 
 **Contrôle humain + publication**
 - Coche par finding « publier en commentaire de PR » + ajout d'une note (la note sert d'instruction d'édition intégrée au commentaire, elle n'est pas divulguée telle quelle).
 - Aperçu avant publication (dry-run, pouvant être mis en cache / régénéré) ; les findings rédigés dans n'importe quelle langue de travail sont réécrits en anglais professionnel pour GitHub.
+- Les findings dont le `path:line` tombe sur une ligne réellement modifiée par la PR sont publiés en commentaires inline ; les autres sont regroupés dans une section de synthèse au lieu d'être perdus.
 - La publication passe par `gh api .../reviews`, avec claim `posting` et auto-réparation des pending reviews résiduels.
 
 **Correction de PR**
 - Le tab de correction est un chat persistant : l'agent modifie le worktree de la PR, mais ne commit/push pas par défaut.
 - « Commit and upload » affiche d'abord le diff et un message de commit conventionnel éditable ; la confirmation seule lance `git add/commit/push`.
-- Stop/reprise, logs d'exécution, cartes de décision, ultracode persistant et interrupteur de commandes dangereuses sont pris en charge.
+- Stop/reprise, logs d'exécution, cartes de décision, un interrupteur ultracode qui pousse le tour vers un effort de raisonnement supérieur, et un interrupteur de commandes dangereuses sont pris en charge.
 
 **Développement de feature et assistant global**
 - Le tab « Feature development » crée un worktree de feature isolé depuis un besoin et laisse l'agent développer dans une boucle de chat native.
 - Les vrais points de décision sont rendus en cartes `ask-user`. L'ouverture de PR est une action explicite qui autorise commit, push et `gh pr create` pour ce tour.
-- L'assistant global en bas à droite hérite du provider/cwd du projet quand c'est possible et prend en charge `/cd`, `/resume`, `/clear`.
+- L'assistant global en bas à droite hérite du provider/cwd du projet quand c'est possible et prend en charge `/cd`, `/resume`, `/clear`, pour le diagnostic ponctuel et les opérations one-off.
 
 **Configuration par projet**
 - Chaque projet choisit Claude ou Codex. Revue, correction, recheck, génération de skill et réécriture de publication suivent ce provider sans mélanger sessions ni modèles.
@@ -77,7 +78,7 @@ Vérifier aussi que le provider prévu est disponible : Claude nécessite une co
 **2. Récupérer le projet**
 
 ```bash
-git clone <url-du-dépôt>
+git clone https://github.com/taovc/multi-review.git
 cd multi-review
 ```
 
@@ -165,6 +166,11 @@ Voir `.env.example` ; éléments clés :
 | `REPOS_DIR` | `./data/worktrees` | Racine des worktrees en mode `central` ; source de migration legacy en mode `repo` |
 | `MAX_CONCURRENCY` | `3` | Nombre maximum de revues en parallèle |
 
+### Messages de log Codex
+
+- `Not inside a trusted directory and --skip-git-repo-check was not specified` : Codex a démarré depuis un répertoire non-git. L'assistant global de la page projet privilégie le chemin local du projet comme répertoire de travail ; si vous faites `/cd` à la main vers un répertoire non-git, le runner saute automatiquement la vérification du dépôt git.
+- `CodexWarning failed to parse plugin hooks config .../claude-plugins-official/.../hooks.json` : Codex a détecté la config de hooks d'un plugin Claude sans reconnaître ce format. Ce warning signifie en général que le hook a simplement été ignoré — pas que la tâche en cours a échoué.
+
 ## Arborescence
 
 ```
@@ -173,7 +179,7 @@ server/    API Nuxt : projects / reviews / fixes / features / global sessions / 
 app/       UI : navigation projets ; page projet (Feature development / Toutes les PR / Configuration) ; drawer PR (Revue IA / Correction / Timeline / Modifs)
 electron/  Shell desktop : démarre Nitro et charge l'UI HTTP locale
 docs/      ARCHITECTURE.md — objectifs de design + invariants + mécanismes de sécurité
-data/      SQLite + worktrees (ignorés par git)
+data/      SQLite + source de migration des anciens worktrees centralisés (ignorés par git)
 ```
 
 Objectifs de design, invariants et défenses de sécurité détaillés dans [docs/ARCHITECTURE.fr.md](docs/ARCHITECTURE.fr.md).
