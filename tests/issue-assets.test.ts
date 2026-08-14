@@ -3,9 +3,9 @@ import { extractGithubRefs, extractImageUrls } from '../core/github/issueAssets'
 
 // extractGithubRefs：从需求文本里抠出 issue/PR 链接（去重 + 区分 issue/pr）
 {
-  const refs = extractGithubRefs('see https://github.com/Stakimo/stakimo-app/issues/7370 thanks')
+  const refs = extractGithubRefs('see https://github.com/octocat/hello-world/issues/7370 thanks')
   assert.equal(refs.length, 1)
-  assert.deepEqual(refs[0], { repo: 'Stakimo/stakimo-app', kind: 'issue', number: 7370 })
+  assert.deepEqual(refs[0], { repo: 'octocat/hello-world', kind: 'issue', number: 7370 })
 }
 {
   const refs = extractGithubRefs('https://github.com/owner/repo/pull/42')
