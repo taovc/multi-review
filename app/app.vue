@@ -131,12 +131,12 @@ async function createProject() {
       <div class="space-y-4">
         <label class="block">
           <span class="text-xs text-dimmed">{{ $t('layout.form.name') }}</span>
-          <input v-model="form.name" placeholder="Stakimo" class="w-full text-sm border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
+          <input v-model="form.name" placeholder="Acme" class="w-full text-sm border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
         </label>
         <label class="block">
           <span class="text-xs text-dimmed">{{ $t('layout.form.repo') }}</span>
           <div class="flex items-center gap-2">
-            <input v-model="form.repo" placeholder="Stakimo/stakimo-app" class="flex-1 min-w-0 text-sm border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
+            <input v-model="form.repo" placeholder="acme/web-app" class="flex-1 min-w-0 text-sm border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
             <button type="button" class="shrink-0 text-xs text-muted hover:text-highlighted border border-default rounded px-2.5 py-1.5" @click="showDepotPicker = true">{{ $t('layout.picker.browse') }}</button>
           </div>
           <span class="text-[11px] text-dimmed mt-1 block">{{ $t('layout.picker.depotHint') }}</span>
@@ -144,7 +144,7 @@ async function createProject() {
         <label class="block">
           <span class="text-xs text-dimmed">{{ $t('layout.form.localPath') }}</span>
           <div class="flex items-center gap-2">
-            <input v-model="form.localPath" placeholder="/Users/you/work/stakimo-appli" class="flex-1 min-w-0 text-sm font-mono border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
+            <input v-model="form.localPath" placeholder="/Users/you/work/acme-app" class="flex-1 min-w-0 text-sm font-mono border-b border-default focus:border-inverted outline-none py-1 placeholder:text-dimmed" />
             <button type="button" class="shrink-0 text-xs text-muted hover:text-highlighted border border-default rounded px-2.5 py-1.5" @click="showClonePicker = true">{{ $t('layout.picker.browse') }}</button>
           </div>
           <span class="text-[11px] text-dimmed mt-1 block">{{ $t('layout.picker.cloneHint') }}</span>

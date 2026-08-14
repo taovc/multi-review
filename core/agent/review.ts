@@ -48,7 +48,7 @@ export function buildReviewPrompt(opts: { repo: string; prNumber: number; branch
   const { repo, prNumber, branch, defaultBranch } = opts
   return `你在一个 git worktree 里（当前目录就是仓库，已 checkout PR #${prNumber} 的分支 ${branch} 并合并了 ${defaultBranch}）。
 
-审核 Stakimo 仓库 ${repo} 的 PR #${prNumber}。
+审核仓库 ${repo} 的 PR #${prNumber}。
 
 步骤：
 1. 看变更：\`git diff origin/${defaultBranch}...HEAD\`、\`git log origin/${defaultBranch}..HEAD --oneline\`
