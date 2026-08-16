@@ -7,7 +7,8 @@ import { effectiveReviewOn, effectiveFixOnGuarded } from '~core/automation/decid
 
 const WORKTREE_STALE_DAYS = 30
 
-// 分页拉该项目仓库的 PR（GraphQL cursor），标注哪些已建审核任务。
+// Fetch the project repo's PRs page by page (GraphQL cursor), flagging which ones already have a
+// review task.
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const query = getQuery(event)
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const validState = (['open', 'closed', 'merged', 'all'] as const).includes(state as any)
     ? (state as 'open' | 'closed' | 'merged' | 'all')
     : 'open'
-  const first = Math.min(Number(query.first) || 20, 100) // 前端一次拉够做本地过滤+分页（GraphQL 上限 100）
+  const first = Math.min(Number(query.first) || 20, 100) // fetch enough at once for the frontend to filter and paginate locally (GraphQL caps at 100)
   const after = (query.after as string) || null
 
   const d = db()
@@ -29,7 +30,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 502, statusMessage: (e as Error).message })
   }
 
-  // 审核任务：带上「审核时看的 head」「发评论时的 head」→ 算「作者已更新」
+  // Review tasks: carry "the head seen at review time" and "the head at comment time" → derive
+  // "author updated"
   const tasks = d
     .select({
       id: schema.reviews.id,
@@ -43,7 +45,8 @@ export default defineEventHandler(async (event) => {
     .all()
   const taskByPr = new Map(tasks.map((t) => [t.prNumber, t]))
 
-  // 修复任务：每个 PR 取最新一个未废弃的；带 pushedAt + reviewsAtPush → 算「审核已更新」
+  // Fix tasks: take the latest non-discarded one per PR; carry pushedAt + reviewsAtPush → derive
+  // "reviewer updated"
   const fixRows = d
     .select({
       id: schema.fixes.id,
@@ -61,11 +64,13 @@ export default defineEventHandler(async (event) => {
   const fixByPr = new Map<number, (typeof fixRows)[number]>()
   for (const f of fixRows.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     if (f.status === 'discarded') continue
-    fixByPr.set(f.prNumber, f) // 后写覆盖 → 留下最新
+    fixByPr.set(f.prNumber, f) // later writes overwrite → the latest one wins
   }
-  // 「对话进行中」：最近一条 assistant 轮还在 streaming = AI 正在干活。
-  // 这是状态机之外的旁路（chat 不改 fixes.status），所以列表用它派生「对话中」角标。
-  // 重启会被 recover 插件把 streaming 轮重置成 stopped，所以这里不会有陈旧的 streaming。
+  // "Conversation in progress": the most recent assistant turn is still streaming = the AI is working.
+  // This sits outside the state machine (chat never changes fixes.status), so the list derives the
+  // "chatting" badge from it.
+  // On restart the recover plugin resets streaming turns to stopped, so no stale streaming shows up
+  // here.
   const chattingFixIds = new Set<string>(
     d.select({ fixId: schema.fixTurns.fixId })
       .from(schema.fixTurns)
@@ -74,32 +79,41 @@ export default defineEventHandler(async (event) => {
       .map((r: any) => r.fixId),
   )
 
-  // 自动化：项目级配置 + 每条 PR 的有效开关 / 运行态（喂 PR 抽屉的两个 switch + 列表「已暂停」提示）
+  // Automation: project-level config + each PR's effective switches / runtime state (feeds the two
+  // switches in the PR drawer and the list's "paused" hint)
   const autoCfg = getProjectAutomation(d, schema, id)
-  const autoRowByPr = getPrAutomationMap(d, schema, id) // 一次拉全，避免 .map() 里 N+1 点查
+  const autoRowByPr = getPrAutomationMap(d, schema, id) // fetch all at once, avoiding N+1 lookups inside .map()
   const autoMaxRounds = project.autoMaxRounds ?? 2
   const autoCooldownMin = project.autoCooldownMinutes ?? 5
   const nowMs = Date.now()
-  const me = await getCurrentUserLogin().catch(() => null) // 自动修复作者白名单默认值（和引擎口径一致）
+  const me = await getCurrentUserLogin().catch(() => null) // default for the auto-fix author allowlist (same rule as the engine)
 
   return {
     pulls: page.pulls.map((p) => {
       const task = taskByPr.get(p.number)
       const fix = fixByPr.get(p.number)
-      // 自动化有效开关：实例覆盖优先，否则继承项目配置 + 作者/状态过滤
+      // Effective automation switches: a per-PR override wins, otherwise inherit the project config
+      // plus the author/status filters
       const autoRow = autoRowByPr.get(p.number) ?? null
       const prKey = { author: p.author, status: pullStatusKey(p) }
       const autoReviewOn = effectiveReviewOn(autoCfg, autoRow, prKey)
       const autoFixOn = effectiveFixOnGuarded(autoCfg, autoRow, prKey, me)
-      // 作者已更新：我「看过」的 sha 之后 PR head 又变了。基线用 review.headSha——审核/复审完成都会推进它，
-      // 所以点了复审看过新 commit 后红点自动清，作者在复审基线之后再 push 才重新点亮（与抽屉/refresh 口径统一）。
-      // 副作用：首次审核后即便还没发评论，作者 push 也会点亮——这正是「有我没看过的新改动」的本意。
+      // Author updated: the PR head moved past the sha I have "seen". The baseline is review.headSha —
+      // both review and recheck advance it, so once a recheck has looked at the new commits the dot
+      // clears by itself, and only a push after that recheck baseline lights it up again (same rule
+      // as the drawer / refresh).
+      // Side effect: after the first review the dot lights up on an author push even before any
+      // comment was posted — which is exactly what "there are changes I haven't seen" means.
       const authorUpdated = !!task?.headSha && !!p.headSha && p.headSha !== task.headSha
-      // 审核已更新：我 push 修复后 PR 的 review 计数变多 = 又有人提交了 review。
-      // 注：reviewsCount 含 bot/CI 的 review，所以 push 后若有 CI 自动 review 也会算（本地单用户工具可接受）。
+      // Reviewer updated: after I pushed a fix the PR's review count grew = somebody submitted another
+      // review.
+      // Note: reviewsCount includes bot/CI reviews, so a CI auto-review after the push counts too
+      // (acceptable for a local single-user tool).
       const reviewerUpdated = !!fix?.pushedAt && fix.reviewsAtPush != null && p.reviewsCount > fix.reviewsAtPush
-      // 本地 fix worktree 是否还在磁盘上（review worktree 用完即弃，不会残留；只有 fix 保留到 push/discard）。
-      // 合并后想找残留清理就靠它。检查实际目录，不是只看 DB 字段（DB 有路径但目录可能已被手动删）。
+      // Whether the local fix worktree is still on disk (review worktrees are thrown away right after
+      // use and never linger; only fix ones survive until push/discard).
+      // This is what finds leftovers to clean up after a merge. Check the actual directory, not just
+      // the DB field (the DB may hold a path whose directory was deleted by hand).
       const hasWorktree = !!fix?.worktreePath && existsSync(fix.worktreePath)
       const fixUpdatedMs = fix?.updatedAt ? Date.parse(fix.updatedAt) : Number.NaN
       const worktreeStale = hasWorktree && (
@@ -107,7 +121,8 @@ export default defineEventHandler(async (event) => {
         || prKey.status === 'closed'
         || (Number.isFinite(fixUpdatedMs) && fixUpdatedMs < nowMs - WORKTREE_STALE_DAYS * 24 * 60 * 60 * 1000)
       )
-      // 冷却中：引擎看到的 head 还是当前 head，且首见时间 + 冷却期 还没到 → 给 UI 显示「冷却中，剩 X」
+      // Cooling down: the head the engine saw is still the current head, and first-seen time +
+      // cooldown hasn't elapsed → let the UI show "cooling down, X left"
       let autoCoolingUntil: string | null = null
       if (autoCooldownMin > 0 && (autoReviewOn || autoFixOn) && autoRow?.headSeenSha && autoRow.headSeenSha === p.headSha && autoRow.headSeenAt) {
         const until = Date.parse(autoRow.headSeenAt) + autoCooldownMin * 60_000

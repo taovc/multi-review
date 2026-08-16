@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 
-// 重命名全局会话（标题）。
+// Rename a global session (its title).
 const Body = z.object({ title: z.string().max(200) })
 
 export default defineEventHandler(async (event) => {

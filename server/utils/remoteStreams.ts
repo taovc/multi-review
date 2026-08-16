@@ -1,4 +1,4 @@
-// 只用到 res.end() 和 req 的 close 事件,不引 h3 类型(它是传递依赖,不能直接 import)。
+// Only res.end() and req's close event are used, so no h3 types here (it's a transitive dependency and can't be imported directly).
 type StreamEvent = {
   node: {
     res: { end: () => void }
@@ -6,9 +6,11 @@ type StreamEvent = {
   }
 }
 
-// 追踪已鉴权的「远端」(非 loopback)长连接。关闭远程访问 / 轮换 token 时把它们全部断开,
-// 否则一个已连上的 EventSource(SSE)会在设备被撤销后继续收 agent/chat/review 实时数据。
-// 只登记远端连接:Electron 窗口自己的(loopback)流永远不进这里,不会被误杀。
+// Tracks authenticated "remote" (non-loopback) long-lived connections. Disconnect all of them when
+// remote access is turned off / the token is rotated, otherwise an already-connected EventSource (SSE)
+// would keep receiving live agent/chat/review data after the device has been revoked.
+// Only remote connections are registered: the Electron window's own (loopback) streams never land
+// here, so they can't be killed by mistake.
 const streams = new Set<StreamEvent['node']['res']>()
 
 export function trackRemoteStream(event: StreamEvent): void {
@@ -22,7 +24,7 @@ export function closeRemoteStreams(): void {
     try {
       res.end()
     } catch {
-      /* 已经关了 */
+      /* already closed */
     }
     streams.delete(res)
   }

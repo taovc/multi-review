@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// 共享 markdown 渲染（聊天/助手输出用）：客户端动态加载 marked + dompurify，gfm + breaks。
-// 样式 .md-body 与审核 drawer 一致；自带（非 scoped），不依赖别处先挂载。
+// Shared markdown rendering (for chat/assistant output): marked + dompurify loaded dynamically on the
+// client, gfm + breaks.
+// The .md-body styles match the review drawer; they ship with this component (not scoped), so nothing
+// else has to be mounted first.
 const props = defineProps<{ text: string }>()
 
 const html = ref('')
@@ -10,7 +12,8 @@ async function getRenderer() {
   const [{ marked }, dp] = await Promise.all([import('marked'), import('dompurify')])
   marked.setOptions({ gfm: true, breaks: true })
   const DOMPurify = (dp as any).default
-  // GitHub 私有图片走后端代理（同 PrDetailDrawer），AI 输出里引用到也能显示。
+  // Private GitHub images go through the backend proxy (same as PrDetailDrawer), so they still render
+  // when the AI output references them.
   const PROXY = /(<img[^>]+\bsrc=")(https:\/\/(?:github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)[^"]+)(")/gi
   _render = (s: string) => {
     const out = DOMPurify.sanitize(marked.parse(s ?? '', { async: false }) as string)
@@ -19,7 +22,8 @@ async function getRenderer() {
   return _render
 }
 
-// 流式时每个 token 都会重渲染；marked 很快，没问题。SSR 阶段不渲染（动态 import 仅客户端）。
+// While streaming this re-renders on every token; marked is fast enough. Nothing renders during SSR
+// (the dynamic import is client-only).
 watch(() => props.text, async (t) => {
   if (!import.meta.client) return
   const render = await getRenderer()

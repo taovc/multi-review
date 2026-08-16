@@ -7,10 +7,13 @@ import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
 
 const pexec = promisify(execFile)
 
-// 启动恢复：上一个进程里「在跑」的任务会随进程死掉。服务一启动就把卡住的恢复到一致状态。
-// - 审核任务（agent 在跑）：重置为 error + 清 worktree。
-// - 修复任务：纯对话版没有 agent 阶段状态（对话进行靠内存锁，重启即释放）；唯一要对账的是 pushing
-//   （提交并上传中途崩溃，push 可能已到 GitHub）。中断的对话轮只标 stopped，改动留 worktree 等用户上传（不自动 commit）。
+// Startup recovery: tasks that were "running" in the previous process die with it. As soon as the server starts,
+// bring anything stuck back to a consistent state.
+// - Review tasks (agent running): reset to error + clean the worktree.
+// - Fix tasks: the chat-only version has no agent stage state (an in-flight chat is held by an in-memory lock, released
+//   on restart); the only thing to reconcile is pushing (a crash midway through commit-and-push, where the push may
+//   already have reached GitHub). Interrupted chat turns are just marked stopped, and the changes stay in the worktree
+//   waiting for the user to upload them (no automatic commit).
 const REVIEW_IN_FLIGHT = ['queued', 'cloning', 'reviewing', 'recheck_requested', 'rechecking']
 
 export default defineNitroPlugin(async () => {
@@ -19,8 +22,8 @@ export default defineNitroPlugin(async () => {
   const now = () => new Date().toISOString()
   const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024, timeout: 15000 })
 
-  // 0) 默认迁移到项目 repo 内的 .pr-cockpit-worktrees/。
-  // 只移动仍存在的持久 worktree（fix / feature）；review worktree 是临时的，重启恢复会清理。
+  // 0) By default migrate into .pr-cockpit-worktrees/ inside the project repo.
+  // Only persistent worktrees that still exist are moved (fix / feature); review worktrees are temporary and startup recovery cleans them up.
   try {
     const projects = new Map(d.select().from(schema.projects).all().map((p: any) => [p.id, p]))
     let moved = 0
@@ -33,8 +36,9 @@ export default defineNitroPlugin(async () => {
       }
     }
     const moveOne = async (kind: 'fix' | 'feature', row: any) => {
-      // 目录早没了（重启清理 / 手工删）却还留着旧集中目录的路径：迁移搬不动它，留着又会让「上传」
-      // 直接报 worktree 不在了。置空 → 下次对话走 existsSync 的重建分支，在新落点按原分支重建。
+      // The directory is long gone (cleaned on restart / deleted by hand) but the path to the old central directory is
+      // still recorded: migration can't move it, and keeping it makes "upload" fail outright with worktree gone.
+      // Clearing it → the next chat takes the existsSync rebuild branch and recreates it at the new location on the same branch.
       if (!existsSync(row.worktreePath)) {
         writePath(kind, row.id, null)
         cleared++
@@ -69,7 +73,7 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] worktree 启动迁移失败', e)
   }
 
-  // 1) 审核任务：重置 + 清 worktree（审核 worktree 用完即弃）
+  // 1) Review tasks: reset + clean the worktree (review worktrees are throwaway)
   try {
     const stuck = d.select().from(schema.reviews).where(inArray(schema.reviews.status, REVIEW_IN_FLIGHT as any)).all()
     if (stuck.length) {
@@ -88,8 +92,9 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] 审核任务启动恢复失败', e)
   }
 
-  // 1.5) 发评论中断（posting）：agent 阶段早已结束、findings 完好，只是发布窗口随进程崩了。
-  // 重置为 ready_to_post（不自动重发——发布可能已到 GitHub，自动重发会重复评论；由用户在 UI 决定是否再发）。
+  // 1.5) Interrupted comment posting (posting): the agent stage finished long ago and the findings are intact, only the
+  // publish window died with the process. Reset to ready_to_post (no automatic retry — the post may already have reached
+  // GitHub and retrying would duplicate the comment; let the user decide in the UI whether to post again).
   try {
     const stuck = d.select().from(schema.reviews).where(eq(schema.reviews.status, 'posting' as any)).all()
     for (const r of stuck as any[]) {
@@ -100,22 +105,24 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] posting 启动恢复失败', e)
   }
 
-  // 2) pushing 中断：push 可能已经到 GitHub 了（只是没写回 DB）。对账 origin/<branch> 与 fixHeadSha：
-  // 一致 = 已成功 → pushed；否则 → error（让用户重新上传，push 幂等无副作用）。
+  // 2) Interrupted pushing: the push may already have reached GitHub (it just wasn't written back to the DB).
+  // Reconcile origin/<branch> against fixHeadSha: equal = it succeeded → pushed; otherwise → error (the user re-uploads;
+  // push is idempotent and has no side effects).
   try {
     const stuck = d.select().from(schema.fixes).where(eq(schema.fixes.status, 'pushing' as any)).all()
     for (const f of stuck as any[]) {
       let pushed = false
-      // 比 worktree 的「真实 HEAD」而不是 DB 里的 fixHeadSha：commit 已完成但写回 DB 前崩溃时，DB 值是旧的，
-      // 拿旧值对账会把「本地有新提交、远端还是旧的」误判成已推、从而丢掉这条本地提交。
+      // Compare against the worktree's real HEAD rather than fixHeadSha from the DB: when the commit finished but the
+      // crash came before writing it back, the DB value is stale, and reconciling with the stale value would read
+      // "new commit locally, remote still old" as already pushed and thus lose that local commit.
       let localHead: string = f.fixHeadSha
       if (f.worktreePath && existsSync(f.worktreePath) && f.branch) {
-        try { localHead = (await git(f.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim() || f.fixHeadSha } catch { /* 用 DB 值兜底 */ }
+        try { localHead = (await git(f.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim() || f.fixHeadSha } catch { /* fall back to the DB value */ }
         try {
           const { stdout } = await git(f.worktreePath, ['ls-remote', 'origin', f.branch])
           const remoteSha = stdout.trim().split(/\s+/)[0] || ''
           pushed = !!remoteSha && !!localHead && remoteSha === localHead
-        } catch { /* 网络/远端不可达 → 当作未成功 */ }
+        } catch { /* network/remote unreachable → treat as not pushed */ }
       }
       if (pushed) {
         d.update(schema.fixes)
@@ -134,7 +141,8 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] 上传启动恢复失败', e)
   }
 
-  // 3) 对话轮中断：流式中的 assistant 轮 → stopped。改动留在 worktree（未提交），下次打开靠 dirty 检测出现上传按钮。
+  // 3) Interrupted chat turns: assistant turns still streaming → stopped. The changes stay in the worktree (uncommitted),
+  // and next time it's opened the dirty check makes the upload button appear.
   try {
     const streaming = d.select().from(schema.fixTurns).where(eq(schema.fixTurns.status, 'streaming' as any)).all()
     for (const tn of streaming as any[]) {

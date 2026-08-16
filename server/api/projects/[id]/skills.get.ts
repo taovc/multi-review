@@ -10,6 +10,6 @@ export default defineEventHandler(async (event) => {
     .where(eq(schema.skills.projectId, id))
     .orderBy(desc(schema.skills.createdAt))
     .all()
-  // 附上体检结果（疑似操作流程污染）
+  // Attach the lint results (suspected workflow-instruction contamination)
   return rows.map((s) => ({ ...s, warnings: lintSkill(s.content) }))
 })

@@ -2,10 +2,13 @@ import { z } from 'zod'
 import { setLanEnabled, rotateLanToken, lanInfo, isLoopbackAddress } from '../../utils/lanState'
 import { closeRemoteStreams } from '../../utils/remoteStreams'
 
-// 开关远程访问 / 作废旧链接。只有本机(Electron 窗口)会调它。多重加固:
-// ① 只允许 loopback peer;② Sec-Fetch-Site 必须 same-origin/none(挡跨站);
-// ③ 强制 application/json(CORS 安全列表的 multipart/text 能无预检跨站发,JSON 会触发预检被拦)。
-// 三者叠加堵住 CSRF：普通浏览器里的恶意页面伪造的 http://127.0.0.1 请求满足不了。
+// Toggle remote access / revoke the old link. Only the local machine (the Electron window) calls it.
+// Layered hardening:
+// (1) loopback peers only; (2) Sec-Fetch-Site must be same-origin/none (blocks cross-site);
+// (3) require application/json (the CORS safelisted multipart/text can be sent cross-site without a
+// preflight, JSON triggers one and gets blocked).
+// Together they shut out CSRF: a malicious page in an ordinary browser cannot satisfy all three when
+// forging a request to http://127.0.0.1.
 const Body = z.object({
   enabled: z.boolean().optional(),
   rotate: z.boolean().optional(),
@@ -29,11 +32,12 @@ export default defineEventHandler(async (event) => {
   const { enabled, rotate } = parsed.data
   if (rotate) rotateLanToken()
   if (typeof enabled === 'boolean') setLanEnabled(enabled)
-  // 撤销动作(关闭 / 换 token)→ 立即断开已连的远端流,别让被撤销的设备继续收数据。
+  // Revoking (turning off / rotating the token) → drop the already-connected remote streams immediately,
+  // so a revoked device stops receiving data.
   if (rotate || enabled === false) closeRemoteStreams()
 
   const port = event.node.req.socket?.localPort ?? 3000
-  return await lanInfo(port, true) // 本机调用者，回完整信息
+  return await lanInfo(port, true) // local caller, return the full info
 })
 
 function forbidden(): never {

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// confirmState / resolveConfirm 由 Nuxt 从 app/composables/useConfirm 自动导入
+// confirmState / resolveConfirm are auto-imported by Nuxt from app/composables/useConfirm
 const { t } = useI18n()
-// 取消 = false；关闭(点遮罩/✕) 也算取消
+// Cancel = false; closing (overlay click / ✕) counts as cancel too
 const open = computed({
   get: () => confirmState.open,
   set: (v: boolean) => { if (!v) resolveConfirm(false) },
 })
-// 调用方未指定时用 i18n 默认文案兜底（随语言切换）
+// Fall back to the default i18n text when the caller doesn't provide one (follows the language switch)
 const title = computed(() => confirmState.title || t('confirm.title'))
 const okText = computed(() => confirmState.okText || t('confirm.ok'))
 const cancelText = computed(() => confirmState.cancelText || t('common.cancel'))

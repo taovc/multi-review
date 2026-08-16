@@ -15,7 +15,7 @@ assert.deepEqual(stageIds, [
   'publish_reply',
 ])
 
-// 全部 5 个阶段都跟随 provider：claude / codex 双边都支持，且 providerControlled。
+// All 5 stages follow the provider: supported on both claude and codex, and providerControlled.
 for (const stage of ['review', 'fix_chat', 'recheck', 'skill_generation', 'publish_reply'] as const) {
   assert.equal(providerSupportsStage('claude', stage), true)
   assert.equal(providerSupportsStage('codex', stage), true)

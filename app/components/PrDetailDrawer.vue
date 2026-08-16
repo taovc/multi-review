@@ -8,8 +8,10 @@ const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ taskCreated: [] }>()
 const { t, te, locale } = useI18n()
 
-// 两个实例级自动化开关（自动审核 / 自动修复）。本地乐观状态：点了立刻动，不等 8s 轮询回来（顺滑）；
-// 失败或下次轮询再用真实值校正。只有 switch 本身可点（模板里用 div 而非 label，文字不触发切换）。
+// The two per-instance automation switches (auto review / auto fix). Optimistic local state: the switch
+// moves immediately instead of waiting for the 8s poll (feels smooth); on failure, or on the next poll,
+// it is corrected with the real value. Only the switch itself is clickable (the template uses a div
+// rather than a label, so the text doesn't toggle it).
 const reviewOnLocal = ref(props.autoReviewOn ?? false)
 const fixOnLocal = ref(props.autoFixOn ?? false)
 watch(() => props.autoReviewOn, (v) => { reviewOnLocal.value = v ?? false })
@@ -20,20 +22,20 @@ async function toggleAuto(field: 'reviewOn' | 'fixOn', value: boolean) {
   else fixOnLocal.value = value
   try {
     await $fetch(`/api/projects/${props.projectId}/pulls/${props.prNumber}/automation`, { method: 'POST', body: { [field]: value } })
-    emit('taskCreated') // 触发父级 refreshPulls，把有效状态/轮数刷新回来
+    emit('taskCreated') // triggers the parent's refreshPulls to pull back the effective state/round count
   } catch {
-    // 失败 → 回退本地乐观值
+    // failed → roll back the optimistic local value
     if (field === 'reviewOn') reviewOnLocal.value = !value
     else fixOnLocal.value = !value
   }
 }
-// 引擎停手原因 → 一行提示（capped/converged/cant_fix/...）
+// Why the engine stopped → a one-line hint (capped/converged/cant_fix/...)
 const autoNoteText = computed(() => {
   if (!props.autoNote) return ''
   const k = `automation.note.${props.autoNote}`
   return te(k) ? t(k, { round: props.autoRound ?? 0, max: props.autoMaxRounds ?? 0 }) : ''
 })
-// 冷却中：还有几分钟才会开始自动跑（用户可在此窗口关掉开关）
+// Cooling down: how many minutes until the automatic run starts (the user can flip the switch off during this window)
 const coolingMinLeft = computed(() => {
   if (!props.autoCoolingUntil) return 0
   const ms = Date.parse(props.autoCoolingUntil) - Date.now()
@@ -63,7 +65,7 @@ const diff = ref<string | null>(null)
 const diffTruncated = ref(false)
 const diffPending = ref(false)
 
-// ── 自动化工作流时间线（引擎对这条 PR 做了什么）──
+// ── Automation workflow timeline (what the engine did to this PR) ──
 type WfEvent = { id: string; kind: string; ts: string; message: string | null }
 const wfEvents = ref<WfEvent[]>([])
 const wfPending = ref(false)
@@ -74,12 +76,12 @@ async function loadWf() {
   try {
     const r = await $fetch<{ events: WfEvent[] }>(`/api/projects/${props.projectId}/pulls/${props.prNumber}/automation-events`)
     wfEvents.value = r.events
-  } catch { /* 静默：下次轮询再拉 */ } finally {
+  } catch { /* silent: the next poll will fetch again */ } finally {
     wfPending.value = false
   }
 }
 function stopWfPoll() { if (wfTimer) { clearInterval(wfTimer); wfTimer = null } }
-// 在「自动化」tab 时每 5s 拉一次，工作流进展实时冒出来
+// While the automation tab is open, fetch every 5s so workflow progress surfaces live
 watch([activeTab, open], ([tabNow, isOpen]) => {
   stopWfPoll()
   if (isOpen && tabNow === 'workflow') {
@@ -88,7 +90,7 @@ watch([activeTab, open], ([tabNow, isOpen]) => {
   }
 })
 onBeforeUnmount(stopWfPoll)
-// 自动化事件 i18n：kind → 文案（fix_started/capped 带 message 插值）
+// Automation event i18n: kind → text (fix_started/capped interpolate message)
 const WF_DOT: Record<string, string> = {
   review_created: 'bg-inverted', recheck: 'bg-inverted', posted: 'bg-accented',
   fix_started: 'bg-inverted', pushed: 'bg-accented',
@@ -101,15 +103,15 @@ function wfLabel(ev: WfEvent) {
   return t(k, { round: ev.message ?? '', info: ev.message ?? '' })
 }
 
-// ── markdown 渲染（客户端动态加载 marked + dompurify）──
+// ── markdown rendering (marked + dompurify loaded dynamically on the client) ──
 let _render: ((s: string) => string) | null = null
 async function getRenderer() {
   if (_render) return _render
   const [{ marked }, dp] = await Promise.all([import('marked'), import('dompurify')])
   marked.setOptions({ gfm: true, breaks: true })
   const DOMPurify = (dp as any).default
-  // 渲染后把 GitHub 私有图片（user-attachments / githubusercontent）的 src 改走后端代理，
-  // 否则浏览器直连这些 URL 会 404（需 GitHub 登录态）。
+  // After rendering, point the src of GitHub private images (user-attachments / githubusercontent) at
+  // the backend proxy; otherwise the browser hitting those URLs directly gets a 404 (they need a GitHub session).
   const PROXY = /(<img[^>]+\bsrc=")(https:\/\/(?:github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)[^"]+)(")/gi
   _render = (s: string) => {
     const html = DOMPurify.sanitize(marked.parse(s ?? '', { async: false }) as string)
@@ -144,7 +146,7 @@ watch(
   { immediate: true },
 )
 
-// 切到「改动」才拉 diff
+// Only fetch the diff once the changes tab is opened
 watch(activeTab, async (nextTab) => {
   if (nextTab !== 'changes' || diff.value !== null || !props.prNumber) return
   diffPending.value = true
@@ -162,7 +164,7 @@ watch(activeTab, async (nextTab) => {
   }
 })
 
-// 相对时间（按当前语言本地化；超过 7 天回退到本地日期格式）
+// Relative time (localized to the current language; falls back to the local date format past 7 days)
 function rel(iso: string) {
   if (!iso) return ''
   const ts = new Date(iso).getTime()
@@ -174,7 +176,7 @@ function rel(iso: string) {
   return new Date(iso).toLocaleDateString(locale.value)
 }
 
-// review 状态 / 事件动词：存 i18n 键，模板里用 t() 解析（缺失则回退）
+// Review states / event verbs: stored as i18n keys, resolved with t() in the template (falls back when missing)
 const REVIEW_STATE: Record<string, string> = {
   approved: 'prDrawer.review.approved', changes_requested: 'prDrawer.review.changesRequested',
   commented: 'prDrawer.review.commented', dismissed: 'prDrawer.review.dismissed',
@@ -186,13 +188,13 @@ const VERB: Record<string, string> = {
   convert_to_draft: 'prDrawer.verb.convert_to_draft', review_requested: 'prDrawer.verb.review_requested', review_request_removed: 'prDrawer.verb.review_request_removed',
   assigned: 'prDrawer.verb.assigned', unassigned: 'prDrawer.verb.unassigned', deployed: 'prDrawer.verb.deployed', milestoned: 'prDrawer.verb.milestoned',
 }
-// 已知动词翻译，未知则回退到原始 verb 串
+// Translate known verbs, fall back to the raw verb string for unknown ones
 function verbLabel(verb?: string) {
   const k = VERB[verb || '']
   return k ? t(k) : (verb || '')
 }
 
-// diff 着色
+// diff coloring
 type DiffLine = { t: 'file' | 'hunk' | 'add' | 'del' | 'meta' | 'ctx'; text: string }
 const diffLines = computed<DiffLine[]>(() => {
   if (!diff.value) return []
@@ -242,7 +244,7 @@ const lineCls: Record<DiffLine['t'], string> = {
             <button class="text-dimmed hover:text-highlighted text-lg leading-none" @click="open = false">✕</button>
           </div>
 
-          <!-- 实例级自动化开关：自动审核 / 自动修复（覆盖项目配置；翻开即重置该 PR 的回合数） -->
+          <!-- Per-instance automation switches: auto review / auto fix (override the project config; flipping one resets this PR's round count) -->
           <div v-if="detail" class="flex items-center flex-wrap gap-x-5 gap-y-1 mt-3 text-xs">
             <div class="flex items-center gap-2">
               <USwitch :model-value="reviewOnLocal" size="sm" @update:model-value="(v: boolean) => toggleAuto('reviewOn', v)" />
@@ -256,8 +258,9 @@ const lineCls: Record<DiffLine['t'], string> = {
             <span v-else-if="autoNoteText" class="text-highlighted">· {{ autoNoteText }}</span>
           </div>
 
-          <!-- 子 tab：手机上 5 个 tab 会超出抽屉宽度 → 横向滚动(bleed 到抽屉边缘)，
-               而不是撑破整个页面宽度(那会让手机 layout viewport 变宽、md 断点误触发、整体布局崩) -->
+          <!-- Sub-tabs: on mobile the 5 tabs exceed the drawer width → scroll horizontally (bleeding to
+               the drawer edges) instead of stretching the whole page width (that would widen the mobile
+               layout viewport, falsely trip the md breakpoint and break the entire layout) -->
           <div v-if="detail" class="flex gap-5 md:gap-6 mt-4 text-sm overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'review' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'review'">{{ $t('prDrawer.tabReview') }}</button>
             <button class="pb-1 border-b-2 transition-colors shrink-0 whitespace-nowrap" :class="activeTab === 'fix' ? 'border-inverted text-highlighted' : 'border-transparent text-dimmed hover:text-default'" @click="activeTab = 'fix'">{{ $t('prDrawer.tabFix') }}</button>
@@ -267,7 +270,7 @@ const lineCls: Record<DiffLine['t'], string> = {
           </div>
         </div>
 
-        <!-- ── AI 审核 ── -->
+        <!-- ── AI review ── -->
         <ReviewPanel
           v-if="detail && activeTab === 'review' && prNumber"
           :project-id="projectId"
@@ -277,15 +280,15 @@ const lineCls: Record<DiffLine['t'], string> = {
           @changed="emit('taskCreated')"
         />
 
-        <!-- ── 修复 PR ── -->
+        <!-- ── Fix PR ── -->
         <div v-if="detail && activeTab === 'fix' && prNumber" class="flex-1 min-h-0 flex flex-col px-6 py-4">
           <FixPanel :project-id="projectId" :pr-number="prNumber" :fix-id="fixId" :active="activeTab === 'fix'" @changed="emit('taskCreated')" />
         </div>
 
-        <!-- ── 时间线 ── -->
+        <!-- ── Timeline ── -->
         <div v-if="detail && activeTab === 'timeline'" class="flex-1 overflow-y-auto px-6 py-5">
           <ol class="relative border-l border-default ml-3 space-y-5">
-            <!-- 开场：PR 描述 -->
+            <!-- Opening entry: the PR description -->
             <li class="pl-6 relative">
               <span class="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full bg-inverted" />
               <div class="text-xs text-dimmed mb-1">
@@ -298,7 +301,7 @@ const lineCls: Record<DiffLine['t'], string> = {
             </li>
 
             <li v-for="(n, i) in nodes" :key="i" class="pl-6 relative">
-              <!-- 评论 / review：卡片 -->
+              <!-- Comment / review: card -->
               <template v-if="n.kind === 'comment' || n.kind === 'review'">
                 <span class="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full" :class="n.isBot ? 'bg-accented' : 'bg-inverted'" />
                 <div class="text-xs text-dimmed mb-1">
@@ -320,7 +323,7 @@ const lineCls: Record<DiffLine['t'], string> = {
                 </div>
               </template>
 
-              <!-- 其它事件：紧凑灰行 -->
+              <!-- Other events: compact grey line -->
               <template v-else>
                 <span class="absolute -left-[5px] top-2 w-2 h-2 rounded-full bg-accented" />
                 <div class="text-xs text-dimmed">
@@ -334,7 +337,7 @@ const lineCls: Record<DiffLine['t'], string> = {
           </ol>
         </div>
 
-        <!-- ── 改动 ── -->
+        <!-- ── Changes ── -->
         <div v-else-if="detail && activeTab === 'changes'" class="flex-1 overflow-y-auto">
           <section v-if="detail.files.length" class="px-6 py-4 border-b border-default">
             <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-2">{{ $t('prDrawer.changedFiles', { count: detail.files.length }) }}</div>
@@ -352,7 +355,7 @@ const lineCls: Record<DiffLine['t'], string> = {
           </section>
         </div>
 
-        <!-- ── 自动化工作流时间线 ── -->
+        <!-- ── Automation workflow timeline ── -->
         <div v-else-if="detail && activeTab === 'workflow'" class="flex-1 overflow-y-auto px-6 py-5">
           <p v-if="!wfEvents.length" class="py-16 text-center text-xs text-dimmed">
             {{ wfPending ? $t('common.loading') : $t('automation.noEvents') }}

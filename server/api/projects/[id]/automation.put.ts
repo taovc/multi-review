@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 
-// 保存项目级自动化配置（自动化配置弹窗）。authors/statuses 存成 JSON 字符串。upsert（每项目一行）。
+// Save the project-level automation config (the automation settings modal). authors/statuses are
+// stored as JSON strings. Upsert (one row per project).
 const Status = z.enum(['open', 'draft', 'merged', 'closed'])
 const Body = z.object({
   masterEnabled: z.boolean(),

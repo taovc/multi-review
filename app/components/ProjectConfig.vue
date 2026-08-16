@@ -13,12 +13,12 @@ type AgentCapabilities = {
   models: ModelCap[]
   providers?: { stages: ProviderCapabilityStage[] }
   codex?: CodexSdkStatus
-  codexModels?: ModelCap[] // 从 `codex debug models` 动态拉取的当前账号真实可用模型
-  error?: string // 实时读本地 claude 失败时由后端带回（用于 Claude 状态卡）
+  codexModels?: ModelCap[] // the models actually available to the current account, pulled live from `codex debug models`
+  error?: string // returned by the backend when reading the local claude live fails (used by the Claude status card)
 }
-const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] // 模型目录暂不可用时的兜底档
+const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] // fallback levels for when the model catalog is unavailable
 
-// 表单（项目信息 + 模型）
+// Form (project info + model)
 const form = reactive({
   name: props.project.name,
   repo: props.project.repo,
@@ -42,7 +42,7 @@ const modelOptions = computed<ModelCap[]>(() => [
 ])
 const capabilityStages = computed(() => caps.value?.providers?.stages ?? [])
 const codexStatus = computed<CodexSdkStatus | null>(() => caps.value?.codex ?? null)
-// Claude 状态：本地 claude 能列出模型且无 error = 可用（与 Codex 状态卡对称展示）。
+// Claude status: the local claude can list models and there is no error = available (shown symmetrically with the Codex status card).
 const claudeStatus = computed(() => {
   const modelCount = caps.value?.models?.length ?? 0
   const ready = !caps.value?.error && modelCount > 0
@@ -52,7 +52,7 @@ const claudeStatus = computed(() => {
   return { ready, modelCount, detail }
 })
 const selectedProviderLabel = computed(() => form.provider === 'codex' ? t('config.providerCodex') : t('config.providerClaude'))
-// 统一的模型列表：claude 用本地真实可用模型；codex 用 `codex debug models` 动态拉取的真实模型。都带「全局默认」。
+// Unified model list: claude uses the models actually available locally; codex uses the real models pulled live from `codex debug models`. Both include "global default".
 const codexModelOptions = computed<ModelCap[]>(() => [
   { value: '', displayName: t('config.globalDefault'), description: t('config.codexModelPlaceholder'), supportsEffort: false, effortLevels: [] },
   ...(caps.value?.codexModels ?? []),
@@ -66,7 +66,7 @@ const effortOptions = computed(() => {
   const list = form.provider === 'codex' ? (caps.value?.codexModels ?? []) : (caps.value?.models ?? [])
   const m = list.find((x) => x.value === form.model)
   if (m) return m.supportsEffort ? m.effortLevels : []
-  // 选了「全局默认」（没具体模型）：codex 使用当前目录所有可用档位，claude 不显示
+  // "Global default" selected (no specific model): codex uses every level available in the current catalog, claude shows none
   return form.provider === 'codex' ? defaultCodexEfforts.value : []
 })
 watch(() => form.model, () => { if (!effortOptions.value.includes(form.effort)) form.effort = '' })
@@ -127,7 +127,7 @@ async function doActivate(id: string) {
   await $fetch(`/api/projects/${props.project.id}`, { method: 'PATCH', body: { activeSkillId: id } })
   activeId.value = id; emit('changed'); msg.value = t('config.skillActivated')
 }
-// 启用前体检：命中红线先警告确认
+// Lint before enabling: warn and ask for confirmation when a red line is hit
 const lintModal = reactive({ open: false, id: '', name: '', warnings: [] as string[] })
 function activate(id: string) {
   const s = skills.value?.find((x) => x.id === id)
@@ -141,7 +141,7 @@ function confirmActivate() {
   lintModal.open = false
   doActivate(lintModal.id)
 }
-// 点 ⚠ 查看体检详情
+// Click ⚠ to see the lint details
 const warnModal = reactive({ open: false, name: '', warnings: [] as string[] })
 function showWarn(s: SkillRow) {
   Object.assign(warnModal, { open: true, name: s.name, warnings: s.warnings || [] })
@@ -153,9 +153,9 @@ async function delSkill(id: string) {
   if (activeId.value === id) activeId.value = null
   await refreshSkills()
 }
-// 生成/赋能前先让用户给自定义指令（可介入，不无脑跑）
+// Let the user give custom instructions before generating/optimizing (they can step in, it doesn't just run blindly)
 const showGen = ref(false)
-const genBaseId = ref<string | null>(null) // null=从零生成；有值=基于它优化
+const genBaseId = ref<string | null>(null) // null = generate from scratch; a value = optimize based on it
 const genInstruction = ref('')
 function openGen(baseId: string | null) {
   genBaseId.value = baseId
@@ -166,7 +166,7 @@ const genProgress = ref('')
 async function runGen() {
   showGen.value = false
   generating.value = true; msg.value = ''; genProgress.value = t('config.connecting')
-  // 开 SSE 看实时进度（agent 在读哪个文件 / grep 什么）
+  // Open an SSE stream for live progress (which file the agent is reading / what it greps)
   let es: EventSource | null = null
   if (import.meta.client) {
     es = new EventSource(`/api/projects/${props.project.id}/skills/genstream`)
@@ -186,10 +186,10 @@ async function runGen() {
       },
     })
     await refreshSkills()
-    previewId.value = row.id // 直接预览新候选，做对比
+    previewId.value = row.id // preview the new candidate right away for comparison
     msg.value = t('config.candidateGenerated')
   } catch (e: any) {
-    // HTTP 可能超时但 skill 其实已生成并写库 → 刷新一下看是否多了候选
+    // The HTTP call may time out while the skill was in fact generated and written to the db → refresh to see whether a new candidate appeared
     await refreshSkills().catch(() => {})
     msg.value = e?.data?.statusMessage || t('config.genInterrupted')
   }
@@ -216,7 +216,7 @@ async function createSkill() {
   } finally { creatingSkill.value = false }
 }
 
-// 朴素行级 diff（候选 vs 当前启用）
+// Plain line-level diff (candidate vs currently enabled)
 type DiffLine = { t: '+' | '-' | ' '; text: string }
 function lineDiff(oldText: string, newText: string): DiffLine[] {
   const a = (oldText || '').split('\n'), b = (newText || '').split('\n')
@@ -280,7 +280,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
 
 <template>
   <div class="py-4">
-    <!-- 项目信息 -->
+    <!-- Project info -->
     <section>
       <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-3">{{ $t('config.projectInfo') }}</div>
       <div class="space-y-3">
@@ -295,11 +295,11 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </div>
     </section>
 
-    <!-- 模型 -->
+    <!-- Model -->
     <section class="mt-8">
-      <!-- 三列：标签都对齐「审核 Provider」基线（text-[10px] uppercase），说明都对齐「当前选择」基线（text-xs），控件在下一行 -->
+      <!-- Three columns: labels all align on the "review provider" baseline (text-[10px] uppercase), descriptions all align on the "current selection" baseline (text-xs), controls on the next line -->
       <div class="flex flex-wrap items-start gap-x-10 gap-y-4 mb-3">
-        <!-- 审核 Provider -->
+        <!-- Review provider -->
         <div class="flex flex-col">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('config.providerSection') }}</div>
           <p class="text-xs text-dimmed mt-1">{{ $t('config.selectedProvider', { provider: selectedProviderLabel }) }}</p>
@@ -316,7 +316,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
             >{{ $t('config.providerCodex') }}</button>
           </div>
         </div>
-        <!-- 自动修复回合上限 -->
+        <!-- Auto-fix round limit -->
         <div class="flex flex-col">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('config.autoMaxRounds') }}</div>
           <p class="text-xs text-dimmed mt-1">{{ $t('config.autoMaxRoundsHint') }}</p>
@@ -325,7 +325,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
             class="w-16 text-sm border-b border-default py-1 bg-transparent outline-none focus:border-inverted mt-2"
           />
         </div>
-        <!-- 自动化冷却期（分钟） -->
+        <!-- Automation cooldown (minutes) -->
         <div class="flex flex-col">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('config.autoCooldown') }}</div>
           <p class="text-xs text-dimmed mt-1">{{ $t('config.autoCooldownHint') }}</p>
@@ -371,7 +371,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
           </div>
         </div>
 
-        <!-- provider 状态卡：跟随当前选择的 provider（Claude/Codex 对称展示） -->
+        <!-- Provider status card: follows the currently selected provider (Claude/Codex shown symmetrically) -->
         <div class="border border-default rounded p-3 self-start">
           <!-- Codex -->
           <template v-if="form.provider === 'codex'">
@@ -421,7 +421,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </div>
     </section>
 
-    <!-- 模型列表：同一个组件，跟随 provider（claude/codex 都读取本地 CLI 的真实模型目录） -->
+    <!-- Model list: one component, follows the provider (both claude and codex read the real model catalog from the local CLI) -->
     <section class="mt-8">
       <div class="flex items-center justify-between gap-3 mb-2">
         <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ form.provider === 'codex' ? $t('config.codexModelSection') : $t('config.claudeModelSection') }}</div>
@@ -500,13 +500,13 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </div>
       <p v-if="!skills?.length" class="text-sm text-dimmed py-3">{{ $t('config.noSkills') }}</p>
 
-      <!-- 预览 / diff -->
+      <!-- Preview / diff -->
       <div v-if="previewSkill" class="mt-4 border border-default rounded p-3">
         <div class="flex items-center justify-between mb-2">
           <span class="text-xs text-muted">{{ previewSkill.name }}<span v-if="diff" class="text-dimmed"> {{ $t('config.vsActive') }}</span></span>
           <button v-if="previewId !== activeId" class="text-xs bg-inverted text-inverted px-3 py-1 hover:bg-inverted/90" @click="activate(previewSkill.id)">{{ $t('config.enableThis') }}</button>
         </div>
-        <!-- 有对比则显示 diff，否则纯文本 -->
+        <!-- Show the diff when there is something to compare against, plain text otherwise -->
         <div v-if="diff" class="font-mono text-xs leading-relaxed max-h-96 overflow-auto">
           <div v-for="(l, i) in diff" :key="i" class="whitespace-pre-wrap px-2"
             :class="l.t === '+' ? 'bg-success/10 text-success' : l.t === '-' ? 'bg-error/10 text-error' : 'text-muted'">{{ l.t }} {{ l.text || ' ' }}</div>
@@ -515,12 +515,12 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </div>
     </section>
 
-    <!-- 删除项目 -->
+    <!-- Delete project -->
     <section class="mt-12 border-t border-default pt-6">
       <button class="text-xs text-error hover:text-error" @click="deleteProject">{{ $t('config.deleteProject') }}</button>
     </section>
 
-    <!-- 点 ⚠ 查看体检详情 -->
+    <!-- Click ⚠ to see the lint details -->
     <BaseModal v-model:open="warnModal.open" :title="$t('config.warnModal.title')">
       <div class="space-y-3">
         <p class="text-sm text-toned" v-html="$t('config.warnModal.body', { name: warnModal.name })" />
@@ -534,7 +534,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </template>
     </BaseModal>
 
-    <!-- 启用前体检警告 -->
+    <!-- Lint warning before enabling -->
     <BaseModal v-model:open="lintModal.open" :title="$t('config.lintModal.title')">
       <div class="space-y-3">
         <p class="text-sm text-toned" v-html="$t('config.lintModal.body', { name: lintModal.name })" />
@@ -549,7 +549,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </template>
     </BaseModal>
 
-    <!-- AI 生成 / 赋能：给自定义指令 -->
+    <!-- AI generate / optimize: give custom instructions -->
     <BaseModal v-model:open="showGen" :title="genBaseId ? $t('config.genModal.titleOptimize') : $t('config.genModal.titleGenerate')">
       <div class="space-y-3">
         <p class="text-xs text-muted leading-relaxed" v-html="$t('config.genModal.intro', { mode: genBaseId ? $t('config.genModal.modeOptimize') : $t('config.genModal.modeGenerate') })" />
@@ -568,7 +568,7 @@ function codexAuthClass(status: CodexSdkStatus | null) {
       </template>
     </BaseModal>
 
-    <!-- 新建 skill -->
+    <!-- New skill -->
     <BaseModal v-model:open="showNew" :title="$t('config.newModal.title')">
       <div class="space-y-4">
         <label class="block">

@@ -9,13 +9,13 @@ import { fetchIssueContext } from '../github/issueAssets'
 import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
 
-// 全局会话 = 一个常驻的「啥都能干」对话。和 feature/fix 统一：claude/codex 双 provider、图片读取、ultracode、
-// 危险命令守卫、决策卡都走共享能力（chat.ts / runCodexChat）。SSE 频道用 `g:<sessionId>`。
+// A global session = one always-on "can do anything" conversation. Same as feature/fix: the claude/codex dual provider, image reading, ultracode,
+// the dangerous-command guard and decision cards all go through the shared capabilities (chat.ts / runCodexChat). The SSE channel is `g:<sessionId>`.
 export const globalChan = (id: string) => `g:${id}`
 
 const chatLocks = new Set<string>()
 const activeChats = new Map<string, ChildProcess>()
-const activeChatStops = new Map<string, () => void>() // codex runner 的 abort 句柄
+const activeChatStops = new Map<string, () => void>() // abort handles for the codex runner
 const stopRequested = new Set<string>()
 
 export function isGlobalChatting(id: string): boolean {
@@ -28,12 +28,12 @@ export function stopGlobalChat(id: string): boolean {
   if (!stop && (!cp || cp.pid == null)) return false
   stopRequested.add(id)
   if (stop) {
-    try { stop() } catch { /* 已退出 */ }
+    try { stop() } catch { /* already exited */ }
   }
   if (cp?.pid != null) {
     const pid = cp.pid
-    try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* 已退出 */ } }
-    setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* 已退出 */ } }, 1500)
+    try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* already exited */ } }
+    setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* already exited */ } }, 1500)
   }
   return true
 }
@@ -51,18 +51,18 @@ export type GlobalChatJobCtx = {
   provider: ReviewProvider
   cwd: string
   model: string
-  effort?: string // 空 = 默认
+  effort?: string // empty = default
   codexServiceTier?: string | null
   lang: string
-  allowDanger?: boolean // 用户开了「允许危险命令」开关 → 放行守卫
-  ultracode?: boolean // 后台激活 ultracode（前缀由运行器注入）
-  assetsDir: string // issue/PR 配图下载根目录
+  allowDanger?: boolean // the user turned on the "allow dangerous commands" switch → let them past the guard
+  ultracode?: boolean // activate ultracode in the background (the prefix is injected by the runner)
+  assetsDir: string // root directory for downloaded issue/PR images
 }
 
 export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): Promise<void> {
   const { db, schema, sessionId } = ctx
   const now = () => new Date().toISOString()
-  const emit = makeEmit({ channel: globalChan(sessionId), now }) // global 不落库（不传 eventTable）
+  const emit = makeEmit({ channel: globalChan(sessionId), now }) // global doesn't persist events (no eventTable passed)
   const row = () => db.select().from(schema.globalSessions).where(eq(schema.globalSessions.id, sessionId)).get()
   const saveSession = (sid: string | null) => sessionFields(ctx.provider, sid)
 
@@ -80,14 +80,14 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
     db.update(schema.globalSessions).set({ status: 'streaming', lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
     emit('chat', 'user')
 
-    // 图片/issue 读取（统一）：消息里引用的 GitHub issue/PR → 抓正文 + 下载配图（含私有附件，用 gh token）→ 喂路径。
+    // Image/issue reading (unified): a GitHub issue/PR referenced in the message → fetch the body + download the images (including private attachments, using the gh token) → feed in the paths.
     let agentMessage = message
     try {
       const ic = await fetchIssueContext(message, join(ctx.assetsDir, `g-${sessionId}`))
       if (ic) {
-        agentMessage = `${message}\n\n【消息里引用的 issue/PR 内容（后端已抓取）】\n${ic.enrichedText}`
+        agentMessage = `${message}\n\n[Content of the issue/PR referenced in the message (already fetched by the backend)]\n${ic.enrichedText}`
         if (ic.imagePaths.length) {
-          agentMessage += `\n\n【配图（已下载到本地，先用 Read 逐张打开看）】\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
+          agentMessage += `\n\n[Images (already downloaded locally — open each one with Read first)]\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
         }
         emit('stage', `已抓取 issue/PR 内容（${ic.summary}）`)
       }
@@ -134,7 +134,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
       acc = r.text || acc
       newSessionId = r.sessionId ?? newSessionId
     } catch (e) {
-      if (stopRequested.has(sessionId)) stopped = true // 用户停的，不算错误
+      if (stopRequested.has(sessionId)) stopped = true // stopped by the user, not an error
       else throw e
     } finally {
       activeChats.delete(sessionId)

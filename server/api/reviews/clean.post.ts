@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { schema } from '~core/db/client'
 import { removeWorktree } from '~core/git/worktree'
 
-// 按类别清理任务：merged=已合并的 PR；posted=已发评论的。各自独立，前端分两个按钮 + 各自确认。
+// Clean up tasks by category: merged = PRs already merged; posted = those whose comment was already posted. The two are independent — the frontend has a separate button and a separate confirmation for each.
 const Body = z.object({
   projectId: z.string().min(1),
   mode: z.enum(['merged', 'posted']),

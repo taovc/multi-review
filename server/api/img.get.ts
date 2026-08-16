@@ -1,8 +1,10 @@
 import { ghToken } from '~core/github/gh'
 
-// GitHub 私有仓库评论里的图片（github.com/user-attachments/... 或 *.githubusercontent.com）
-// 浏览器直连会 404（要 GitHub 登录态）。这里用 gh token 代取后转给前端。
-// 白名单严格限定 GitHub 图片域名，防 SSRF（别变成打内网的通用代理）。
+// Images in private-repo GitHub comments (github.com/user-attachments/... or
+// *.githubusercontent.com) 404 when the browser fetches them directly (they need a GitHub session).
+// Here we fetch them with the gh token and relay them to the frontend.
+// The allowlist is strictly limited to GitHub image domains to prevent SSRF (this must not become a
+// general-purpose proxy into the intranet).
 const ALLOW = /^https:\/\/(github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)/i
 
 export default defineEventHandler(async (event) => {

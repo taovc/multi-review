@@ -1,5 +1,7 @@
-// 抽屉内联确认（不用弹窗——drawer 之上的 modal 无法交互，是本项目的硬约束）。
-// 一个字符串状态记录「正在确认哪个动作」（'' = 无）；fix/global/feature 的删除/丢弃都用这个模式。
+// Inline confirmation inside a drawer (no popup — a modal on top of a drawer cannot be interacted with,
+// which is a hard constraint in this project).
+// A single string state records "which action is being confirmed" ('' = none); the delete/discard actions
+// in fix/global/feature all use this pattern.
 export function useInlineConfirm() {
   const confirming = ref('')
   return {

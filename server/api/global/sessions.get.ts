@@ -1,7 +1,7 @@
 import { desc, count } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 
-// 全局会话历史列表：按最近使用倒序 + 翻页。?page=0&pageSize=20
+// Global session history list: most recently used first + pagination. ?page=0&pageSize=20
 export default defineEventHandler((event) => {
   const q = getQuery(event)
   const pageSize = Math.min(Math.max(Number(q.pageSize) || 20, 1), 100)

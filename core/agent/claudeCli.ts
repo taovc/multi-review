@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { resolveClaudeExecutable } from './claude-bin'
 
-// 跑 `claude --print ...`。prompt 走 stdin（写完立即 end）：既不会因超长参数撞 ARG_MAX，
-// 也不会出现 "no stdin data received" 卡死（我们主动写入并关闭 stdin）。
+// Run `claude --print ...`. The prompt goes through stdin (ended right after writing): this neither
+// hits ARG_MAX with an oversized argument nor hangs on "no stdin data received" (we write and close
+// stdin ourselves).
 export function runClaude(
   args: string[],
   opts: { input?: string; timeout?: number; maxBuffer?: number } = {},
@@ -11,7 +12,7 @@ export function runClaude(
   const maxBuffer = opts.maxBuffer ?? 1024 * 1024 * 32
   const hasInput = typeof opts.input === 'string'
   return new Promise((resolve, reject) => {
-    // production 构建里 PATH 可能没有 claude → 用统一的解析逻辑（见 claude-bin.ts）
+    // In a production build PATH may not contain claude → use the shared resolution logic (see claude-bin.ts)
     const cp = spawn(resolveClaudeExecutable() ?? 'claude', args, { stdio: [hasInput ? 'pipe' : 'ignore', 'pipe', 'pipe'] })
     let out = ''
     let err = ''
@@ -33,37 +34,40 @@ export function runClaude(
       finish(() => (code === 0 ? resolve(out) : reject(new Error(`claude 退出码 ${code}: ${err.slice(0, 300)}`)))),
     )
     if (hasInput) {
-      cp.stdin!.on('error', () => {}) // 防 EPIPE 崩溃
+      cp.stdin!.on('error', () => {}) // guard against an EPIPE crash
       cp.stdin!.write(opts.input!)
       cp.stdin!.end()
     }
   })
 }
 
-// 跑一个长任务（修复 agent）：`claude -p --output-format stream-json`，逐行解析 NDJSON，
-// 每条消息回调 onEvent（assistant 文本 / tool_use / result），从 result 累计 total_cost_usd。
-// 与 runClaude 不同：不一次性 buffer，而是流式消费（修复耗时长，需要实时进度）。
+// Run a long task (the fix agent): `claude -p --output-format stream-json`, parse the NDJSON line by
+// line, call onEvent for every message (assistant text / tool_use / result), and accumulate
+// total_cost_usd from result.
+// Unlike runClaude: no single buffer, it consumes the stream (fixes take long and need live progress).
 export type StreamMsg = Record<string, any>
 export function runClaudeStream(
   args: string[],
-  // onSpawn 暴露子进程句柄给调用方（M2 停止按钮要 kill 它）
+  // onSpawn exposes the child process handle to the caller (the M2 stop button has to kill it)
   opts: { input?: string; cwd?: string; timeout?: number; idleTimeout?: number; env?: Record<string, string>; onEvent?: (msg: StreamMsg) => void; onSpawn?: (cp: import('node:child_process').ChildProcess) => void } = {},
 ): Promise<{ costUsd: number; result: string; sessionId: string | null }> {
-  // 空闲超时：agent 可能跑很久（ultracode 多子代理 / opus[1m] / 大改动都正常），只要还在产出就别砍它。
-  // 有输出即重置计时，只砍「真的卡死、久无任何输出」的。timeout = 绝对上限兜底（防跑飞），默认很大。
+  // Idle timeout: the agent can run for a long time (ultracode with many subagents / opus[1m] / big
+  // changes are all normal) — as long as it keeps producing output, don't kill it.
+  // Any output resets the timer; we only kill runs that are truly stuck with no output for a long
+  // time. timeout = absolute upper bound as a backstop (against runaways), very large by default.
   const idleMs = opts.idleTimeout ?? 20 * 60_000
   const hardMs = opts.timeout ?? 4 * 60 * 60_000
   const bin = resolveClaudeExecutable() ?? 'claude'
   const hasInput = typeof opts.input === 'string'
   return new Promise((resolve, reject) => {
-    // detached:true → 子进程成为新进程组组长，停止时可对「整个组」发信号（含它 spawn 的子进程），等同 Ctrl+C。
+    // detached:true → the child becomes its own process group leader, so stopping can signal the whole group (including processes it spawned), same as Ctrl+C.
     const cp = spawn(bin, args, { cwd: opts.cwd, stdio: [hasInput ? 'pipe' : 'ignore', 'pipe', 'pipe'], detached: true, ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}) })
     opts.onSpawn?.(cp)
     let buf = ''
     let err = ''
     let costUsd = 0
     let result = ''
-    let sessionId: string | null = null // stream-json 自带，留给后续 --resume 续聊
+    let sessionId: string | null = null // comes with stream-json, kept for resuming the chat later with --resume
     let done = false
     let idleTimer: ReturnType<typeof setTimeout> | undefined
     let hardTimer: ReturnType<typeof setTimeout> | undefined
@@ -73,8 +77,8 @@ export function runClaudeStream(
       clearTimeout(idleTimer); clearTimeout(hardTimer)
       fn()
     }
-    const killTree = (sig: NodeJS.Signals) => { try { process.kill(-(cp.pid as number), sig) } catch { try { cp.kill(sig) } catch { /* 已退出 */ } } }
-    // 每次有输出就重置空闲计时（有产出 = 没卡死）；hard 上限只兜底防跑飞。
+    const killTree = (sig: NodeJS.Signals) => { try { process.kill(-(cp.pid as number), sig) } catch { try { cp.kill(sig) } catch { /* already exited */ } } }
+    // Every chunk of output resets the idle timer (output = not stuck); the hard limit is only a runaway backstop.
     const armIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => finish(() => { killTree('SIGKILL'); reject(new Error(`claude 调用超时（${Math.round(idleMs / 60_000)} 分钟无输出）`)) }), idleMs) }
     hardTimer = setTimeout(() => finish(() => { killTree('SIGKILL'); reject(new Error(`claude 调用超时（超过 ${Math.round(hardMs / 60_000)} 分钟上限）`)) }), hardMs)
     armIdle()
@@ -85,7 +89,7 @@ export function runClaudeStream(
       try {
         msg = JSON.parse(line)
       } catch {
-        return // 非 JSON 行（极少）跳过
+        return // skip non-JSON lines (very rare)
       }
       if (typeof msg?.session_id === 'string' && !sessionId) sessionId = msg.session_id
       if (msg?.type === 'result') {
@@ -95,12 +99,12 @@ export function runClaudeStream(
       try {
         opts.onEvent?.(msg)
       } catch {
-        /* 订阅者异常不影响主流程 */
+        /* a subscriber throwing must not affect the main flow */
       }
     }
     cp.stdout!.setEncoding('utf8')
     cp.stdout!.on('data', (d: string) => {
-      armIdle() // 有输出 → 重置空闲计时
+      armIdle() // output → reset the idle timer
       buf += d
       let nl: number
       while ((nl = buf.indexOf('\n')) >= 0) {
@@ -112,7 +116,7 @@ export function runClaudeStream(
     cp.stderr!.on('data', (d) => { armIdle(); err += d })
     cp.on('error', (e) => finish(() => reject(e)))
     cp.on('close', (code) => {
-      consume(buf.trim()) // 最后一行可能没有换行符（result 行丢了 cost/sessionId 就麻烦）
+      consume(buf.trim()) // the last line may have no trailing newline (losing the result line would cost us cost/sessionId)
       finish(() => (code === 0 ? resolve({ costUsd, result, sessionId }) : reject(new Error(`claude 退出码 ${code}: ${err.slice(0, 500)}`))))
     })
     if (hasInput) {

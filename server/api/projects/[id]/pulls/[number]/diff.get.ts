@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { fetchPrDiff } from '~core/github/gh'
 
-// 完整 diff（懒加载：仅当 drawer 切到「改动」子 tab 时才取）
+// Full diff (lazy: only fetched when the drawer switches to the "changes" sub-tab)
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const number = Number(getRouterParam(event, 'number'))

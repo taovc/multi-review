@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { extractGithubRefs, extractImageUrls } from '../core/github/issueAssets'
 
-// extractGithubRefs：从需求文本里抠出 issue/PR 链接（去重 + 区分 issue/pr）
+// extractGithubRefs: pull issue/PR links out of the requirement text (deduped + issue/pr distinguished)
 {
   const refs = extractGithubRefs('see https://github.com/octocat/hello-world/issues/7370 thanks')
   assert.equal(refs.length, 1)
@@ -13,21 +13,21 @@ import { extractGithubRefs, extractImageUrls } from '../core/github/issueAssets'
   assert.equal(refs[0]!.number, 42)
 }
 {
-  // 同一链接出现多次只算一个
+  // the same link appearing several times counts as one
   const refs = extractGithubRefs('a https://github.com/o/r/issues/1 b https://github.com/o/r/issues/1')
   assert.equal(refs.length, 1)
 }
 {
-  // 多个不同链接全部抠出
+  // several different links are all extracted
   const refs = extractGithubRefs('https://github.com/o/r/issues/1 and https://github.com/o/r/pull/2')
   assert.equal(refs.length, 2)
 }
 {
-  // 没有链接 → 空
+  // no links → empty
   assert.equal(extractGithubRefs('just a normal requirement text').length, 0)
 }
 
-// extractImageUrls：从 issue 正文（HTML <img> + markdown）抠图，只留 GitHub 图片域
+// extractImageUrls: pull images out of the issue body (HTML <img> + markdown), keeping only GitHub image domains
 {
   const body = '<img width="100" alt="x" src="https://github.com/user-attachments/assets/abc-123" />'
   assert.deepEqual(extractImageUrls(body), ['https://github.com/user-attachments/assets/abc-123'])
@@ -37,18 +37,18 @@ import { extractGithubRefs, extractImageUrls } from '../core/github/issueAssets'
   assert.deepEqual(extractImageUrls(body), ['https://private-user-images.githubusercontent.com/1/2.png'])
 }
 {
-  // 非 GitHub 图片域被过滤（防 SSRF / 别乱下外部图）
+  // non-GitHub image domains are filtered out (SSRF protection / don't go fetching arbitrary external images)
   const body = '<img src="https://evil.example.com/x.png"> ![y](http://internal/y.png)'
   assert.deepEqual(extractImageUrls(body), [])
 }
 {
-  // 去重
+  // dedupe
   const u = 'https://github.com/user-attachments/assets/dup'
   const body = `<img src="${u}"> <img src="${u}">`
   assert.deepEqual(extractImageUrls(body), [u])
 }
 {
-  // 混合 HTML + markdown，按出现顺序、去重、过滤
+  // mixed HTML + markdown: in order of appearance, deduped, filtered
   const body = [
     '<img src="https://github.com/user-attachments/assets/one">',
     '![two](https://github.com/user-attachments/assets/two)',

@@ -13,13 +13,14 @@ import { genCommitMessage } from '~core/fix/commitmsg'
 import { assertCodexAheadCommitSafe, assertCodexCommitSafe } from '~core/fix/codexCommitSafety'
 
 const pexec = promisify(execFile)
-// 首字符必须字母数字（禁前导 `-`/`.`，防被当 git flag 或路径穿越）
+// First character must be alphanumeric (no leading `-`/`.`, so it can't be taken as a git flag or traverse paths)
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/
 const UPLOADABLE = ['open', 'ready', 'pushed', 'error'] as const
 
-// 「提交并上传」：把 worktree 里 Claude 改的（未提交）改动 `git add -A && commit && push` 到 PR 分支。
-// dryRun=true → 返回待上传 diff + 据 diff 生成的 conventional commit message + 统计（不提交不推送），给预览 view 用。
-// dryRun=false → 真提交并推送；message 用预览里（可编辑后）传回的，缺省则现场生成。永远手动触发 + 二次确认。
+// "Commit and upload": `git add -A && commit && push` the (uncommitted) changes Claude made in the worktree to the PR branch.
+// dryRun=true → return the pending diff + a conventional commit message generated from that diff + stats (no commit, no push), for the preview view.
+// dryRun=false → really commit and push; message comes from the preview (possibly edited), generated on the spot when absent.
+// Always manually triggered + an explicit confirmation step.
 const Body = z.object({ dryRun: z.boolean().default(false), message: z.string().max(500).optional() })
 
 export default defineEventHandler(async (event) => {
@@ -39,8 +40,8 @@ export default defineEventHandler(async (event) => {
   const git = (args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024 })
   const now = () => new Date().toISOString()
 
-  // 合并进行中？（agent 跑了 `git merge --no-commit` 解完冲突，留下 MERGE_HEAD）。
-  // 是的话提交信息应保留 git 准备好的「Merge ... into HEAD」，而不是 AI 摘要 diff。
+  // Merge in progress? (the agent ran `git merge --no-commit`, resolved the conflicts and left MERGE_HEAD behind).
+  // If so the commit message should keep the "Merge ... into HEAD" that git prepared, instead of an AI summary of the diff.
   const mergeState = async (): Promise<{ merging: boolean; msg: string }> => {
     const merging = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true).catch(() => false)
     if (!merging) return { merging: false, msg: '' }
@@ -48,28 +49,29 @@ export default defineEventHandler(async (event) => {
     try {
       const p = (await git(['rev-parse', '--git-path', 'MERGE_MSG'])).stdout.trim()
       msg = (await readFile(resolve(wt, p), 'utf8')).trim()
-    } catch { /* 读不到就空，提交时用 --no-edit 让 git 自己填合并信息 */ }
+    } catch { /* unreadable → leave it empty and commit with --no-edit so git fills in the merge message itself */ }
     return { merging: true, msg }
   }
 
-  // 有可上传的东西吗：worktree 脏（未提交改动）或本地 HEAD 领先 origin/<branch>（已提交未推，含 Claude 自己提交的）
+  // Anything to upload? Either the worktree is dirty (uncommitted changes) or the local HEAD is ahead of origin/<branch>
+  // (committed but not pushed, including commits Claude made itself)
   const { dirty, ahead } = await hasUploadable(wt, fix.branch)
   if (!dirty && !ahead) throw createError({ statusCode: 400, statusMessage: '没有可上传的改动' })
 
-  // ── 预览：待上传 diff + 生成的 commit message + 统计，不提交不推送 ──
+  // ── Preview: pending diff + generated commit message + stats, no commit and no push ──
   if (dryRun) {
     const [{ diff, truncated }, stat] = await Promise.all([
       fixChangesDiff(wt).catch(() => ({ diff: '', truncated: false })),
       fixChangesStat(wt).catch(() => ({ filesChanged: 0, additions: 0, deletions: 0 })),
     ])
-    // 合并提交：用 git 的合并信息，省掉 AI 生成；普通改动：AI 摘要 diff
+    // Merge commit: use git's merge message and skip the AI generation; ordinary changes: AI summary of the diff
     const { merging, msg: mergeMsg } = await mergeState()
     const genMsg = !dirty ? '' : merging ? (mergeMsg || `Merge into ${fix.branch}`) : await genCommitMessage(cfg.translateModel as string, diff)
-    // needsCommit=false：没有未提交改动，只是本地 HEAD 领先远端（如上次 push 失败）→ 直接重推，不需要 commit message
+    // needsCommit=false: no uncommitted changes, the local HEAD is merely ahead of the remote (e.g. the last push failed) → just re-push, no commit message needed
     return { dryRun: true, diff, truncated, message: genMsg, needsCommit: dirty, isMerge: merging, ...stat }
   }
 
-  // ── 真跑：CAS 抢锁 → pushing，commit（脏才提交）+ push ──
+  // ── For real: CAS-claim the lock → pushing, commit (only when dirty) + push ──
   if (!(UPLOADABLE as readonly string[]).includes(fix.status)) throw createError({ statusCode: 409, statusMessage: `当前状态（${fix.status}）不能上传` })
   const claimed = d
     .update(schema.fixes)
@@ -81,7 +83,7 @@ export default defineEventHandler(async (event) => {
   try {
     const { merging } = await mergeState()
     if (project.provider === 'codex') {
-      // 合并带进来的改动来自基础分支(非 codex 自己写) → 跳过保护文件拦截；普通改动仍拦。
+      // Changes brought in by a merge come from the base branch (codex didn't write them) → skip the protected-file check; ordinary changes are still checked.
       if (dirty && !merging) {
         const { stdout: porcelain } = await git(['status', '--porcelain'])
         assertCodexCommitSafe(porcelain)
@@ -102,12 +104,12 @@ export default defineEventHandler(async (event) => {
       await git(['add', '-A'])
       const userMsg = (message || '').trim()
       if (userMsg) {
-        // 用户在预览里确认/编辑过的信息（合并时默认就是 git 的合并信息）。
-        // 合并中 commit 仍会生成双亲的 merge commit，-m 只决定信息。
+        // The message the user confirmed/edited in the preview (during a merge it defaults to git's merge message).
+        // Committing mid-merge still produces a two-parent merge commit; -m only decides the message.
         await git(['commit', '-m', userMsg])
       } else {
         if (merging) {
-          await git(['commit', '--no-edit']) // 用 git 准备好的 MERGE_MSG（Merge ... into HEAD）
+          await git(['commit', '--no-edit']) // use the MERGE_MSG git prepared (Merge ... into HEAD)
         } else {
           const { diff } = await fixChangesDiff(wt).catch(() => ({ diff: '' }))
           await git(['commit', '-m', await genCommitMessage(cfg.translateModel as string, diff)])
@@ -116,12 +118,12 @@ export default defineEventHandler(async (event) => {
     }
     const { stdout: head } = await git(['rev-parse', 'HEAD'])
     const headSha = head.trim()
-    // 先把 fixHeadSha 落库（状态仍 pushing）：万一 push 后、写 pushed 前崩溃，recover 用 origin==fixHeadSha 判成功
+    // Persist fixHeadSha first (status still pushing): if we crash after the push but before writing pushed, recovery uses origin==fixHeadSha to decide it succeeded
     d.update(schema.fixes).set({ fixHeadSha: headSha, updatedAt: now() }).where(eq(schema.fixes.id, id)).run()
 
     await git(['push', 'origin', `HEAD:${fix.branch}`])
 
-    // push 时记一份当前 review 数作基线（「审核已更新」用）。取数失败不致命。
+    // Record the current review count at push time as a baseline (for "review updated"). Failing to fetch it is not fatal.
     const reviewsAtPush = await fetchReviewsCount(project.repo, fix.prNumber).catch(() => null)
     const stat = await fixChangesStat(wt).catch(() => ({ filesChanged: fix.filesChanged ?? 0, additions: fix.additions ?? 0, deletions: fix.deletions ?? 0 }))
     d.update(schema.fixes)

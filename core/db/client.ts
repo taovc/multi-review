@@ -18,13 +18,13 @@ export function getDb(dbPath: string) {
 
   _db = drizzle(sqlite, { schema })
 
-  // MVP：用 CREATE TABLE IF NOT EXISTS 自建表，不跑正式 migration
+  // MVP: create the tables with CREATE TABLE IF NOT EXISTS, no formal migrations
   ensureSchema(sqlite)
   ensureColumns(sqlite)
   return _db
 }
 
-// 给已存在的旧表补列（CREATE IF NOT EXISTS 不会改已有表）
+// Add missing columns to existing old tables (CREATE IF NOT EXISTS won't alter a table that already exists)
 function ensureColumns(sqlite: Database.Database) {
   const adds: Array<[string, string, string]> = [
     ['reviews', 'author', 'TEXT'],
@@ -42,7 +42,7 @@ function ensureColumns(sqlite: Database.Database) {
     ['reviews', 'preview_sig', 'TEXT'],
     ['reviews', 'author_updated', 'INTEGER NOT NULL DEFAULT 0'],
     ['reviews', 'review_decision', 'TEXT'],
-    // fixes：旧表用 CREATE IF NOT EXISTS 建的，补 M1 漏掉的列 + M2 新增列
+    // fixes: old tables were created with CREATE IF NOT EXISTS — add the columns M1 missed + the ones M2 added
     ['fixes', 'pr_author', 'TEXT'],
     ['fixes', 'title', 'TEXT'],
     ['fixes', 'instruction', 'TEXT'],
@@ -55,7 +55,7 @@ function ensureColumns(sqlite: Database.Database) {
     ['fixes', 'last_push_sha', 'TEXT'],
     ['fixes', 'last_action_kind', 'TEXT'],
     ['fixes', 'reviews_at_push', 'INTEGER'],
-    // 助手(global)按会话存 effort（和 model/provider 对称），旧库补列
+    // the assistant (global) stores effort per session (symmetric with model/provider); add the column to old DBs
     ['global_sessions', 'effort', 'TEXT'],
   ]
   for (const [table, col, type] of adds) {
@@ -64,24 +64,24 @@ function ensureColumns(sqlite: Database.Database) {
       sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`)
     }
   }
-  // 已存在的 pushed 任务：回填 last_push_sha = fix_head_sha（视作已上传，避免重构后误显示「上传改动」）
+  // Existing pushed tasks: backfill last_push_sha = fix_head_sha (treat them as uploaded so the refactor doesn't wrongly show "upload changes")
   try {
     sqlite.exec(`UPDATE fixes SET last_push_sha = fix_head_sha, last_action_kind = 'pushed'
                  WHERE pushed_at IS NOT NULL AND last_push_sha IS NULL AND fix_head_sha IS NOT NULL`)
-  } catch { /* 老库无相关列时忽略 */ }
-  // 纯对话版：把遗留旧状态归一到新枚举（旧库可能有 queued/validating/awaiting/fixing/ready/merging/conflict）。
-  // 首次归一后旧值不再存在，之后每次启动都是空操作。
+  } catch { /* ignore when an old DB lacks those columns */ }
+  // Chat-only version: normalize legacy statuses onto the new enum (old DBs may hold queued/validating/awaiting/fixing/ready/merging/conflict).
+  // After the first normalization the old values are gone, so every later startup is a no-op.
   try {
-    // 先把（可能留着半截 merge 的）merging/conflict 标 error 提醒用户；其余任何不在新枚举里的旧值兜底归到 open。
+    // First mark merging/conflict (which may have left a half-finished merge) as error to warn the user; any other legacy value outside the new enum falls back to open.
     sqlite.exec(`UPDATE fixes SET status = 'error' WHERE status IN ('merging','conflict')`)
     sqlite.exec(`UPDATE fixes SET status = 'open'  WHERE status NOT IN ('open','ready','pushing','pushed','error','discarded')`)
-  } catch { /* 忽略 */ }
-  // feature 单段式：把两段式旧状态归一到新枚举。先保住「已开 PR」的行（旧 built + pr_url 也算 opened），
-  // 再把其余旧状态（analyzing/planned/building/built）归到 working；opened/error 不动。
+  } catch { /* ignore */ }
+  // feature single-phase: normalize the two-phase legacy statuses onto the new enum. First preserve rows that already opened a PR
+  // (old built + pr_url also counts as opened), then map the remaining legacy statuses (analyzing/planned/building/built) to working; opened/error are left alone.
   try {
     sqlite.exec(`UPDATE feature_tasks SET status = 'opened' WHERE pr_url IS NOT NULL AND status NOT IN ('working','awaiting','opened','error')`)
     sqlite.exec(`UPDATE feature_tasks SET status = 'working' WHERE status NOT IN ('working','awaiting','opened','error')`)
-  } catch { /* 老库无该表时忽略 */ }
+  } catch { /* ignore when an old DB lacks that table */ }
 }
 
 function ensureSchema(sqlite: Database.Database) {

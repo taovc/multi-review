@@ -4,19 +4,19 @@ import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 
-// 触发（或重跑）一个审核任务：置 queued 并入队。
+// Trigger (or re-run) a review task: set it to queued and enqueue it.
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const cfg = useRuntimeConfig()
   const d = db()
-  // fresh=true → audit complet à zéro (efface les findings, revue NON guidée).
-  // Par défaut → re-revue guidée qui conserve findings + notes (« Recontrôler selon mes retours »).
+  // fresh=true → full review from scratch (wipes the findings, NON-guided review).
+  // Default → guided re-review that keeps findings + notes ("re-check against my feedback").
   const body = (await readBody(event).catch(() => ({}))) as { fresh?: boolean }
   const fresh = body?.fresh === true
 
   const review = d.select().from(schema.reviews).where(eq(schema.reviews.id, id)).get()
   if (!review) throw createError({ statusCode: 404, statusMessage: 'review 不存在' })
-  // 已在处理中就别重复触发
+  // Already being processed → don't trigger again
   if (['queued', 'cloning', 'reviewing', 'recheck_requested', 'rechecking', 'posting'].includes(review.status)) {
     throw createError({ statusCode: 409, statusMessage: '该任务正在处理中，请等它完成再操作' })
   }
@@ -27,8 +27,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '项目未配置本地 clone 路径（worktree 需要它）' })
   }
 
-  // Tâches anciennes créées sans branche (ex. via le drawer « détail PR ») → résoudre via GitHub
-  // puis persister, pour qu'un relancement marche sans devoir recréer la tâche.
+  // Older tasks created without a branch (e.g. via the "PR detail" drawer) → resolve it through
+  // GitHub and persist it, so a re-run works without having to recreate the task.
   let branch = review.branch
   if (!branch) {
     try {

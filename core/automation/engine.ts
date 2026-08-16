@@ -10,9 +10,12 @@ import {
 import { getProjectAutomation, getPrAutomationRow, upsertPrAutomation, pullStatusKey, recordAutomationEvent } from './state'
 import { reviewFindingStats } from './findings'
 
-// 自动化引擎：一轮轮询的纯编排。读 project_automation/pr_automation + GitHub PR 列表，
-// 对每条 PR 算快照 → decideAutoAction → 落 pr_automation patch → 通过注入的 deps 调现有端点派活。
-// 所有真正的副作用（gh / 建任务 / 发评论 / push）都走 deps，由 plugin 注入真实实现，这样引擎本身好测、core 不依赖运行时。
+// Automation engine: pure orchestration of one polling round. Reads project_automation/pr_automation
+// plus the GitHub PR list, builds a snapshot per PR → decideAutoAction → writes the pr_automation
+// patch → dispatches work by calling the existing endpoints through injected deps.
+// Every real side effect (gh / creating tasks / posting comments / push) goes through deps, with the
+// plugin injecting the real implementations, which keeps the engine testable and core free of any
+// runtime dependency.
 
 export type EnginePull = {
   number: number
@@ -27,23 +30,28 @@ export type EngineDeps = {
   isChatting(fixId: string): boolean
   dispatchReview(projectId: string, prNumber: number): Promise<void>
   dispatchRecheck(reviewId: string): Promise<void>
-  // posted=是否真发了评论；无可发内容→{posted:false}；发布失败→{posted:false,error}（已止损，不重试）
+  // posted = whether a comment was actually posted; nothing to post → {posted:false};
+  // posting failed → {posted:false,error} (already contained, no retry)
   dispatchPost(reviewId: string): Promise<{ posted: boolean; error?: string }>
   dispatchFix(projectId: string, prNumber: number, reviewId: string): Promise<void>
   dispatchPush(fixId: string): Promise<void>
   now(): string
-  currentUser?: string | null // 当前 gh 登录用户（自动修复作者白名单的默认值）
+  currentUser?: string | null // currently logged-in gh user (default for the auto-fix author allowlist)
   log?(msg: string): void
 }
 
-// 配置里勾了哪些 PR 状态 → 后端拉 open 还是 all（和前端 [id].vue 的 backendState 同口径，省 gh 调用）
+// Which PR statuses are ticked in the config → does the backend fetch open or all (same rule as
+// backendState in the frontend's [id].vue, saving gh calls)
 function backendState(statuses: string[]): 'open' | 'all' {
   if (!statuses.length) return 'all'
   return statuses.every((s) => s === 'open' || s === 'draft') ? 'open' : 'all'
 }
 
-// 项目要不要被这一轮处理：总闸开且有系统在跑，或有 PR 行显式打开/正在收尾（没配置但手动开了某条 PR 也得处理）。
-// 注意：reviewOn/fixOn/pendingFix 是 drizzle boolean-mode 列，读出来是 JS 布尔（true/false/null），不是数字 1——用 !! 判真。
+// Whether this project should be processed this round: the master switch is on with at least one
+// system running, or some PR row is explicitly on / still wrapping up (a PR turned on manually
+// without any project config must still be handled).
+// Note: reviewOn/fixOn/pendingFix are drizzle boolean-mode columns, so they read back as JS booleans
+// (true/false/null), not the number 1 — use !! to test truthiness.
 function isProjectArmed(db: any, schema: any, projectId: string, cfg: AutoConfig): boolean {
   if (cfg.masterEnabled && (cfg.reviewEnabled || cfg.fixEnabled)) return true
   const rows = db.select().from(schema.prAutomation).where(eq(schema.prAutomation.projectId, projectId)).all() as any[]
@@ -58,7 +66,7 @@ function getReview(db: any, schema: any, projectId: string, prNumber: number) {
     .get()
 }
 
-// 该 PR 最新的未废弃 fix（discard 是硬删，所以一般至多一条）
+// The PR's latest non-discarded fix (discard is a hard delete, so there is usually at most one)
 function getLatestFix(db: any, schema: any, projectId: string, prNumber: number) {
   const rows = db
     .select()
@@ -79,39 +87,43 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
     recordAutomationEvent(db, schema, project.id, p.number, kind, message, deps.now())
 
   if (!reviewOn && !fixOn) {
-    // 自动化对这条 PR 已关：清掉残留 pendingFix，免得它一直把项目 arm 住空转
+    // Automation is off for this PR: clear any leftover pendingFix so it doesn't keep the project
+    // armed and spinning
     if (row?.pendingFix) upsertPrAutomation(db, schema, project.id, p.number, { pendingFix: false }, now)
     return
   }
 
-  // 自动修复被单独关掉（auto-review 可能还开着）时，别再替用户 push 那次进行中的修复——
-  // 用户关了就是不想要它继续，改动留在 worktree（status=ready 仍可手动上传）。清掉 pendingFix。
+  // When auto-fix alone is turned off (auto-review may still be on), don't push that in-flight fix on
+  // the user's behalf — turning it off means they don't want it to continue, so the changes stay in
+  // the worktree (status=ready, still uploadable by hand). Clear pendingFix.
   let pendingFix = row?.pendingFix ?? false
   if (!fixOn && pendingFix) {
     upsertPrAutomation(db, schema, project.id, p.number, { pendingFix: false }, now)
     pendingFix = false
   }
 
-  // 冷却期：某条 PR 的 head 第一次被看到就开始计时，没过冷却期一律不动手——给用户时间进去关掉不想跑的。
-  // head 变了（新 PR / 别人 push / 我们自己修复 push）就重置计时。0 分钟=不冷却。
+  // Cooldown: the clock starts the first time a PR's head is seen, and nothing is done until it
+  // expires — this gives the user time to go in and turn off what they don't want to run.
+  // A head change (new PR / someone else pushed / our own fix pushed) resets the clock.
+  // 0 minutes = no cooldown.
   const cooldownMin = project.autoCooldownMinutes ?? 5
   if (cooldownMin > 0) {
     const head = p.headSha || null
     if ((row?.headSeenSha ?? null) !== head) {
       upsertPrAutomation(db, schema, project.id, p.number, { headSeenSha: head, headSeenAt: now }, now)
-      rec('cooldown', String(cooldownMin)) // 进时间线：开始冷却，用户可在此窗口进去关掉
+      rec('cooldown', String(cooldownMin)) // Into the timeline: cooldown started, the user can turn it off during this window
       return
     }
-    if (row?.headSeenAt && Date.parse(now) - Date.parse(row.headSeenAt) < cooldownMin * 60_000) return // 冷却中
+    if (row?.headSeenAt && Date.parse(now) - Date.parse(row.headSeenAt) < cooldownMin * 60_000) return // still cooling down
   }
 
   const review = getReview(db, schema, project.id, p.number)
-  if (review && REVIEW_INFLIGHT.includes(review.status)) return // 审核在跑，等
+  if (review && REVIEW_INFLIGHT.includes(review.status)) return // review running, wait
   const fix = getLatestFix(db, schema, project.id, p.number)
-  if (fix && deps.isChatting(fix.id)) return // 修复对话在跑，等
-  if (fix && fix.status === 'pushing') return // 上传中，等
+  if (fix && deps.isChatting(fix.id)) return // fix conversation running, wait
+  if (fix && fix.status === 'pushing') return // upload in progress, wait
 
-  // 一次扫描算出待处理条数 + finding 总数（别重复读库）
+  // One scan computes both the actionable count and the total finding count (don't hit the DB twice)
   const stats = review ? reviewFindingStats(db, schema, review.id) : { total: 0, actionable: 0, actionableFindings: [] }
   const actionableCount = stats.actionable
   const reviewFindingsCount = stats.total
@@ -138,7 +150,7 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
   const d = decideAutoAction(snap)
   if (d.patch) {
     upsertPrAutomation(db, schema, project.id, p.number, d.patch, now)
-    // 终止类原因进时间线（收敛 / 修不动 / 修复报错）
+    // Terminal reasons go into the timeline (converged / can't fix / fix errored)
     if (d.patch.note && ['converged', 'cant_fix', 'fix_error'].includes(d.patch.note)) rec(d.patch.note)
   }
   if (d.action.kind === 'cap') {
@@ -158,8 +170,11 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
         if (review) { await deps.dispatchRecheck(review.id); rec('recheck') }
         break
       case 'post': {
-        // 真发了→记 posted；无内容可发→静默跳过；发布失败→停掉该 PR 全部自动化（关两开关 + 清 pendingFix）+ 记 post_error。
-        // 否则评论没发出去、代码却会被下一轮自动修复并 push（ready_to_post 仍是可修复终态）——和「发评论出错即停」不一致。
+        // Actually posted → record posted; nothing to post → skip silently; posting failed → stop all
+        // automation for this PR (both switches off + clear pendingFix) and record post_error.
+        // Otherwise the comment never goes out while the code still gets auto-fixed and pushed on the
+        // next round (ready_to_post is still a fixable terminal state) — inconsistent with "stop as
+        // soon as posting a comment errors".
         if (review) {
           const r = await deps.dispatchPost(review.id)
           if (r.posted) {
@@ -178,12 +193,16 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
         if (fix) {
           try {
             await deps.dispatchPush(fix.id)
-            // push 成功 → 清 pendingFix（head 已变，下一轮 every_push 会触发复查）
+            // push succeeded → clear pendingFix (the head changed, so the next round's every_push
+            // triggers a recheck)
             upsertPrAutomation(db, schema, project.id, p.number, { pendingFix: false }, deps.now())
             rec('pushed')
           } catch (e) {
-            // push 失败（含 push.post.ts 的前置 4xx：worktree 没了/分支非法/没改动等，它在设 fix=error 前就 throw）。
-            // 必须清 pendingFix——否则 decide 第 1 步会每轮无条件重选 push、永久热循环且短路回合上限。停掉该 PR 自动化 + 记 push_error。
+            // push failed (including push.post.ts's up-front 4xx: worktree gone / invalid branch /
+            // no changes etc., which throw before it sets fix=error).
+            // pendingFix MUST be cleared — otherwise decide's step 1 unconditionally picks push again
+            // every round, a permanent hot loop that also short-circuits the round cap. Stop
+            // automation for this PR + record push_error.
             upsertPrAutomation(db, schema, project.id, p.number, { reviewOn: false, fixOn: false, pendingFix: false, note: 'push_error' }, deps.now())
             rec('push_error', (e as Error).message)
           }
@@ -191,7 +210,8 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
         break
     }
   } catch (e) {
-    // 派活失败不致命：对应端点已把任务状态落库（如 push 失败 → fix=error），下一轮 decide 会据此收尾。
+    // A failed dispatch is not fatal: the endpoint has already persisted the task status (e.g. push
+    // failure → fix=error), and the next round's decide wraps up accordingly.
     deps.log?.(`PR #${p.number} dispatch ${d.action.kind} failed: ${(e as Error).message}`)
   }
 }
@@ -199,7 +219,7 @@ async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, 
 export async function runAutomationTick(db: any, schema: any, deps: EngineDeps) {
   const projects = db.select().from(schema.projects).all() as any[]
   for (const project of projects) {
-    if (!project.localPath) continue // worktree 都建不了，跳过
+    if (!project.localPath) continue // can't even create a worktree, skip
     const cfg = getProjectAutomation(db, schema, project.id)
     if (!isProjectArmed(db, schema, project.id, cfg)) continue
 

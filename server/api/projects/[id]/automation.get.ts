@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { getProjectAutomation } from '~core/automation/state'
 
-// 读项目级自动化配置（自动化配置弹窗用）。没存过就返回「全关」默认。autoMaxRounds 来自 projects 表（项目配置里编辑）。
+// Read the project-level automation config (used by the automation dialog). Returns the "all off" default when nothing was ever saved. autoMaxRounds comes from the projects table (edited in the project config).
 export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id')!
   const d = db()

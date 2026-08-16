@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { CodexReviewError, parseCodexGuidedJson, parseCodexRecheckJson } from '../core/agent/codexReview'
 
-// ── guided：fid 用 null 表示「新发现」→ 解析后应缺省（zod optional 不接受 null）──
+// ── guided: fid null means "new finding" → should be absent after parsing (zod optional doesn't accept null) ──
 const guided = parseCodexGuidedJson(JSON.stringify({
   findings: [
     {
@@ -16,7 +16,7 @@ const guided = parseCodexGuidedJson(JSON.stringify({
       response: { status: 'kept', text: '维持原判' },
     },
     {
-      fid: null, // 新发现：无 fid
+      fid: null, // new finding: no fid
       severity: 'Low',
       title: 'new finding',
       location: 'core/b.ts:2',
@@ -37,16 +37,16 @@ const guided = parseCodexGuidedJson(JSON.stringify({
 
 assert.equal(guided.findings.length, 2)
 assert.equal(guided.findings[0]?.fid, 'F1')
-assert.equal(guided.findings[1]?.fid, undefined) // null → 缺省
+assert.equal(guided.findings[1]?.fid, undefined) // null → absent
 assert.equal(guided.findings[1]?.response?.status, 'new')
 
-// 代码围栏也能剥
+// Code fences get stripped too
 const fenced = parseCodexGuidedJson('```json\n' + JSON.stringify({
   findings: [], logic: '', quality: '', risk: '', conclusion: '', requirement: '', testPath: '',
 }) + '\n```')
 assert.equal(fenced.findings.length, 0)
 
-// ── recheck：全字段必填，结构对齐 RecheckSchema ──
+// ── recheck: all fields required, structure matches RecheckSchema ──
 const recheck = parseCodexRecheckJson(JSON.stringify({
   rechecks: [{ fid: 'F1', status: 'fixed', text: '已在 abc123 修复' }],
   newFindings: [{ severity: 'Medium', title: 'regression', location: 'core/c.ts:3', problem: 'p', detail: 'd', fix: 'f', text: '在 def456 引入' }],
@@ -55,7 +55,7 @@ const recheck = parseCodexRecheckJson(JSON.stringify({
 assert.equal(recheck.rechecks[0]?.status, 'fixed')
 assert.equal(recheck.newFindings[0]?.severity, 'Medium')
 
-// 坏 JSON → CodexReviewError
+// Bad JSON → CodexReviewError
 assert.throws(
   () => parseCodexRecheckJson('not-json'),
   (error) => error instanceof CodexReviewError && /invalid JSON/i.test(error.message),

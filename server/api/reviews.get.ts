@@ -1,7 +1,7 @@
 import { desc, eq, sql } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 
-// 列某项目下所有 review + 每条的 H/M/L 计数
+// List every review of a project + each one's H/M/L counts
 export default defineEventHandler(async (event) => {
   const projectId = getQuery(event).projectId as string | undefined
   if (!projectId) throw createError({ statusCode: 400, statusMessage: '缺少 projectId' })
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
     .orderBy(desc(schema.reviews.createdAt))
     .all()
 
-  // 一次性把所有 finding 的严重度计数取出来
+  // Fetch the severity counts for all findings in one go
   const counts = d
     .select({
       reviewId: schema.findings.reviewId,

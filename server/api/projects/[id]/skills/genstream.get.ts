@@ -1,6 +1,6 @@
 import { cockpitBus } from '~core/events'
 
-// SSE：skill 生成进度（agent 在读哪个文件 / grep 什么 / 完成）。key = skillgen:<projectId>
+// SSE: skill generation progress (which file the agent is reading / what it greps / done). key = skillgen:<projectId>
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   setResponseHeaders(event, {

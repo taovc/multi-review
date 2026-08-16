@@ -3,8 +3,8 @@ import { runCodexReadonly } from './codexAgent'
 import { normalizeCodexReviewError } from './codexReview'
 import { SKILL_SYSTEM, buildSkillPrompt, cleanSkillContent, type SkillGenOptions } from './skillgen'
 
-// Codex 版 Skill 生成：read-only 读本地项目产出方法学 markdown。
-// Codex 没有 systemPrompt 字段 → 把操作契约 + SYSTEM 折进 prompt 开头。
+// Codex version of skill generation: read-only pass over the local project, producing methodology markdown.
+// Codex has no systemPrompt field → fold the operating contract + SYSTEM into the start of the prompt.
 export async function generateSkillCodex(opts: SkillGenOptions): Promise<{ content: string; costUsd: number }> {
   try {
     const prompt = `${withContract(SKILL_SYSTEM)}\n\n---\n\n${buildSkillPrompt(opts)}`

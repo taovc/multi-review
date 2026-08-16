@@ -5,7 +5,7 @@ import { PROVIDER_CAPABILITY_STAGES } from '~core/agent/providerCapabilities'
 
 export default defineEventHandler(async (event) => {
   const force = getQuery(event).force === '1'
-  // codex 状态 + codex 真实可用模型（从 `codex debug models` 读，不硬编码）
+  // codex status + the models codex actually has available (read from `codex debug models`, not hardcoded)
   const [codex, codexModels] = await Promise.all([getCodexSdkStatus(force), getCodexModels(force)])
   try {
     return {
@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
       codexModels,
     }
   } catch (e) {
-    // 拿不到就给个保底（别名总能用）
+    // Fall back to a baseline if we can't get them (the aliases always work)
     return {
       models: [
         { value: 'sonnet', displayName: 'Sonnet', description: '', supportsEffort: true, effortLevels: ['low', 'medium', 'high', 'max'] },

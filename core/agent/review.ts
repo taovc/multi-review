@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { withContract, reviewCanUseTool, ISOLATED } from './guard'
 import { salvageJson } from './jsonSalvage'
 import { outputLangClause } from './lang'
+import { REVIEW_SECTIONS } from './reviewSections'
 
 export const FindingSchema = z.object({
   severity: z.enum(['High', 'Medium', 'Low']),
@@ -24,41 +25,41 @@ export const ReviewResultSchema = z.object({
 })
 export type ReviewResult = z.infer<typeof ReviewResultSchema>
 
-// 输出语言跟 UI locale 走（#16「工作语言」），不再硬编码中文
-const outputSpec = (lang: string) => `审完后，最后**只输出一个 JSON 对象**（不要 markdown 代码围栏、不要任何额外文字），结构：
+// Output language follows the UI locale (#16 "working language"); no longer hardcoded to Chinese
+const outputSpec = (lang: string) => `When you are done, output **only a single JSON object** (no markdown code fences, no extra text), shaped like this:
 {
   "findings": [
-    { "severity": "High|Medium|Low", "title": "一句话标题", "location": "path:line",
-      "problem": "为什么是问题", "detail": "详情(可含要点)", "fix": "修复方向",
+    { "severity": "High|Medium|Low", "title": "one-line title", "location": "path:line",
+      "problem": "why this is a problem", "detail": "details (may include bullet points)", "fix": "the direction of the fix",
       "introducedByPr": true }
   ],
-  "logic": "需求/逻辑核对",
-  "quality": "代码质量/复用",
-  "risk": "风险",
-  "conclusion": "能不能合 + blocking 是什么",
-  "requirement": "这条 PR 在做什么业务诉求(用业务语言)",
-  "testPath": "用户视角的最短手动测试路径 + 回归点"
+  "logic": "requirement / logic check",
+  "quality": "code quality / reuse",
+  "risk": "risk",
+  "conclusion": "mergeable or not + what is blocking",
+  "requirement": "what business need this PR serves (in business language)",
+  "testPath": "shortest manual test path from the user's point of view + regression points"
 }
-findings 按严重度 High→Medium→Low 排序。${outputLangClause(lang)}
-requirement / testPath 用**真实换行**分行（JSON 字符串里用 \\n），每个步骤/要点单独一行，分节（正向 / 负向·边界 / 回归点）各自起新行，不要挤成一大段流水。
+Sort findings by severity, High→Medium→Low. ${outputLangClause(lang)}
+Break requirement / testPath onto **real newlines** (\\n inside the JSON string), one step/point per line, each section (${REVIEW_SECTIONS.join(', ')}) starting on its own line — do not cram everything into one run-on block.
 
-⚠️ 输出**严格合法 JSON**：字符串值内**绝不要出现未转义的英文双引号 \`"\`**（这会截断 JSON）。需要引用代码/文案时，一律用「」或反引号 \`，不要用英文双引号。代码片段也放进反引号里。`
+⚠️ Output **strictly valid JSON**: **never emit an unescaped ASCII double quote \`"\` inside a string value** (it truncates the JSON). When you need to quote code or wording, always use 「」 or backticks \`, never ASCII double quotes. Put code snippets inside backticks too.`
 
 export function buildReviewPrompt(opts: { repo: string; prNumber: number; branch: string; defaultBranch: string; lang: string }) {
   const { repo, prNumber, branch, defaultBranch } = opts
-  return `你在一个 git worktree 里（当前目录就是仓库，已 checkout PR #${prNumber} 的分支 ${branch} 并合并了 ${defaultBranch}）。
+  return `You are inside a git worktree (the current directory is the repo, with PR #${prNumber}'s branch ${branch} checked out and ${defaultBranch} merged in).
 
-审核仓库 ${repo} 的 PR #${prNumber}。
+Review PR #${prNumber} of repo ${repo}.
 
-步骤：
-1. 看变更：\`git diff origin/${defaultBranch}...HEAD\`、\`git log origin/${defaultBranch}..HEAD --oneline\`
-2. 需要时读相关文件、grep 调用点（被改的导出名要在全仓 grep 找谁在用）
-3. 读 PR 描述与历史评论辅助理解：\`gh pr view ${prNumber} --repo ${repo} --json title,body,comments,reviews\`
-4. 按方法学（见 system prompt）审核
+Steps:
+1. Look at the changes: \`git diff origin/${defaultBranch}...HEAD\`, \`git log origin/${defaultBranch}..HEAD --oneline\`
+2. Read the relevant files as needed and grep for call sites (for any changed exported name, grep the whole repo for who uses it)
+3. Read the PR description and past comments for context: \`gh pr view ${prNumber} --repo ${repo} --json title,body,comments,reviews\`
+4. Review according to the methodology (see system prompt)
 
-纪律（强制）：
-- 只读操作：git diff/log/show、grep、读文件、gh pr view。
-- ❌ 绝对禁止 git add/commit/push/checkout 新分支/reset，禁止任何写操作。
+Discipline (mandatory):
+- Read-only operations: git diff/log/show, grep, reading files, gh pr view.
+- ❌ Absolutely forbidden: git add / git commit / git push / git checkout of a new branch / git reset — any write operation whatsoever is forbidden.
 
 ${outputSpec(opts.lang)}`
 }
@@ -77,7 +78,7 @@ export type ReviewAgentOptions = {
   onTool?: (name: string, info: string) => void
 }
 
-// 跑一次审核：Agent SDK 带 git 工具在 worktree 里干活，返回结构化结果。
+// Run one review: the Agent SDK works inside the worktree with git tools and returns a structured result.
 export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string }> {
   const stream = query({
     prompt: buildReviewPrompt({ ...opts, lang: opts.lang || 'zh' }),
@@ -120,9 +121,9 @@ export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result
   return { result: parsed, costUsd, raw: text }
 }
 
-// ── 带反馈的针对性复审（guided）──
+// ── Targeted re-review driven by reviewer feedback (guided) ──
 export const GuidedFindingSchema = z.object({
-  fid: z.string().optional(), // 命中已有 finding 则带上；新发现不带
+  fid: z.string().optional(), // set when it maps to an existing finding; omitted for newly found ones
   severity: z.enum(['High', 'Medium', 'Low']),
   title: z.string(),
   location: z.string().default(''),
@@ -168,37 +169,37 @@ export type GuidedReviewAgentOptions = {
 }
 
 export function buildGuidedReviewPrompt(opts: GuidedReviewAgentOptions): string {
-  return `你在一个 git worktree 里（已 checkout PR #${opts.prNumber} 分支 ${opts.branch} 并合并 ${opts.defaultBranch}）。这是一次**带审核员反馈的针对性复审**，不是从零重审。
+  return `You are inside a git worktree (PR #${opts.prNumber}'s branch ${opts.branch} is checked out with ${opts.defaultBranch} merged in). This is a **targeted re-review driven by reviewer feedback**, not a review from scratch.
 
-审核员对上一轮的反馈：
-- 审核指令（重点看这里，针对性审我提到的内容）：${opts.instruction || '（无）'}
-- 整体说明：${opts.globalNotes || '（无）'}
+The reviewer's feedback on the previous round:
+- Review instruction (focus here — review specifically what I mention): ${opts.instruction || '(none)'}
+- General notes: ${opts.globalNotes || '(none)'}
 
-上一轮的 findings（reviewerNote 是审核员对该条的回复/质疑/补充）：
+Findings from the previous round (reviewerNote is the reviewer's reply/challenge/addition for that item):
 ${JSON.stringify(opts.existing, null, 2)}
 
-步骤：
-1. 看变更：git diff origin/${opts.defaultBranch}...HEAD；需要时读文件 / grep
-2. 针对审核员指令做重点核查
-3. 对每条已有 finding，结合 reviewerNote 给回应：
-   - kept：维持原判（说明理由）
-   - retracted：撤回（审核员说得对 / 我之前判断有误，说明为什么撤）
-   - adjusted：调整（改严重度或措辞，说明怎么改）
-   - discuss：你也不确定，想和审核员讨论（提出具体问题）
-   每条已有 finding 必须带上原 fid 和 response。
-4. 若审核员指令引出**新问题**，新增 finding（不带 fid，response.status="new"）。
+Steps:
+1. Look at the changes: git diff origin/${opts.defaultBranch}...HEAD; read files / grep as needed
+2. Focus your checks on the reviewer's instruction
+3. For every existing finding, respond in light of its reviewerNote:
+   - kept: stand by the original call (explain why)
+   - retracted: withdraw it (the reviewer is right / I judged wrong before — explain why you withdraw)
+   - adjusted: adjust it (change severity or wording — explain how)
+   - discuss: you are unsure too and want to discuss with the reviewer (ask a concrete question)
+   Every existing finding must carry its original fid and a response.
+4. If the reviewer's instruction surfaces a **new problem**, add a new finding (no fid, response.status="new").
 
-纪律：只读（git diff/log/show、grep、读文件、gh pr view）。❌ 禁止任何 git 写操作。
+Discipline: read-only (git diff/log/show, grep, reading files, gh pr view). ❌ Any git write operation is forbidden.
 
-最后**只输出 JSON**（无代码围栏）：
-{ "findings": [ { "fid": "F1"(已有则带), "severity": "...", "title": "...", "location": "path:line",
+At the end, output **JSON only** (no code fences):
+{ "findings": [ { "fid": "F1" (include it when the finding already exists), "severity": "...", "title": "...", "location": "path:line",
    "problem": "...", "detail": "...", "fix": "...", "introducedByPr": true,
-   "response": { "status": "kept|retracted|adjusted|discuss|new", "text": "<你对审核员的回应>" } } ],
-  "logic": "...", "quality": "...", "risk": "...", "conclusion": "本轮复审整体结论",
+   "response": { "status": "kept|retracted|adjusted|discuss|new", "text": "<your response to the reviewer>" } } ],
+  "logic": "...", "quality": "...", "risk": "...", "conclusion": "overall conclusion of this re-review round",
   "requirement": "...", "testPath": "..." }
 
 ${outputLangClause(opts.lang || 'zh')}
-⚠️ 严格合法 JSON：字符串里**绝不要未转义的英文双引号 \`"\`**，引用一律用「」或反引号 \`。`
+⚠️ Strictly valid JSON: **never leave an unescaped ASCII double quote \`"\`** inside a string; always quote with 「」 or backticks \`.`
 }
 
 export async function runGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number }> {

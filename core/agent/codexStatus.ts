@@ -27,7 +27,7 @@ export async function getCodexSdkStatus(force = false): Promise<CodexSdkStatus> 
 
 async function resolveCodexSdkStatus(): Promise<CodexSdkStatus> {
   const sdkVersion = await resolveCodexSdkVersion()
-  // installed = 平台 CLI 二进制能解析到（用与运行时一致的解析逻辑，nitro 打包后也准）。
+  // installed = the platform CLI binary resolves (same resolution logic as at runtime, so it stays accurate after the nitro bundle).
   const executablePath = resolveCodexExecutable()
 
   if (!executablePath) {

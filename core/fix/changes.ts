@@ -7,10 +7,10 @@ const MAX_DIFF = 400_000
 const git = (wt: string, args: string[]) =>
   pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024 })
 
-// 「修复改动」(last changes) 口径：只反映这次修复自己改了什么——
-// 不是整个 PR（那是主卡片的 PR vs base），也不含 merge-base 把 base 分支并进来的改动。
-//   - 工作区有未提交改动 → 当前工作区 diff（含未跟踪的新文件）
-//   - 否则 → 沿 first-parent 找最近一条「非 merge」提交（跳过 merge-base 产生的合并提交），看它的 diff
+// Definition of "fix changes" (last changes): only what this fix itself changed —
+// not the whole PR (that's the main card's PR vs base), and not the changes a merge-base pulled in from the base branch.
+//   - working tree has uncommitted changes → the current working-tree diff (including untracked new files)
+//   - otherwise → walk first-parent to the most recent non-merge commit (skipping merge commits created by merge-base) and take its diff
 type Range = { kind: 'worktree' } | { kind: 'commit'; sha: string } | { kind: 'none' }
 
 async function resolveRange(wt: string): Promise<Range> {
@@ -28,14 +28,14 @@ function sumNumstat(out: string) {
   for (const line of out.trim().split('\n').filter(Boolean)) {
     const [a, d] = line.split('\t')
     filesChanged++
-    additions += Number(a) || 0 // 二进制文件是 '-'，计 0
+    additions += Number(a) || 0 // binary files report '-', count as 0
     deletions += Number(d) || 0
   }
   return { filesChanged, additions, deletions }
 }
 
-// 未跟踪的新文件 `git diff HEAD` 看不到，逐个用 --no-index 兜出来（只读，不动索引）。
-// --no-index 有差异时退出码为 1，stdout 仍是内容 → 从 catch 里取。
+// `git diff HEAD` doesn't see untracked new files, so pick them up one by one with --no-index (read-only, doesn't touch the index).
+// --no-index exits with code 1 when there is a difference, but stdout still holds the content → read it from the catch.
 async function untracked(wt: string): Promise<{ diff: string; numstat: string }> {
   const { stdout } = await git(wt, ['ls-files', '--others', '--exclude-standard']).catch(() => ({ stdout: '' }))
   const files = stdout.split('\n').map((s) => s.trim()).filter(Boolean)
@@ -50,9 +50,9 @@ async function untracked(wt: string): Promise<{ diff: string; numstat: string }>
   return { diff, numstat }
 }
 
-// 「有东西可上传」检测：工作树脏（未提交改动，含未跟踪文件） 或 本地 HEAD 领先 origin/<branch>
-// （已提交未推，含 Claude 自己 commit/merge 出来的提交）。后者不能只看 DB 里的 fixHeadSha——
-// 对话不再更新它，而 Claude 有全套 git、会自己动提交，DB 值会过期。
+// "Something to upload" check: dirty working tree (uncommitted changes, including untracked files), or local HEAD ahead of origin/<branch>
+// (committed but not pushed, including commits Claude made or merged itself). The latter can't rely on fixHeadSha in the DB —
+// the chat no longer updates it, and Claude has full git access and commits on its own, so the DB value goes stale.
 export async function hasUploadable(wt: string, branch: string | null): Promise<{ dirty: boolean; ahead: boolean }> {
   const { stdout: porcelain } = await git(wt, ['status', '--porcelain']).catch(() => ({ stdout: '' }))
   const dirty = !!porcelain.trim()
@@ -64,7 +64,7 @@ export async function hasUploadable(wt: string, branch: string | null): Promise<
   return { dirty, ahead }
 }
 
-// 文件数 + 增删行（状态行/确认框用，不需要完整 diff 文本）
+// File count + added/removed lines (for the status line / confirmation dialog, no full diff text needed)
 export async function fixChangesStat(wt: string): Promise<{ filesChanged: number; additions: number; deletions: number }> {
   const r = await resolveRange(wt)
   if (r.kind === 'none') return { filesChanged: 0, additions: 0, deletions: 0 }
@@ -77,7 +77,7 @@ export async function fixChangesStat(wt: string): Promise<{ filesChanged: number
   return sumNumstat(stdout)
 }
 
-// 完整 diff 文本（「改动」tab 用）
+// Full diff text (for the "changes" tab)
 export async function fixChangesDiff(wt: string): Promise<{ diff: string; truncated: boolean }> {
   const r = await resolveRange(wt)
   if (r.kind === 'none') return { diff: '', truncated: false }

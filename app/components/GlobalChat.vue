@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 全局「啥都能干」助手:右下角悬浮按钮 + 抽屉。bypassPermissions 原生 claude 体验。
-// 命令面板(/clear /resume /copy /cd)是自建的(headless 没有原生 slash REPL)。
+// Global do-anything assistant: floating button bottom-right + slideover. Native claude experience via bypassPermissions.
+// The command palette (/clear /resume /copy /cd) is homegrown (headless has no native slash REPL).
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 
 const { t, locale } = useI18n()
@@ -17,10 +17,11 @@ const data = ref<Detail | null>(null)
 const view = ref<'chat' | 'history'>('chat')
 const input = ref('')
 const liveAssistant = ref('')
-const logLines = ref<string[]>([]) // 工具/阶段日志（实时；面板状态在 ChatLogPanel 内部）
+const logLines = ref<string[]>([]) // tool/stage log (live; panel state lives inside ChatLogPanel)
 const busy = ref(false)
-// 「允许危险命令」+「ultracode 后台激活」：一次开启后永久记住（localStorage，跨会话/刷新），
-// 不再每条消息重点。ultracode 不再往输入框塞前缀，改由后端在发给 agent 时注入（你永远看不到前缀）。
+// "allow dangerous commands" + "ultracode background activation": once turned on it is remembered forever
+// (localStorage, across sessions/reloads), no need to re-click per message. ultracode no longer stuffs a prefix
+// into the input box; the backend injects it when sending to the agent (you never see the prefix).
 const allowDanger = ref(false)
 const ultracodeOn = ref(false)
 const LS_DANGER = 'mr.global.allowDanger'
@@ -34,11 +35,11 @@ function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
 }
-const { confirming } = useInlineConfirm() // '' | 'delete'（抽屉内联确认，不用弹窗）
+const { confirming } = useInlineConfirm() // '' | 'delete' (inline confirm inside the slideover, no modal)
 const renaming = ref(false)
 const renameVal = ref('')
 let es: EventSource | null = null
-// load 竞态护栏（同 FeatureDrawer）：切会话 / 新对话时，上一个会话在途的 load 迟到返回不能盖回 data。
+// load race guard (same as FeatureDrawer): when switching sessions / starting a new chat, a late in-flight load from the previous session must not overwrite data.
 let loadToken = 0
 
 const currentProjectId = computed(() => {
@@ -56,7 +57,7 @@ function notify(msg: string, ok = false) {
   toast.add({ title: msg, color: ok ? 'success' : 'error', icon: ok ? 'i-lucide-check' : 'i-lucide-triangle-alert' })
 }
 
-// ── session 生命周期 ──
+// ── session lifecycle ──
 async function ensureSession(): Promise<string> {
   if (sessionId.value) return sessionId.value
   const s = await $fetch<Session>('/api/global/sessions', { method: 'POST', body: { projectId: currentProjectId.value } })
@@ -70,10 +71,10 @@ async function load() {
   if (!sid) return
   const my = ++loadToken
   const detail = await $fetch<Detail>(`/api/global/sessions/${sid}`)
-  if (my !== loadToken || sid !== sessionId.value) return // 过期结果（切了会话 / 有更新的 load）→ 丢弃
+  if (my !== loadToken || sid !== sessionId.value) return // stale result (session switched / a newer load exists) → discard
   data.value = detail
 }
-// 新对话 = 清空到空白；不立刻建 session（懒创建：第一条消息才落库，避免一打开就冒「未命名对话」）。
+// New chat = reset to blank; don't create a session right away (lazy: only the first message persists it, so opening doesn't spawn an "untitled chat").
 function newSession() {
   closeSSE()
   sessionId.value = null
@@ -88,7 +89,7 @@ async function deleteSession() {
   await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'DELETE' }).catch(() => {})
   newSession()
 }
-// 重命名（点标题就地编辑 + PATCH）
+// Rename (click the title to edit in place + PATCH)
 async function saveRename() {
   const title = renameVal.value.trim()
   renaming.value = false
@@ -101,14 +102,14 @@ async function saveRename() {
 function openSSE() {
   if (!sessionId.value || !import.meta.client) return
   es?.close()
-  const sid = sessionId.value // 绑定这条流所属会话：切会话后残留消息不再写入
+  const sid = sessionId.value // bind this stream to its session: leftover messages no longer land after a session switch
   es = new EventSource(`/api/global/sessions/${sid}/stream`)
   es.onmessage = (ev) => {
-    if (sid !== sessionId.value) return // 过期流 → 忽略
+    if (sid !== sessionId.value) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
-      // 工具/阶段事件 → 收进日志面板（同 fix）
+      // tool/stage events → collect into the log panel (same as fix)
       if (e.message && e.kind !== 'chat') { logLines.value.push(`${hhmmss(e.ts)}  ${e.message}`); if (logLines.value.length > 300) logLines.value.shift() }
       if (['done', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
     } catch { /* ignore */ }
@@ -117,13 +118,13 @@ function openSSE() {
 function closeSSE() { es?.close(); es = null }
 
 watch(open, (on) => {
-  // 懒创建：打开抽屉不建 session；有历史 session 才加载。新对话由第一条消息触发创建。
+  // Lazy creation: opening the slideover doesn't create a session; only load when one already exists. A new chat is created by the first message.
   if (on) { confirming.value = ''; logLines.value = []; if (sessionId.value) { load(); openSSE() } }
   else closeSSE()
 })
 onBeforeUnmount(() => { closeSSE(); if (timer) clearInterval(timer) })
 
-// 自动滚到底 + 进行中计时
+// auto-scroll to bottom + elapsed timer while a turn is running
 const { scrollEl, scrollToBottom } = useScrollToBottom()
 watch([() => data.value?.turns.length, liveAssistant, open], () => { if (open.value) scrollToBottom() })
 const elapsed = ref(0)
@@ -131,10 +132,10 @@ let timer: ReturnType<typeof setInterval> | null = null
 watch(chatting, (on) => {
   if (timer) { clearInterval(timer); timer = null }
   if (on) { elapsed.value = 0; timer = setInterval(() => { elapsed.value++ }, 1000) }
-  else load() // 轮结束兜底刷新
+  else load() // backstop refresh when the turn ends
 })
 
-// 决策卡（同 feature/fix）：最后一条 assistant 轮含 ```ask-user 块 → 问题+选项；点选项=下一条消息（自由回答用输入框）。
+// Decision card (same as feature/fix): the last assistant turn contains an ```ask-user block → question + options; clicking an option sends it as the next message (free-form answers use the input box).
 const ASK_RE = /```ask-user\s*\n([\s\S]*?)```/i
 const IS_OPT = /^(?:[-*]|\d+[.)])\s+/
 const askCard = computed(() => {
@@ -156,11 +157,11 @@ function displayText(content: string, stripAsk: boolean): string {
 }
 function answer(opt: string) {
   if (chatting.value || busy.value) return
-  input.value = stripRecommendedMarker(opt) // 推荐标记只用于展示（定义在 ~core/agent/decisionCard）
-  send(true) // 绕开 slash 拦截
+  input.value = stripRecommendedMarker(opt) // the recommended marker is display-only (defined in ~core/agent/decisionCard)
+  send(true) // bypass the slash interception
 }
 
-// ── 命令面板(自建)──
+// ── command palette (homegrown) ──
 const COMMANDS = [
   { cmd: '/clear', desc: () => t('global.cmd.clear') },
   { cmd: '/resume', desc: () => t('global.cmd.resume') },
@@ -180,7 +181,7 @@ function lastAssistantText(): string {
   return ''
 }
 
-// 返回 true = 已作为命令处理(不再当普通消息发)
+// returns true = handled as a command (not sent as a normal message)
 async function handleSlash(raw: string): Promise<boolean> {
   const [cmd, ...rest] = raw.trim().split(/\s+/)
   const arg = rest.join(' ')
@@ -194,7 +195,7 @@ async function handleSlash(raw: string): Promise<boolean> {
       return true
     }
     case '/cd': {
-      if (!arg) return false // 「/cd <路径>」需要参数,没给就当普通输入
+      if (!arg) return false // "/cd <path>" needs an argument; without one, treat it as ordinary input
       input.value = ''
       pendingCwd.value = arg
       notify(t('global.cdSet', { path: arg }), true)
@@ -209,7 +210,7 @@ const pendingCwd = ref<string | null>(null)
 async function send(skipSlash = false) {
   const msg = input.value.trim()
   if (!msg || chatting.value || busy.value) return
-  // 命令优先（决策卡回答走 skipSlash：选项文本万一以 /clear 之类开头别被当命令吞掉）
+  // commands take priority (decision-card answers pass skipSlash so option text starting with something like /clear isn't swallowed as a command)
   if (!skipSlash && msg.startsWith('/') && await handleSlash(msg)) return
   input.value = ''
   liveAssistant.value = ''
@@ -229,7 +230,7 @@ async function stop() {
   catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
 }
 
-// ── 历史 ──
+// ── history ──
 type HistResp = { sessions: Session[]; total: number; page: number; pageSize: number; hasNext: boolean }
 const hist = ref<HistResp | null>(null)
 const histPage = ref(0)
@@ -238,7 +239,7 @@ async function loadHistory() {
 }
 async function openHistorySession(id: string) {
   closeSSE()
-  // 先清上一个会话的残留（对话/流式文字/日志），否则 load 返回前会闪出旧会话内容
+  // clear the previous session's leftovers (turns/streaming text/log) first, otherwise the old content flashes before load returns
   data.value = null; liveAssistant.value = ''; logLines.value = []
   sessionId.value = id
   view.value = 'chat'
@@ -253,7 +254,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
 </script>
 
 <template>
-  <!-- 右下角悬浮按钮:黑圆 + 白 icon(对话气泡+闪光) -->
+  <!-- Floating button bottom-right: black circle + white icon (chat bubble + sparkle) -->
   <button
     class="fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-neutral-900 text-white shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
     :title="$t('global.fabTitle')"
@@ -269,11 +270,11 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
   <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
     <template #body>
       <div class="flex flex-col h-full min-h-0">
-        <!-- 顶部:session 控件 + 可编辑标题 + cwd -->
+        <!-- Header: session controls + editable title + cwd -->
         <div class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default text-xs">
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" @click="newSession">{{ $t('global.newSession') }}</button>
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" :class="view === 'history' ? 'bg-muted text-highlighted' : ''" @click="view = 'history'; loadHistory()">{{ $t('global.history') }}</button>
-          <!-- 可编辑标题（点一下改名）-->
+          <!-- Editable title (click to rename) -->
           <input
             v-if="renaming" v-model="renameVal" class="flex-1 min-w-0 text-xs border-b border-inverted outline-none bg-transparent py-0.5"
             :placeholder="$t('global.untitled')" @keydown.enter="saveRename" @blur="saveRename"
@@ -282,7 +283,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
             v-else-if="sessionId" class="flex-1 min-w-0 truncate text-left text-dimmed hover:text-highlighted"
             :title="$t('global.rename')" @click="renameVal = data?.session.title || ''; renaming = true"
           >{{ data?.session.title || $t('global.untitled') }}</button>
-          <!-- 删除：抽屉内联确认（不用弹窗）-->
+          <!-- Delete: inline confirm inside the slideover (no modal) -->
           <template v-if="confirming === 'delete'">
             <span class="text-dimmed">{{ $t('global.confirmDelete') }}</span>
             <button class="text-error font-medium hover:underline" @click="deleteSession">{{ $t('common.delete') }}</button>
@@ -296,10 +297,10 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
           <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
         </label>
 
-        <!-- 运行日志（工具调用 / 阶段，可展开；同 fix）-->
+        <!-- Run log (tool calls / stages, expandable; same as fix) -->
         <ChatLogPanel v-if="view === 'chat'" :lines="logLines" />
 
-        <!-- 历史列表 -->
+        <!-- History list -->
         <div v-if="view === 'history'" class="flex-1 min-h-0 overflow-y-auto">
           <div v-if="!hist?.sessions.length" class="text-xs text-dimmed py-8 text-center">{{ $t('global.historyEmpty') }}</div>
           <button
@@ -317,21 +318,21 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
           </div>
         </div>
 
-        <!-- 对话 -->
+        <!-- Chat -->
         <template v-else>
           <div ref="scrollEl" class="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
             <div v-if="!data?.turns.length" class="text-xs text-dimmed py-10 text-center">{{ $t('global.empty') }}</div>
             <div v-for="(turn, ti) in data?.turns ?? []" :key="turn.id" :class="turn.role === 'user' ? 'text-right' : ''">
-              <!-- user：纯文本气泡 -->
+              <!-- user: plain-text bubble -->
               <div v-if="turn.role === 'user'" class="inline-block max-w-[90%] text-left text-sm rounded-lg px-3 py-2 whitespace-pre-wrap break-words bg-inverted text-inverted">{{ turn.content }}</div>
-              <!-- assistant：markdown 渲染 -->
+              <!-- assistant: rendered markdown -->
               <div v-else class="inline-block max-w-[90%] text-left text-sm rounded-lg px-3 py-2 break-words bg-muted">
                 <MarkdownBody :text="turn.status === 'streaming' && ti === (data?.turns.length ?? 0) - 1 && liveAssistant ? liveAssistant : displayText(turn.content, !!askCard && ti === (data?.turns.length ?? 0) - 1)" />
                 <span v-if="turn.status === 'streaming'" class="animate-pulse">▍</span>
                 <span v-if="turn.status === 'stopped'" class="text-[10px] text-dimmed ml-1">· {{ $t('fix.stoppedTag') }}</span>
               </div>
             </div>
-            <!-- 决策卡（agent 在等你拍板；同 feature/fix）。自由回答用下方输入框。 -->
+            <!-- Decision card (the agent is waiting on you; same as feature/fix). Free-form answers use the input box below. -->
             <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2 text-left">
               <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
               <p v-if="askCard.question" class="text-sm font-medium whitespace-pre-wrap">{{ askCard.question }}</p>
@@ -345,7 +346,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
             <p v-if="data?.session.status === 'error' && data.session.error" class="text-xs text-error">{{ data.session.error }}</p>
           </div>
 
-          <!-- composer + 命令面板 -->
+          <!-- composer + command palette -->
           <div class="shrink-0 relative pt-2 mt-2 border-t border-default">
             <div v-if="slashMatches.length" class="absolute bottom-full left-0 mb-1 w-full bg-default border border-default rounded shadow-lg overflow-hidden">
               <div v-for="c in slashMatches" :key="c.cmd" class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs hover:bg-muted cursor-pointer" @click="input = c.cmd + ' '">
@@ -359,7 +360,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
               class="w-full text-sm border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-inverted"
             />
             <div class="flex items-center justify-between gap-2 mt-1.5">
-              <!-- ultracode 后台激活开关：未激活=灰渐变(无扫光)，激活=紫渐变+扫光。点一次永久记住，不再每条都点。 -->
+              <!-- ultracode background-activation toggle: off = grey gradient (no shine), on = purple gradient + shine. One click is remembered forever, no need to click per message. -->
               <button
                 type="button"
                 class="ultra-btn relative overflow-hidden shrink-0 text-xs rounded px-2.5 py-1.5 font-medium text-white shadow-sm transition"
@@ -386,7 +387,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
 </template>
 
 <style scoped>
-/* ultracode 按钮：激活态才有一束高光从左到右扫过（扫完停一下再来）；未激活是灰的、不扫光。*/
+/* ultracode button: only the active state gets a highlight sweeping left to right (with a pause between sweeps); inactive is grey and doesn't sweep. */
 .ultra-btn.is-active::after {
   content: '';
   position: absolute;

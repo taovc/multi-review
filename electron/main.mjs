@@ -8,26 +8,27 @@ import { checkForUpdates, setUpdaterLocale } from './updater.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-let didAutoCheckUpdates = false // 启动只自动查一次更新(重开窗口不重复弹)
+let didAutoCheckUpdates = false // auto-check for updates only once per launch (reopening the window doesn't pop it again)
 
-// dev 模式由启动脚本注入(指向 nuxt dev server)。打包态忽略该 env：
-// 否则任何能设置启动环境的人都能把「可信」app 悄悄重定向到任意 URL 并自动开 DevTools。
+// Injected by the launch script in dev mode (points at the nuxt dev server). Ignored when packaged:
+// otherwise anyone who can set the launch environment could silently redirect the "trusted" app to any URL and auto-open DevTools.
 const DEV_URL = app.isPackaged ? '' : process.env.ELECTRON_RENDERER_URL || ''
-// Nitro 绑 0.0.0.0（所有网卡），让局域网设备「有可能」连上；到底放不放行由
-// server/middleware/00.lan-guard.ts 按请求鉴权（默认关闭、远端 403）。桌面窗口
-// 始终走回环地址，与远程访问开关无关。
+// Nitro binds 0.0.0.0 (all interfaces) so LAN devices *can* reach it; whether a request is
+// actually let through is decided per request by server/middleware/00.lan-guard.ts (off by
+// default, remote gets 403). The desktop window always uses the loopback address, independent
+// of the remote-access switch.
 const BIND_HOST = '0.0.0.0'
 const LOOPBACK = '127.0.0.1'
 
 let mainWindow = null
 let serverProc = null
-let serverUrl = '' // 已起的 Nitro 地址(打包态)；重开窗口时复用
-let lastStderr = '' // Nitro 最近的 stderr，启动失败时显示给用户
-let startPromise = null // 进行中的 startNitro()，冷启动期间重入时复用,避免双开 Nitro
-let openingPromise = null // 进行中的 openMainWindow()，避免并发重入双开窗口
+let serverUrl = '' // address of the running Nitro (packaged mode); reused when reopening the window
+let lastStderr = '' // Nitro's latest stderr, shown to the user when startup fails
+let startPromise = null // in-flight startNitro(), reused on re-entry during cold start to avoid starting two Nitros
+let openingPromise = null // in-flight openMainWindow(), keeps concurrent re-entry from opening two windows
 
-// macOS/Linux GUI 启动的 app 不继承登录 shell 的 PATH,会导致子进程找不到
-// git / gh / claude / codex / node。用登录 shell 取一次真实 PATH 注入。
+// An app launched from the GUI on macOS/Linux doesn't inherit the login shell's PATH, so child
+// processes can't find git / gh / claude / codex / node. Read the real PATH once from a login shell and inject it.
 function resolveShellPath() {
   const common = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
   const merge = (p) => {
@@ -61,9 +62,10 @@ function getFreePort() {
   })
 }
 
-// 轮询端口直到 server 就绪；同时盯着子进程的 error/exit。一旦 Nitro 启动就崩
-// (better-sqlite3 ABI 不匹配 / ensureSchema 抛错 / DB 锁 / 端口被抢 / spawn ENOENT)
-// 立刻 reject，不再傻等满 30s，并把退出码 + 最近 stderr 带进错误信息。
+// Poll the port until the server is ready, while watching the child process for error/exit. If
+// Nitro crashes right after launch (better-sqlite3 ABI mismatch / ensureSchema throwing / DB lock /
+// port taken / spawn ENOENT), reject immediately instead of waiting out the full 30s, and put the
+// exit code + latest stderr into the error message.
 function waitForServer(port, child, timeoutMs = 30000) {
   const start = Date.now()
   return new Promise((resolve, reject) => {
@@ -107,13 +109,13 @@ async function startNitro() {
   const envPath = resolveShellPath()
   const port = await getFreePort()
   const userData = app.getPath('userData')
-  fs.mkdirSync(userData, { recursive: true }) // 作为子进程 cwd，确保首次启动时存在
+  fs.mkdirSync(userData, { recursive: true }) // used as the child process cwd, make sure it exists on first launch
   lastStderr = ''
 
-  // 用 Electron 自带的 node 跑 Nitro(ELECTRON_RUN_AS_NODE),不依赖用户系统装没装 node、
-  // 装的哪个版本。better-sqlite3 在打包时已按 Electron 的 ABI 预编译(scripts/prepare-electron-sqlite)。
-  // DB / worktrees 用 NUXT_ 前缀覆盖 runtimeConfig —— Nitro 运行时只认 NUXT_*，
-  // 旧的 DB_PATH/REPOS_DIR 是 no-op；这里给绝对路径，不依赖 cwd。
+  // Run Nitro with Electron's bundled node (ELECTRON_RUN_AS_NODE), so it doesn't depend on whether
+  // the user has node installed, or which version. better-sqlite3 is prebuilt against Electron's ABI at package time (scripts/prepare-electron-sqlite).
+  // DB / worktrees override runtimeConfig through the NUXT_ prefix — the Nitro runtime only honors
+  // NUXT_*, the old DB_PATH/REPOS_DIR are no-ops; absolute paths here, so nothing depends on cwd.
   const child = spawn(process.execPath, [serverEntry], {
     cwd: userData,
     env: {
@@ -135,7 +137,7 @@ async function startNitro() {
     process.stderr.write(`[nitro] ${d}`)
     lastStderr = (lastStderr + d).slice(-2000)
   })
-  // 常驻 error 处理：spawn 失败(ENOENT/EMFILE 等)不会冒泡成 uncaughtException 崩主进程
+  // Permanent error handler: a spawn failure (ENOENT/EMFILE etc.) won't bubble up as an uncaughtException and crash the main process
   child.on('error', (err) => {
     if (serverProc === child) serverProc = null
     console.error('[nitro] process error:', err.message)
@@ -150,14 +152,15 @@ async function startNitro() {
   return serverUrl
 }
 
-// 要加载的 URL：dev 用注入的；打包态复用已起的 Nitro，没起或已死则(重新)启动。
+// URL to load: in dev the injected one; when packaged, reuse the running Nitro and (re)start it if it isn't running or has died.
 async function resolveAppUrl() {
   if (DEV_URL) return DEV_URL
   if (serverProc && serverUrl) return serverUrl
-  // serverUrl 要等 waitForServer(几秒)才赋值,但 serverProc 在 spawn 时就有 —— 冷启动
-  // 窗口里 `serverProc && serverUrl` 仍是 false。若此时重入(macOS 首次启动的 activate)
-  // 会再 startNitro 一次,两个 Nitro 打在同一个 userData DB/worktrees 上。用进行中的
-  // promise 兜住,整个启动期只会有一个 startNitro。
+  // serverUrl is only assigned after waitForServer (a few seconds), but serverProc exists as soon
+  // as we spawn — during the cold-start window `serverProc && serverUrl` is still false. Re-entering
+  // here (the activate on macOS's first launch) would call startNitro a second time, pointing two
+  // Nitros at the same userData DB/worktrees. The in-flight promise catches that, so there's only
+  // ever one startNitro for the whole startup.
   if (!startPromise) {
     startPromise = startNitro().finally(() => {
       startPromise = null
@@ -173,7 +176,7 @@ function createWindow(url) {
     minWidth: 1024,
     minHeight: 720,
     title: 'PR Cockpit',
-    // macOS：隐藏原生标题栏，traffic light 嵌进 app 自己的顶栏(h-16=64px)垂直居中
+    // macOS: hide the native title bar, the traffic lights sit vertically centered in the app's own top bar (h-16=64px)
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 18, y: 24 } }
       : {}),
@@ -181,7 +184,7 @@ function createWindow(url) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.cjs'), // 暴露 window.mrUpdates.check()
+      preload: path.join(__dirname, 'preload.cjs'), // exposes window.mrUpdates.check()
     },
   })
 
@@ -197,14 +200,14 @@ function createWindow(url) {
     }
   }
 
-  // target="_blank" / window.open 触发的新窗口:外部站点走系统浏览器
+  // New windows from target="_blank" / window.open: external sites go to the system browser
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     if (isExternal(target)) shell.openExternal(target)
     return { action: 'deny' }
   })
 
-  // 普通 <a href> 是同窗口导航(will-navigate),会把整个 app 导航走。
-  // 指向外部站点的链接拦下来交给系统浏览器,app 自身的导航放行。
+  // A plain <a href> is a same-window navigation (will-navigate) and would navigate the whole app away.
+  // Intercept links pointing at external sites and hand them to the system browser, let the app's own navigation through.
   mainWindow.webContents.on('will-navigate', (event, target) => {
     if (isExternal(target)) {
       event.preventDefault()
@@ -225,10 +228,11 @@ function stopNitro() {
   if (!child) return
   serverProc = null
   try {
-    // SIGTERM → Nitro 的 shutdown 插件(server/plugins/shutdown.ts)拦下来,先把在跑的
-    // claude/codex agent 进程组逐个停掉(它们是 detached 起的,独立进程组,kill 父进程到不了),
-    // 再退出。SIGKILL 只是兜底:3s 还没退就强杀 Nitro 本身。
-    // 注意:SIGKILL 杀的只是 Nitro 的 pid,杀不到孙进程 —— 真正回收 agent 靠的是上面的 SIGTERM 优雅退出。
+    // SIGTERM → Nitro's shutdown plugin (server/plugins/shutdown.ts) catches it, stops each running
+    // claude/codex agent process group one by one (they're spawned detached, in their own process
+    // groups, so killing the parent doesn't reach them), then exits. SIGKILL is only a fallback:
+    // force-kill Nitro itself if it hasn't exited after 3s.
+    // Note: SIGKILL only kills Nitro's own pid, it can't reach grandchildren — agents are actually reclaimed by the graceful SIGTERM exit above.
     child.kill('SIGTERM')
     const t = setTimeout(() => {
       try {
@@ -249,8 +253,8 @@ async function openMainWindow() {
     mainWindow.focus()
     return
   }
-  // 并发重入(whenReady 还在 await resolveAppUrl 时 activate 又触发一次):复用同一个
-  // promise,且 await 之后再查一次 mainWindow,确保只建一个窗口。
+  // Concurrent re-entry (activate fires again while whenReady is still awaiting resolveAppUrl):
+  // reuse the same promise, and re-check mainWindow after the await, so only one window is created.
   if (openingPromise) return openingPromise
   openingPromise = (async () => {
     const url = await resolveAppUrl()
@@ -265,7 +269,7 @@ async function openMainWindow() {
   return openingPromise
 }
 
-// 应用菜单：保留各平台标准项，额外挂一个「检查更新…」入口(手动触发,非 silent)。
+// App menu: keep each platform's standard items, plus a "Check for Updates…" entry (manual trigger, not silent).
 function setupAppMenu() {
   const isMac = process.platform === 'darwin'
   const checkItem = {
@@ -291,7 +295,7 @@ function setupAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-// 启动后台静默查一次更新(仅打包态；开发/首窗失败时不打扰)。
+// Silently check for updates once in the background after startup (packaged only; stays out of the way in dev / when the first window fails).
 function maybeAutoCheckUpdates() {
   if (didAutoCheckUpdates || !app.isPackaged) return
   didAutoCheckUpdates = true
@@ -299,8 +303,9 @@ function maybeAutoCheckUpdates() {
   if (typeof t.unref === 'function') t.unref()
 }
 
-// 单实例锁：随机端口去掉了旧固定端口的 EADDRINUSE 天然单例保护。两个实例会共用同一个
-// userData(DB + worktrees)→ worktree 操作跨进程 race(repoLocks 只在进程内)。
+// Single-instance lock: the random port dropped the natural single-instance protection the old
+// fixed port got from EADDRINUSE. Two instances would share the same userData (DB + worktrees)
+// → worktree operations race across processes (repoLocks are per-process only).
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -311,9 +316,9 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  // 渲染进程把 app 内选择的语言推来 → 原生更新对话框用它(而非系统语言)。
+  // The renderer pushes the language chosen inside the app → the native update dialog uses it (not the system language).
   ipcMain.on('updates:locale', (_e, locale) => setUpdaterLocale(locale))
-  // 顶栏「检查更新」按钮 → 渲染进程通过 preload 桥调这里(手动、非 silent)。
+  // Top-bar "Check for updates" button → the renderer calls in here through the preload bridge (manual, not silent).
   ipcMain.handle('updates:check', (_e, locale) => checkForUpdates(mainWindow, { silent: false, locale }))
 
   app.whenReady().then(async () => {
@@ -328,8 +333,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  // macOS：dock 点击 / 重新激活。窗口全关后 app 仍在跑(Nitro 保持热)，
-  // 这里从已起的 server 重建窗口；若 Nitro 已死则重启。
+  // macOS: dock click / reactivate. The app keeps running once every window is closed (Nitro stays
+  // warm), so rebuild the window from the running server here; restart Nitro if it has died.
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length > 0) return
     try {
@@ -340,8 +345,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  // 非 macOS：关掉所有窗口即退出(→ before-quit → stopNitro)。
-  // macOS：保持 app + Nitro 存活，等 dock 重开或 Cmd+Q。
+  // Non-macOS: closing all windows quits (→ before-quit → stopNitro).
+  // macOS: keep the app + Nitro alive, waiting for a dock reopen or Cmd+Q.
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })

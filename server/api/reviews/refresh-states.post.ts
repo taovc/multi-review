@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { schema } from '~core/db/client'
 import { fetchPrState } from '~core/github/gh'
 
-// 批量刷新若干任务的 GitHub 侧状态（prState / reviewDecision / authorUpdated）。
-// 前端轮询每约 60s 调一次，只传当前页「未终结」(非已合并/已关闭) 的任务 id。
-// 并发限 4，避免一次 spawn 一堆 gh 进程。单条失败不影响其它。
+// Bulk-refresh the GitHub-side state of several tasks (prState / reviewDecision / authorUpdated).
+// The frontend polls this roughly every 60s, passing only the ids of the current page's unfinished (not merged/closed) tasks.
+// Concurrency capped at 4 so we don't spawn a pile of gh processes at once. One failure doesn't affect the others.
 const Body = z.object({ ids: z.array(z.string()).max(50).default([]) })
 
 export default defineEventHandler(async (event) => {
@@ -32,16 +32,16 @@ export default defineEventHandler(async (event) => {
       if (!project) continue
       try {
         const { state, headSha: liveHead, reviewDecision, author } = await fetchPrState(project.repo, review.prNumber)
-        // 基线同单条 refresh 与列表 pulls.get：比"上次审/复审看的 sha"(headSha)，门控也用 headSha
+        // Same baseline as the single-task refresh and the pulls.get list: compare against "the sha the last review/recheck saw" (headSha); gating uses headSha too
         const authorUpdated = !!review.headSha && !!liveHead && liveHead !== review.headSha
         d.update(schema.reviews)
-          // 顺便回填空的 author（老记录建任务时漏存 → 列表显示「-」）
+          // Also backfill an empty author (older records didn't store it at creation time → the list shows "-")
           .set({ prState: state, reviewDecision: reviewDecision || null, authorUpdated, updatedAt: new Date().toISOString(), ...(review.author ? {} : { author: author || null }) })
           .where(eq(schema.reviews.id, review.id))
           .run()
         refreshed++
       } catch {
-        /* 单条失败跳过 */
+        /* skip on a single failure */
       }
     }
   }

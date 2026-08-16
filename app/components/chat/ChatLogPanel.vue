@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 可展开的运行日志面板（工具调用 / 阶段进度）。fix/global/feature 三个 drawer 用的是同一块。
+// Expandable run-log panel (tool calls / stage progress). The fix/global/feature drawers all use this same one.
 defineProps<{ lines: string[] }>()
 const open = ref(false)
 </script>

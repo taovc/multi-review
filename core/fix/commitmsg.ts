@@ -1,7 +1,8 @@
 import { runClaude } from '../agent/claudeCli'
 
-// 从 diff 生成一句简短的 conventional commit message（feat/fix/refactor/...），用于「提交并上传」。
-// 取数失败/超时兜底一个通用串，绝不阻断上传。
+// Generates one short conventional commit message (feat/fix/refactor/...) from the diff, used by
+// "commit and upload".
+// On failure/timeout it falls back to a generic string — it must never block the upload.
 export async function genCommitMessage(model: string, diff: string): Promise<string> {
   const clipped = diff.length > 60_000 ? diff.slice(0, 60_000) : diff
   if (!clipped.trim()) return 'fix: address review feedback'

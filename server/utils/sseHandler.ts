@@ -1,8 +1,8 @@
 import { cockpitBus } from '~core/events'
 
-// SSE 端点工厂：4 个 stream 端点(review/fix/global/feature)逻辑逐字相同，只有「频道 key 怎么从 :id 算」不同。
-// 传入 channelKeyFn 即可复用同一套传输实现（headers / 握手 / JSON 推送 / 15s 心跳 / close 清理）。
-// 注意：频道 key 必须和各 pipeline emit 用的一致——fix/review 用裸 id，global=g:<id>、feature=f:<id>，错了事件会推到别的 drawer。
+// SSE endpoint factory: the 4 stream endpoints (review/fix/global/feature) are word-for-word identical except for how the channel key is derived from :id.
+// Pass channelKeyFn to reuse one transport implementation (headers / handshake / JSON push / 15s heartbeat / close cleanup).
+// Note: the channel key must match what each pipeline emits with — fix/review use the bare id, global = g:<id>, feature = f:<id>; get it wrong and events are pushed to the wrong drawer.
 export function createSseHandler(channelKeyFn: (id: string) => string) {
   return defineEventHandler(async (event) => {
     const id = getRouterParam(event, 'id')!

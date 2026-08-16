@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// GitHub 式 split diff：unified diff → 左旧 / 右新 两列对比。
-// 不做字符级 diff，按行配对（一段连续 del 和 add 逐行配对，多出的单边留空）——和 GitHub split 同思路。
+// GitHub-style split diff: unified diff → two columns, old on the left / new on the right.
+// No character-level diff; lines are paired up (a run of dels and adds is paired line by line, the leftover side stays empty) — the same idea as GitHub's split view.
 const props = defineProps<{ diff: string; truncated?: boolean }>()
 
 type Side = 'ctx' | 'del' | 'add' | 'empty'
@@ -19,7 +19,7 @@ function parse(diff: string): FileDiff[] {
   let dels: string[] = []
   let adds: string[] = []
 
-  // 把累积的 del/add 段配对成行（del 在左、add 在右，逐行配；多出的单边留空）
+  // Pair the accumulated del/add run into rows (del on the left, add on the right, line by line; the leftover side stays empty)
   const flush = () => {
     if (!cur) { dels = []; adds = []; return }
     const n = Math.max(dels.length, adds.length)
@@ -45,7 +45,7 @@ function parse(diff: string): FileDiff[] {
       continue
     }
     if (!cur) continue
-    // 文件元信息行跳过
+    // Skip file metadata lines
     if (/^(\+\+\+|---|index |new file|deleted file|rename |similarity |old mode|new mode|Binary )/.test(line) || line.startsWith('\\')) continue
     if (line.startsWith('@@')) {
       flush()
@@ -57,7 +57,7 @@ function parse(diff: string): FileDiff[] {
     }
     if (line.startsWith('+')) { adds.push(line.slice(1)); continue }
     if (line.startsWith('-')) { dels.push(line.slice(1)); continue }
-    // 上下文行（以空格开头，或空行）
+    // Context line (starts with a space, or is empty)
     flush()
     const text = line.startsWith(' ') ? line.slice(1) : line
     cur.rows.push({ lo: oldLn++, lt: text, ltype: 'ctx', ro: newLn++, rt: text, rtype: 'ctx' })
@@ -66,7 +66,7 @@ function parse(diff: string): FileDiff[] {
   return out
 }
 
-// 单元格底色
+// Cell background colors
 const BG: Record<Side, string> = {
   ctx: '',
   del: 'bg-error/10',
@@ -80,18 +80,18 @@ const BG: Record<Side, string> = {
     <div v-for="f in files" :key="f.path" class="mb-4 border border-default rounded overflow-hidden">
       <div class="bg-elevated px-3 py-1.5 text-toned font-sans text-[11px] border-b border-default sticky top-0">{{ f.path }}</div>
       <div v-for="(r, i) in f.rows" :key="i">
-        <!-- hunk 头：整行横跨 -->
+        <!-- hunk header: spans the full row -->
         <div v-if="r.hunk" class="text-dimmed bg-elevated/50 px-3 py-0.5 whitespace-pre-wrap break-all">{{ r.text }}</div>
-        <!-- 普通行 -->
+        <!-- Regular line -->
         <div v-else class="border-t border-default/40">
-          <!-- 桌面(md+)：GitHub 式 split，左旧 / 右新 两列 -->
+          <!-- Desktop (md+): GitHub-style split, old on the left / new on the right -->
           <div class="hidden md:grid grid-cols-[2.5rem_1fr_2.5rem_1fr]">
             <div class="text-right pr-1.5 text-dimmed select-none tabular-nums" :class="BG[r.ltype]">{{ r.lo ?? '' }}</div>
             <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.ltype], r.ltype === 'del' ? 'text-error' : 'text-toned']">{{ r.lt }}</div>
             <div class="text-right pr-1.5 text-dimmed select-none tabular-nums border-l border-default/40" :class="BG[r.rtype]">{{ r.ro ?? '' }}</div>
             <div class="px-2 whitespace-pre-wrap break-all" :class="[BG[r.rtype], r.rtype === 'add' ? 'text-success' : 'text-toned']">{{ r.rt }}</div>
           </div>
-          <!-- 手机：unified 单列，避免两列代码各挤半屏。ctx 只显一次(左)，del/add 各成一行 -->
+          <!-- Mobile: unified single column, so two code columns don't each squeeze into half a screen. ctx is shown once (left), del/add each get their own row -->
           <div class="md:hidden">
             <div v-if="r.ltype !== 'empty'" class="grid grid-cols-[2.5rem_1fr]" :class="BG[r.ltype]">
               <div class="text-right pr-1.5 text-dimmed select-none tabular-nums">{{ r.lo ?? '' }}</div>

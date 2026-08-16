@@ -3,7 +3,7 @@ import { schema } from '~core/db/client'
 import { removeWorktree } from '~core/git/worktree'
 import { optOutPr } from '~core/automation/state'
 
-// 删除单个审核任务：同步清理它的 worktree（只删本地任务，GitHub 评论不动）
+// Delete a single review task: clean up its worktree at the same time (only the local task is deleted, GitHub comments are left alone)
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const cfg = useRuntimeConfig()
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   if (review) {
     const project = d.select().from(schema.projects).where(eq(schema.projects.id, review.projectId)).get()
     await removeWorktree(project?.localPath ?? null, cfg.reposDir as string, id, { location: cfg.worktreeLocation as string })
-    // 删任务即退出自动化：标该 PR opt-out，防全局配置在下一轮把它复活（直到用户手动再开）
+    // Deleting the task means leaving automation: mark the PR opt-out so the project-level config can't resurrect it on the next round (until the user turns it back on by hand)
     optOutPr(d, schema, review.projectId, review.prNumber, new Date().toISOString())
   }
   d.delete(schema.reviews).where(eq(schema.reviews.id, id)).run()

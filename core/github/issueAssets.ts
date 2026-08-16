@@ -2,14 +2,15 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchIssueBody, ghToken } from './gh'
 
-// feature 开发常贴 GitHub issue/PR 链接当需求。只读 agent 上不了网、下不了图（守卫禁 curl/WebFetch），
-// 所以这里在后端先把正文 + 配图抓好：正文塞进需求文本，图片用 gh token 下到本地供 Read 工具看图。
-// 只认 GitHub 图片域（与 server/api/img 白名单一致，防 SSRF / 别乱下载外部 URL）。
+// Feature requests are often pasted in as GitHub issue/PR links. A read-only agent can't reach the network or
+// download images (the guard blocks curl/WebFetch), so the backend fetches body + images up front: the body is
+// folded into the requirement text, and images are downloaded with the gh token so the Read tool can view them.
+// Only GitHub image hosts are accepted (same allowlist as server/api/img, to prevent SSRF / downloading arbitrary external URLs).
 const IMG_ALLOW = /^https:\/\/(github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)/i
 
 export type GithubRef = { repo: string; kind: 'issue' | 'pr'; number: number }
 
-// 从任意文本里抠出 GitHub issue / PR 链接（去重）。
+// Pull GitHub issue / PR links out of arbitrary text (deduplicated).
 export function extractGithubRefs(text: string): GithubRef[] {
   const re = /https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(issues|pull)\/(\d+)/gi
   const seen = new Set<string>()
@@ -27,7 +28,7 @@ export function extractGithubRefs(text: string): GithubRef[] {
   return out
 }
 
-// 从 markdown / HTML 正文里抠出图片 URL（<img src> 和 ![](url)），去重后只留 GitHub 图片域。
+// Pull image URLs out of a markdown / HTML body (<img src> and ![](url)), deduplicated and restricted to GitHub image hosts.
 export function extractImageUrls(body: string): string[] {
   const urls: string[] = []
   const html = /<img[^>]*\bsrc=["']([^"']+)["']/gi
@@ -38,8 +39,9 @@ export function extractImageUrls(body: string): string[] {
   return [...new Set(urls)].filter((u) => IMG_ALLOW.test(u))
 }
 
-// 用 gh token 下载一张图（私有仓附件直连 404，要带 token；与 server/api/img 同款）。
-// 文件名按序号 + content-type 推扩展名（附件 URL 是无后缀的 uuid）。返回落盘的绝对路径或 null。
+// Download one image with the gh token (attachments on private repos 404 without it; same approach as server/api/img).
+// The filename is an index plus an extension inferred from content-type (attachment URLs are extensionless uuids).
+// Returns the absolute path on disk, or null.
 async function downloadImage(url: string, destDir: string, idx: number, token: string): Promise<string | null> {
   const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: 'follow' }).catch(() => null)
   if (!res || !res.ok) return null
@@ -57,8 +59,8 @@ async function downloadImage(url: string, destDir: string, idx: number, token: s
 
 export type IssueContext = { enrichedText: string; imagePaths: string[]; summary: string }
 
-// 抓取 sourceText 里引用到的 GitHub issue/PR：正文拼成补充文本、配图下到 destDir。
-// 尽力而为：任何一步失败都不致命，返回已拿到的部分；一个 ref 都没有则返回 null。
+// Fetch the GitHub issues/PRs referenced in sourceText: bodies are joined into supplementary text, images land in destDir.
+// Best effort: no single step is fatal, whatever was collected is returned; returns null when there is not a single ref.
 export async function fetchIssueContext(sourceText: string, destDir: string): Promise<IssueContext | null> {
   const refs = extractGithubRefs(sourceText)
   if (!refs.length) return null
@@ -73,7 +75,7 @@ export async function fetchIssueContext(sourceText: string, destDir: string): Pr
     try {
       ({ title, body } = await fetchIssueBody(ref.repo, ref.kind, ref.number))
     } catch {
-      continue // 取不到正文（无权限 / 不存在）就跳过这个 ref
+      continue // Body not available (no permission / doesn't exist) → skip this ref
     }
     const label = `${ref.repo}#${ref.number}`
     const imgUrls = extractImageUrls(body)
@@ -82,8 +84,8 @@ export async function fetchIssueContext(sourceText: string, destDir: string): Pr
       const p = await downloadImage(u, destDir, imagePaths.length, token).catch(() => null)
       if (p) { imagePaths.push(p); downloaded++ }
     }
-    const imgNote = downloaded ? `\n\n（本 ${ref.kind === 'pr' ? 'PR' : 'issue'} 附带 ${downloaded} 张配图，已下载到本地，路径见下方「配图」清单，务必查看。）` : ''
-    blocks.push(`### 已抓取 ${ref.kind === 'pr' ? 'PR' : 'Issue'} ${label}：${title}\n\n${body}${imgNote}`)
+    const imgNote = downloaded ? `\n\n(This ${ref.kind === 'pr' ? 'PR' : 'issue'} comes with ${downloaded} image(s), already downloaded locally; their paths are in the "Images" list below — you MUST open and look at every one of them.)` : ''
+    blocks.push(`### Fetched ${ref.kind === 'pr' ? 'PR' : 'Issue'} ${label}: ${title}\n\n${body}${imgNote}`)
   }
   if (!blocks.length) return null
   return {

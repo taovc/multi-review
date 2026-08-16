@@ -1,2 +1,2 @@
-// SSE：修复任务实时进度（stage / tool / text / status / done / error）。频道=裸 fixId。
+// SSE: live progress of a fix task (stage / tool / text / status / done / error). Channel = the bare fixId.
 export default createSseHandler((id) => id)

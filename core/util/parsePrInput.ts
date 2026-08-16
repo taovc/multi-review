@@ -1,5 +1,5 @@
-// 把用户粘贴的一坨文本解析成 PR 列表。
-// 支持：完整 URL、纯数字、owner/repo#N、#N、逗号/空格/换行混排。
+// Parse a blob of text pasted by the user into a list of PRs.
+// Supports: full URLs, bare numbers, owner/repo#N, #N, mixed with commas/spaces/newlines.
 export type ParsedPr = { repo: string | null; number: number }
 
 const URL_RE = /github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/i

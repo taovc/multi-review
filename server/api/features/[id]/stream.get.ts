@@ -1,4 +1,4 @@
 import { featureChan } from '~core/feature/pipeline'
 
-// SSE：feature 任务实时进度（stage/tool/text/chat/error）。频道=f:<taskId>。
+// SSE: live progress of a feature task (stage/tool/text/chat/error). Channel = f:<taskId>.
 export default createSseHandler(featureChan)

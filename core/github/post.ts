@@ -19,16 +19,16 @@ export type PostFinding = {
   fix: string | null
   notes: string | null
   introducedByPr: boolean
-  // 最新一轮复审结论（没复审过就是 null）→ 决定这条评论怎么发
+  // Verdict of the latest recheck round (null if never rechecked) → decides how this comment gets posted
   recheck: { status: string; text: string | null } | null
 }
 
-// 一条 finding 经过复审后，发评论时按最新一轮复审状态决定怎么处理：
-//   fixed     → 不重发原文，进 summary 的「已确认修复」一行
-//   partial   → 发评论，但只说「还差什么」
-//   replied   → 作者回过、代码没改：有你的新 note 才发（针对作者回应的再回应），没 note 就跳过
-//   retracted → AI 已撤回这条，别发
-//   其它/无复审 → 正常发原 finding（finding 内容即当前结论）
+// Once a finding has been rechecked, the latest recheck status decides how it is posted:
+//   fixed     → don't repost the original, add one line to the summary's "Confirmed fixed" list
+//   partial   → post a comment, but only about what's still missing
+//   replied   → author replied without changing code: post only if you left a new note (a response to the author's reply); skip otherwise
+//   retracted → the AI already withdrew this one, don't post
+//   anything else / no recheck → post the original finding as usual (the finding is the current verdict)
 type Plan =
   | { action: 'comment'; kind: 'normal' | 'partial' | 'reply' }
   | { action: 'fixed' }
@@ -45,7 +45,7 @@ function planFinding(f: PostFinding): Plan {
   return { action: 'comment', kind: 'normal' }
 }
 
-// diff 中新文件侧（RIGHT）可评论的行号集合，按文件
+// Set of commentable line numbers on the new-file side (RIGHT) of the diff, per file
 function rightLines(diff: string): Map<string, Set<number>> {
   const map = new Map<string, Set<number>>()
   let cur: Set<number> | null = null
@@ -62,9 +62,9 @@ function rightLines(diff: string): Map<string, Set<number>> {
     } else if (cur) {
       if (line.startsWith('+')) cur.add(newLine++)
       else if (line.startsWith('-') || line.startsWith('\\')) {
-        /* 旧侧 / no-newline，不推进新行号 */
+        /* old side / no-newline, don't advance the new line number */
       } else {
-        cur.add(newLine++) // 上下文
+        cur.add(newLine++) // context
       }
     }
   }
@@ -78,9 +78,9 @@ function parseLoc(loc: string | null): { path: string; line: number } | null {
   return { path: m[1]!, line: Number(m[2]) }
 }
 
-// 把中文 findings 翻成英文 PR 评论正文（GitHub 对外内容用英文）。一次性文本生成。
-// 按项目 provider 分流：claude 走 `claude --print`（stdin 喂 prompt，避免 server 里等 stdin 卡死）；
-// codex 走 Codex SDK 的一次性 run()。**不混用**：codex 项目的翻译也由 codex 产出。
+// Translate the Chinese findings into English PR comment bodies (content published to GitHub is in English). One-shot text generation.
+// Routed by the project's provider: claude goes through `claude --print` (prompt fed via stdin, so the server never hangs waiting on stdin);
+// codex goes through the Codex SDK's one-shot run(). **Never mixed**: a codex project's translations also come from codex.
 async function claudePrint(model: string, prompt: string): Promise<string> {
   const out = await runClaude(['--print', '--model', model || 'sonnet'], { input: prompt, timeout: 120_000 })
   return String(out).trim()
@@ -90,7 +90,7 @@ function makePrint(provider: ReviewProvider, model: string, cwd?: string, codexS
   return (prompt) => claudePrint(model, prompt)
 }
 
-// 每条 finding 独立并行翻译（每个调用输出小、几秒）→ 墙钟 ≈ 最慢的一条，而非全部串起来。
+// Each finding is translated independently in parallel (every call emits little output, a few seconds) → wall clock ≈ the slowest one, not the sum.
 async function translate(
   provider: ReviewProvider,
   model: string,
@@ -115,34 +115,34 @@ async function translate(
 
   for (const f of findings) {
     const plan = planFinding(f)
-    if (plan.action === 'skip') continue // 跳过的不发、不用翻译
+    if (plan.action === 'skip') continue // skipped ones aren't posted, so no translation needed
 
     const one = {
       severity: f.severity, title: f.title, problem: f.problem, detail: f.detail,
       fix: f.fix, preexisting: !f.introducedByPr,
     }
     const hasNote = !!(f.notes && f.notes.trim())
-    // note = 审核员对这条"怎么写评论"的指令（调语气/取舍内容/补充上下文/降级措辞…），融进评论，不原样贴出
+    // note = the reviewer's instruction for how to write THIS comment (adjust tone / keep or drop content / add context / soften wording…); weave it in, never paste it verbatim
     const noteClause = hasNote
       ? `\n\nThe reviewer left a NOTE on this finding. Treat it as an INSTRUCTION for how to write/adjust THIS comment — e.g. soften or sharpen tone, add or drop detail, add context, downgrade/reframe, merge wording. Follow it and weave its intent into the comment. **Do NOT output the note text verbatim, and do NOT add a separate "Reviewer note" line** — it is guidance for you, not text for the PR author.\nReviewer note (source language): ${f.notes}`
       : ''
-    const verdict = f.recheck?.text || '' // 最新一轮复审结论（作者改了没 / 回应了啥）
+    const verdict = f.recheck?.text || '' // latest recheck verdict (did the author change it / what did they reply)
 
     let prompt: string
     if (plan.action === 'fixed') {
-      // 已确认修复：一句话进 summary 的「Confirmed fixed」清单（纯文本，无标题/无围栏）
+      // Confirmed fixed: one sentence for the summary's "Confirmed fixed" list (plain text, no heading, no fence)
       prompt = `The author CONFIRMED-FIXED this PR-review finding. Write ONE short professional English sentence acknowledging it's resolved, naming the topic so the author knows which finding. Plain text only — no markdown heading, no bullet, no code fence.
 FINDING TITLE (source language): ${f.title}
 RE-REVIEW NOTE (source language): ${verdict}`
     } else if (plan.kind === 'partial') {
-      // 部分修复 / 改得不对：只说还差什么
+      // Partially fixed / fixed incorrectly: only say what's still missing
       prompt = `Write ONE finding of a GitHub PR review as professional English markdown. This finding was RE-REVIEWED: the author's latest changes only PARTIALLY addressed it (or addressed it incorrectly). Focus the comment on WHAT IS STILL MISSING OR WRONG — briefly acknowledge what was done, then state precisely what remains. Do NOT restate the whole original finding.
 Output ONLY the markdown body — a bold line "**[<severity>] <title>**", then the remaining problem, then a fix section. Keep file paths, line numbers, identifiers and any code fences UNCHANGED.${noteClause}
 
 RE-REVIEW VERDICT (source language): ${verdict}
 ORIGINAL FINDING (source language): ${JSON.stringify(one)}`
     } else if (plan.kind === 'reply') {
-      // 作者回过、代码没改：发针对作者回应的再回应（note 是审核员要回的话，不是"怎么写评论"的指令）
+      // Author replied without changing code: post a response to that reply (here the note is what the reviewer wants to say back, not an instruction on how to write the comment)
       prompt = `Write ONE GitHub PR-review comment as professional English markdown. Context: you previously raised the finding below; the author REPLIED in the PR but did NOT change the code. Respond to the author's reply and move the discussion forward — concede, push back with reasoning, or ask for clarification — per the reviewer's response. Do NOT just restate the original finding.
 Output ONLY the markdown body (you may open with a bold "**[<severity>] <title>**" line). Keep file paths, line numbers, identifiers and any code fences UNCHANGED.
 
@@ -150,7 +150,7 @@ AUTHOR'S REPLY / RE-REVIEW VERDICT (source language): ${verdict}
 REVIEWER'S RESPONSE TO THE AUTHOR (source language — weave its intent into the comment, do NOT quote verbatim): ${f.notes}
 ORIGINAL FINDING for context (source language): ${JSON.stringify(one)}`
     } else {
-      // normal：翻译原 finding（原逻辑）
+      // normal: translate the original finding (original behavior)
       prompt = `Write ONE finding of a GitHub PR review as professional English markdown. Output ONLY the markdown body — no preamble, no outer code fences.
 Format: a bold line "**[<severity>] <title>**", then the problem, then detail (keep any lists), then a fix section. If "preexisting" is true, note "(pre-existing, not introduced by this PR)". Keep file paths, line numbers, identifiers and any code fences UNCHANGED. Translate the content to professional English (source may be any language).${noteClause}
 
@@ -160,7 +160,7 @@ ${JSON.stringify(one)}`
     tasks.push(print(prompt).then((t) => { bodies[f.fid] = strip(t) }))
   }
 
-  // 单条翻译失败不毁掉整次发布：失败的 finding 在 assemble 时回退到原标题
+  // A single failed translation must not kill the whole post: failed findings fall back to their original title during assemble
   await Promise.allSettled(tasks)
   return { globalNotesEn, bodies }
 }
@@ -169,7 +169,7 @@ export type AssembledReview = {
   body: string
   comments: { path: string; line: number; side: 'RIGHT'; body: string }[]
   mode: 'review' | 'comment' | 'mixed'
-  // 按复审状态没发的勾选项（replied 无 note / 已撤回）→ 预览里告知用户，免得以为漏发
+  // Checked items not posted because of their recheck status (replied without a note / retracted) → shown in the preview so the user doesn't think they were dropped
   skipped: { fid: string; title: string; reason: 'replied-no-note' | 'retracted' }[]
 }
 
@@ -177,7 +177,7 @@ export async function assembleReview(opts: {
   provider?: ReviewProvider
   model: string
   codexServiceTier?: string | null
-  cwd?: string // codex 翻译需要一个 workingDirectory（项目本地 clone 路径），缺省则 skipGitRepoCheck
+  cwd?: string // codex translation needs a workingDirectory (the project's local clone path); without one it falls back to skipGitRepoCheck
   findings: PostFinding[]
   globalNotes: string
   diff: string
@@ -187,14 +187,14 @@ export async function assembleReview(opts: {
 
   const comments: AssembledReview['comments'] = []
   const summaryFindings: PostFinding[] = []
-  const confirmedFixed: string[] = [] // 已确认修复 → summary 一行
+  const confirmedFixed: string[] = [] // confirmed fixed → one line in the summary
   const skipped: AssembledReview['skipped'] = []
   for (const f of opts.findings) {
     const plan = planFinding(f)
     if (plan.action === 'skip') { skipped.push({ fid: f.fid, title: f.title, reason: plan.reason }); continue }
     if (plan.action === 'fixed') { confirmedFixed.push(bodies[f.fid] || f.title); continue }
     const loc = parseLoc(f.location)
-    // 不可见元数据标记：GitHub 渲染时看不见，但「修复 PR」验证阶段能据此无损还原结构化 finding（#16）
+    // Invisible metadata marker: GitHub doesn't render it, but the "fix PR" verification stage uses it to losslessly recover the structured finding (#16)
     const marker = `<!-- mr:fid=${f.fid} sev=${f.severity} -->\n`
     if (loc && right.get(loc.path)?.has(loc.line)) {
       comments.push({ path: loc.path, line: loc.line, side: 'RIGHT', body: marker + (bodies[f.fid] || f.title) })
@@ -225,7 +225,7 @@ export async function assembleReview(opts: {
   return { body, comments, mode, skipped }
 }
 
-// 真正提交一个 PR review（行级 + 汇总）。422（行不在 diff）则全部并进 body 重发一次。
+// Actually submit a PR review (inline + summary). On 422 (line not part of the diff), merge everything into the body and resend once.
 export async function postReview(opts: {
   repo: string
   prNumber: number
@@ -234,10 +234,10 @@ export async function postReview(opts: {
 }): Promise<{ url: string }> {
   const { repo, prNumber, headSha, assembled } = opts
 
-  // 自愈：先清掉本人残留的 PENDING review（GitHub 只允许每人每 PR 一个 pending，残留会让新 review 422）。
-  // GET 返回里能看到的 PENDING 一定是自己的（别人的 pending 不可见），直接删。
+  // Self-heal: first clear our own leftover PENDING review (GitHub allows only one pending review per person per PR; a leftover makes a new review 422).
+  // Any PENDING visible in the GET response is necessarily ours (other people's pending reviews aren't visible), so just delete it.
   try {
-    // 带 timeout：这两步在 review 的 'posting' 认领窗口内跑，gh 若无限挂起会把行永久卡在 'posting'（recover 只在启动跑）。
+    // With timeout: these two steps run inside the review's 'posting' claim window, and a gh call hanging forever would pin the row at 'posting' permanently (recover only runs at startup).
     const { stdout } = await pexec('gh', ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'], { maxBuffer: 1024 * 1024 * 16, timeout: 30_000 })
     for (const r of (JSON.parse(stdout) as any[][]).flat()) {
       if (r.state === 'PENDING') {
@@ -245,10 +245,10 @@ export async function postReview(opts: {
       }
     }
   } catch {
-    /* 清理失败不阻断，下面真发时若撞上会报错 */
+    /* A failed cleanup isn't fatal; if it matters, the real post below will error out */
   }
 
-  // payload 写临时文件再 --input <file>（async execFile 不支持 stdin input，会卡死）
+  // Write the payload to a temp file and pass --input <file> (async execFile has no stdin input support and would hang)
   const run = async (payload: object) => {
     const dir = await mkdtemp(join(tmpdir(), 'mr-post-'))
     const file = join(dir, 'payload.json')
@@ -277,7 +277,7 @@ export async function postReview(opts: {
   } catch (e: any) {
     const stderr = e?.stderr?.toString?.() ?? ''
     if (/422/.test(stderr) || /line must be part of the diff/i.test(stderr)) {
-      // 退化：行级全并进 body 重发（review 原子，前次未发出）
+      // Fallback: merge all inline comments into the body and resend (a review is atomic, so the previous attempt posted nothing)
       const merged =
         assembled.body +
         '\n\n' +

@@ -1,6 +1,9 @@
-// 体检 skill 内容：找疑似"操作流程污染"（应只写审核准则，不写 git/worktree/修复 等操作指令）。
-// 注意：会有误报（方法学里描述性提到 push 也会命中）→ 所以只警告，不自动拦，配合工具层硬拦截兜底。
-// 匹配的是用户写进 skill 的文本，语言跟着技能正文走（zh/en/fr 都可能）→ 每条模式三语并列。
+// Health-check the skill content: look for suspected "operational-procedure contamination" (a skill should only state review
+// criteria, not git/worktree/fix operating instructions).
+// Note: false positives happen (a methodology that merely mentions push descriptively also matches) → warn only, never auto-block;
+// the hard block at the tool layer is the backstop.
+// What we match is the text the user wrote into the skill, whose language follows the skill body (zh/en/fr all possible)
+// → every pattern lists all three languages.
 const RULES: { re: RegExp; why: string }[] = [
   { re: /\bgit\s+(commit|push|add|reset|rebase|merge|checkout|restore|stash|clean|cherry-pick)\b/i, why: '提到 git 写操作' },
   {
@@ -15,8 +18,9 @@ const RULES: { re: RegExp; why: string }[] = [
   { re: /\b(commit\s+and\s+push|commit\s+&|push\s+to\s+(origin|remote))\b/i, why: '提到提交并推送' },
 ]
 
-// 否定/禁止性表述：这一行是在"禁止/不要做某操作"（即声明边界），不算污染。同样要覆盖三种语言，
-// 否则英文/法文方法学里的边界声明会被上面的规则当成污染报出来。
+// Negation/prohibition wording: such a line is forbidding an operation (i.e. declaring a boundary), which is not contamination.
+// This also has to cover all three languages, otherwise boundary statements in English/French methodologies get reported as
+// contamination by the rules above.
 const NEGATION = new RegExp(
   [
     '绝不|禁止|严禁|不得|不要|不能|不准|不会|不应|无需|勿|别\\s|只描述|只审不改|不修改|不动',
@@ -29,7 +33,7 @@ const NEGATION = new RegExp(
 export function lintSkill(content: string): string[] {
   const hits = new Set<string>()
   for (const line of (content || '').split('\n')) {
-    if (NEGATION.test(line)) continue // 带否定词的规则描述行跳过（如"绝不顺手修"、"禁止 git push"）
+    if (NEGATION.test(line)) continue // skip rule-describing lines that carry a negation (e.g. "绝不顺手修", "禁止 git push")
     for (const r of RULES) if (r.re.test(line)) hits.add(r.why)
   }
   return [...hits]

@@ -13,12 +13,15 @@ import { findPrByBranch } from '../github/gh'
 import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
 
-// Feature 开发 · 单段式（原生 agent）：一个任务 = 一个隔离 worktree（新功能分支）里的自由开发对话。
-// 不再分「只读方案 → 批准 → 实现」两段；agent 直接动手，遇到真决策点用 ```ask-user 块问用户（→ awaiting），
-// 用户点「开 PR」就让 agent 自己 commit/push/开 PR。每轮结束按分支回查 gh 联动 PR 状态。SSE 频道 f:<taskId>。
+// Feature development, single-phase (native agent): one task = a free-form development chat inside one
+// isolated worktree (a new feature branch). No more "read-only plan → approve → implement" split; the agent
+// works directly and asks the user with an ```ask-user block at real decision points (→ awaiting).
+// When the user clicks "open a PR", the agent commits/pushes/opens the PR itself. After each turn we query gh
+// by branch to sync the PR status. SSE channel f:<taskId>.
 export const featureChan = (id: string) => `f:${id}`
 
-// agent 在等用户拍板的标记：产出里含 ```ask-user 围栏块 → 本轮以「等你确认」收尾。
+// Marker that the agent is waiting on the user: the output contains an ```ask-user fenced block → this turn
+// ends in "waiting for your confirmation".
 const ASK_RE = /```ask-user\b/i
 export function hasAskBlock(text: string): boolean {
   return ASK_RE.test(text || '')
@@ -29,8 +32,8 @@ export function isFeatureBusy(id: string): boolean {
   return jobLocks.has(id)
 }
 
-// 停止状态：featureStops = runner 暴露的中断回调；activeFeatureChats = 子进程句柄（kill 用）；
-// featureStopRequested = 用户主动停的标记 → 把那轮标 stopped 而非 error。
+// Stop state: featureStops = the abort callback exposed by the runner; activeFeatureChats = child process
+// handles (for kill); featureStopRequested = the user stopped on purpose → mark that turn stopped, not error.
 const activeFeatureChats = new Map<string, ChildProcess>()
 const featureStopRequested = new Set<string>()
 const featureStops = new Map<string, () => void>()
@@ -39,9 +42,10 @@ function slugify(s: string): string {
   return (s || 'feature').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'feature'
 }
 
-// 确保 feature 的隔离 worktree（从 origin/<default> 拉的新功能分支）。开发全程在它里头跑——
-// **绝不碰用户真实的本地 clone**。首次创建，之后复用；丢了就按原分支重建。
-// 分支名 slugify 成纯 [a-z0-9-]，避免 nanoid 的 `_` 触发 SAFE_REF 拦截。
+// Ensure the feature's isolated worktree (a new feature branch cut from origin/<default>). All development
+// runs inside it — **never touch the user's real local clone**. Created on first use, reused afterwards;
+// if it's gone, recreate it on the same branch.
+// The branch name is slugified down to plain [a-z0-9-] so nanoid's `_` doesn't trip the SAFE_REF guard.
 async function ensureFeatureWorktree(p: {
   db: any; schema: any; taskId: string
   localPath: string; reposDir: string; defaultBranch: string
@@ -73,12 +77,12 @@ export function stopFeatureImpl(taskId: string): boolean {
   if (!cp || cp.pid == null) return false
   featureStopRequested.add(taskId)
   const pid = cp.pid
-  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* 已退出 */ } }
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* 已退出 */ } }, 1500)
+  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* already exited */ } }
+  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* already exited */ } }, 1500)
   return true
 }
 
-// 进程退出(app 关闭)时把所有在跑的 feature 开发停掉（子进程组），别留孤儿。
+// On process exit (app close), stop every running feature development (child process groups) so none are orphaned.
 export function stopAllFeatureImpl(): boolean {
   let any = false
   for (const id of new Set([...activeFeatureChats.keys(), ...featureStops.keys()])) any = stopFeatureImpl(id) || any
@@ -93,19 +97,19 @@ export type FeatureDevelopJobCtx = {
   reposDir: string
   worktreeLocation?: string | null
   defaultBranch: string
-  repo: string // owner/name，回查 gh PR 用
+  repo: string // owner/name, used to query the PR back via gh
   provider: ReviewProvider
   model: string
-  translateModel: string // 便宜/快模型（生成任务标题用；跟随 provider，同 assembleReview 的 translate）
+  translateModel: string // cheap/fast model (used to generate the task title; follows the provider, same as assembleReview's translate)
   effort?: string
   codexServiceTier?: string | null
   lang: string
-  allowDanger?: boolean // 用户开了「允许危险命令」/ 点了「开 PR」→ 放行危险命令守卫（含 git push / gh pr create）
-  ultracode?: boolean // 后台激活 ultracode；存库仍是干净消息，具体执行方式交给 provider runner
-  assetsDir: string // issue/PR 配图下载根目录（首轮抓 issue 用）
+  allowDanger?: boolean // the user enabled "allow dangerous commands" / clicked "open a PR" → let dangerous commands past the guard (incl. git push / gh pr create)
+  ultracode?: boolean // activate ultracode in the background; the stored message stays clean, the provider runner decides how to apply it
+  assetsDir: string // root dir for downloaded issue/PR images (used when fetching the issue on the first turn)
 }
 
-// message = 本轮用户输入（首轮=需求原文；之后=继续对话 / 决策答复 / 「帮我开 PR」）。
+// message = this turn's user input (first turn = the raw requirement; later = follow-up chat / decision answer / "open a PR for me").
 export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: string): Promise<void> {
   const { db, schema, taskId } = ctx
   const now = () => new Date().toISOString()
@@ -121,7 +125,7 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
   const flush = (status: string) => db.update(schema.featureTurns).set({ content: acc, status }).where(eq(schema.featureTurns.id, asstId)).run()
 
   try {
-    // append-only：user 轮（干净 message）+ assistant 占位轮（流式写入）。
+    // append-only: a user turn (clean message) + an assistant placeholder turn (filled in as the stream arrives).
     asstId = appendTurns({ db, turnTable: schema.featureTurns, fkField: 'taskId', fkValue: taskId, now, message }).assistantId
     db.update(schema.featureTasks).set({ status: 'working', error: null, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
     emit('chat', 'user')
@@ -129,18 +133,18 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     const t0 = task()
     const isFirstTurn = !(ctx.provider === 'codex' ? t0?.codexSessionId : t0?.sessionId)
 
-    // 送给 agent 的消息（可能被增强/前缀）；存库/展示的仍是原始干净 message。
+    // The message sent to the agent (may be enriched/prefixed); what is stored/displayed stays the original clean message.
     let agentMessage = message
-    let issueEnriched = '' // 首轮抓到的 issue 正文，也喂给「读懂需求」标题生成
-    // 首轮：抓 issue/PR 正文 + 下载配图（agent 上不了网、下不了图；只做一次）。
+    let issueEnriched = '' // issue body fetched on the first turn; also fed into the "understand the requirement" title generation
+    // First turn: fetch the issue/PR body + download images (the agent has no network and can't download images; done once).
     if (isFirstTurn) {
       try {
         const ic = await fetchIssueContext(`${t0?.description || ''}\n${message || ''}`, join(ctx.assetsDir, taskId))
         if (ic) {
           issueEnriched = ic.enrichedText
-          agentMessage = `${message}\n\n【需求相关的 issue/PR 内容（后端已抓取）】\n${ic.enrichedText}`
+          agentMessage = `${message}\n\n[Issue/PR content related to this requirement (already fetched by the backend)]\n${ic.enrichedText}`
           if (ic.imagePaths.length) {
-            agentMessage += `\n\n【配图（已下载到本地，先用 Read 逐张打开看再动手）】\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
+            agentMessage += `\n\n[Images (already downloaded locally — open each one with Read before you start working)]\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
           }
           emit('stage', `已抓取 issue/PR 内容（${ic.summary}）`)
         }
@@ -148,15 +152,15 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
         emit('stage', `issue/PR 抓取失败，用原始需求继续：${(e as Error).message}`)
       }
     }
-    // 首轮且还没标题：读懂需求生成一句短标题（便宜快模型，后台异步不阻塞 develop；失败则列表回退显示描述）。
+    // First turn with no title yet: read the requirement and generate a one-line short title (cheap/fast model, async in the background so it doesn't block develop; on failure the list falls back to showing the description).
     if (isFirstTurn && !t0?.title) {
       void genFeatureTitle({ provider: ctx.provider, model: ctx.translateModel, requirement: `${t0?.description || message}\n${issueEnriched}`, lang: ctx.lang, cwd: ctx.localPath })
         .then((title) => { if (title) db.update(schema.featureTasks).set({ title, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run() })
-        .catch(() => { /* 生成失败无所谓，列表回退显示描述 */ })
+        .catch(() => { /* generation failure is fine, the list falls back to showing the description */ })
     }
-    // ultracode 前缀由共享运行器（chat.ts / runCodexChat）按 flag 注入，这里不再拼。
+    // The ultracode prefix is injected by the shared runner (chat.ts / runCodexChat) based on the flag; not assembled here.
 
-    // 确保新分支 worktree（首轮建；之后复用）。绝不碰真实本地 clone。
+    // Ensure the new-branch worktree (created on the first turn, reused afterwards). Never touch the real local clone.
     const wtPath = await ensureFeatureWorktree({
       db, schema, taskId, localPath: ctx.localPath, reposDir: ctx.reposDir, worktreeLocation: ctx.worktreeLocation, defaultBranch: ctx.defaultBranch, now, emit,
     })
@@ -181,8 +185,8 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
         message: agentMessage,
         historyAccess,
         allowDanger: ctx.allowDanger,
-        ultracode: ctx.ultracode, // 前缀由运行器注入
-        baseBranch: cur?.baseBranch || ctx.defaultBranch, // 开 PR 时 gh pr create --base 用它
+        ultracode: ctx.ultracode, // the prefix is injected by the runner
+        baseBranch: cur?.baseBranch || ctx.defaultBranch, // used as gh pr create --base when opening the PR
 
         onSpawn: (cp) => activeFeatureChats.set(taskId, cp),
         onStop: (stop) => featureStops.set(taskId, stop),
@@ -211,10 +215,10 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
 
     flush(stopped ? 'stopped' : 'done')
 
-    // 收尾：PR 回查与「等你拍板」解耦——agent 可能同一轮既开了 PR 又提了问，两者都要处理。
-    // ① 只在可能有 PR 时才回查 gh（这轮放行了危险命令 / 之前已开过 PR）——省掉必为 null 的往返；
-    //    查到就联动 prUrl/prNumber；opened 借「PR 仍在 GitHub 上」天然粘滞，不因后续提问回合丢失。
-    // ② badge：agent 在等你拍板 → awaiting（此时 prUrl 仍照记，链接不丢）；否则有 PR → opened；否则 working。
+    // Wrap-up: querying the PR back and "waiting on you" are decoupled — the agent may open a PR and ask a question in the same turn, so handle both.
+    // ① Only query gh when a PR could exist (dangerous commands were allowed this turn / a PR was opened before) — skips a round trip that would always be null;
+    //    if found, sync prUrl/prNumber. `opened` is naturally sticky because the PR stays on GitHub, so later question turns don't lose it.
+    // ② badge: the agent is waiting on you → awaiting (prUrl is still recorded, the link isn't lost); else a PR exists → opened; else working.
     const cur = task()
     let prPatch: Record<string, unknown> = {}
     let prOpened = !!cur?.prUrl

@@ -3,9 +3,9 @@ import { and, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { fetchPrMeta } from '~core/github/gh'
 
-// 建一个「修复 PR」对话任务（惰性）：插一行 fixes（status=open），不跑验证、不入队。
-// worktree 在第一条对话消息时由 ensureWorktree 惰性创建。
-// 同一 PR 已有任务就直接复用（点进 tab 多次不重复建；discard 是硬删，所以不会有残留行）。
+// Create a "fix PR" chat task (lazily): insert one fixes row (status=open), no validation run, no queueing.
+// The worktree is created lazily by ensureWorktree on the first chat message.
+// If the PR already has a task, reuse it (opening the tab repeatedly doesn't create duplicates; discard is a hard delete, so no leftover rows).
 export default defineEventHandler(async (event) => {
   const projectId = getRouterParam(event, 'id')!
   const prNumber = Number(getRouterParam(event, 'number'))
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
   if (!project) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
   if (!project.localPath) throw createError({ statusCode: 400, statusMessage: '项目未配置本地 clone 路径（worktree 需要它）' })
 
-  // 取该 PR 最新的 fix 行（discard 是硬删，所以不会有残留行；存在即复用）
+  // Get the latest fix row for this PR (discard is a hard delete, so there are no leftover rows; if one exists, reuse it)
   const latest = () => {
     const rows = d
       .select()
@@ -31,12 +31,13 @@ export default defineEventHandler(async (event) => {
   const pre = latest()
   if (pre) return { id: pre.id, status: pre.status }
 
-  // 服务端取 PR 元数据（branch/author/title 不信客户端）
+  // Fetch PR metadata server-side (don't trust the client for branch/author/title)
   const meta = await fetchPrMeta(project.repo, prNumber)
   if (!meta.branch) throw createError({ statusCode: 400, statusMessage: '拿不到 PR 分支' })
 
-  // 二次检查：fetchPrMeta 期间可能有并发请求已建好。这次 SELECT 到下面 INSERT 之间没有 await，
-  // Node 单线程下原子执行 → 杜绝同 PR 并发建重复行。
+  // Re-check: a concurrent request may have created it while fetchPrMeta was in flight. There is no
+  // await between this SELECT and the INSERT below, so it runs atomically on Node's single thread →
+  // no duplicate rows for the same PR under concurrency.
   const dup = latest()
   if (dup) return { id: dup.id, status: dup.status }
 
@@ -47,7 +48,7 @@ export default defineEventHandler(async (event) => {
     projectId,
     prNumber,
     branch: meta.branch,
-    baseRef: meta.baseBranch || project.defaultBranch || null, // PR 目标分支，diff 三点用
+    baseRef: meta.baseBranch || project.defaultBranch || null, // PR target branch, used for three-dot diff
     prAuthor: meta.author || null,
     title: meta.title || null,
     lang: getCookie(event, 'mr-locale') || 'zh',

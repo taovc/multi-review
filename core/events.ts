@@ -1,4 +1,4 @@
-// 进度总线：core 引擎 emit，SSE 接口 subscribe，按 reviewId 分流。
+// Progress bus: the core engine emits, the SSE endpoints subscribe, routed by reviewId.
 export type CockpitEvent = {
   reviewId: string
   ts: string
@@ -32,12 +32,12 @@ class EventBus {
       try {
         h(e)
       } catch {
-        // 单个订阅者异常不影响其它
+        // one subscriber throwing must not affect the others
       }
     }
   }
 }
 
-// HMR-safe 单例
+// HMR-safe singleton
 const g = globalThis as unknown as { __cockpitBus?: EventBus }
 export const cockpitBus = g.__cockpitBus ?? (g.__cockpitBus = new EventBus())

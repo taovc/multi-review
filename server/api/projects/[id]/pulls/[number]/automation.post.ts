@@ -3,9 +3,11 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { upsertPrAutomation, getPrAutomationRow } from '~core/automation/state'
 
-// 单条 PR 的自动化开关覆盖（PR 抽屉里的两个 switch：自动审核 / 自动修复）。
-// 打开任一开关（设为 true）= 重新打开功能 → 清零 round/note/optOut/pendingFix（用户拍板：每次重开都重跑 maxRounds 轮）。
-// 关闭只设开关 false（不影响正在跑的，引擎跑完就停）。reviewOn/fixOn 传 null = 回到「继承项目配置」。
+// Per-PR automation switch overrides (the two switches in the PR drawer: auto review / auto fix).
+// Turning either switch on (set to true) = re-enabling the feature → clears round/note/optOut/pendingFix
+// (user's call: every re-enable runs maxRounds rounds again).
+// Turning it off only sets the switch to false (does not affect a run in flight; the engine stops after
+// it finishes). Passing null for reviewOn/fixOn goes back to "inherit the project config".
 const Body = z.object({
   reviewOn: z.boolean().nullable().optional(),
   fixOn: z.boolean().nullable().optional(),
@@ -29,9 +31,10 @@ export default defineEventHandler(async (event) => {
   let enabling = false
   if (reviewOn !== undefined) { patch.reviewOn = reviewOn; if (reviewOn === true) enabling = true }
   if (fixOn !== undefined) { patch.fixOn = fixOn; if (fixOn === true) enabling = true }
-  // 重新打开 → 清零轮数与停手标记，并解除 opt-out（重新让引擎接管这条 PR）。
-  // 关键：lastFixReviewSha 也要清——否则 decide 的去重闸（同一 review head 不重复修）会挡住重开后的首次修复，
-  // 让「重开重跑 maxRounds 轮」落空。
+  // Re-enabling → reset the round count and the stop marker, and lift the opt-out (let the engine take
+  // this PR back over).
+  // Key point: lastFixReviewSha must be cleared too — otherwise decide's dedup gate (no repeat fix for the
+  // same review head) blocks the first fix after re-enabling, defeating "re-enable runs maxRounds rounds again".
   if (enabling) {
     patch.round = 0
     patch.note = null

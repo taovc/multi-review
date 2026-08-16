@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 浅色/深色切换；偏好持久化由 @nuxtjs/color-mode 管理
+// Light/dark toggle; persisting the preference is handled by @nuxtjs/color-mode
 const { t } = useI18n()
 const colorMode = useColorMode()
 const isDark = computed({
@@ -9,7 +9,7 @@ const isDark = computed({
 </script>
 
 <template>
-  <!-- ClientOnly + fallback 防止 SSR 水合不一致（服务端不知道持久化偏好） -->
+  <!-- ClientOnly + fallback prevents an SSR hydration mismatch (the server doesn't know the persisted preference) -->
   <ClientOnly>
     <button
       class="text-dimmed hover:text-highlighted transition-colors flex items-center justify-center size-6"

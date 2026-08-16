@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// Feature 任务抽屉（单段式原生）：一个自由开发对话。首条消息才建任务（不输入不建、随时可关）。
-// agent 遇到真决策点会输出 ```ask-user 块 → 渲染成决策卡（点选项=下一条消息）；点「开 PR」让 agent 自己开。
+// Feature task drawer (single-phase, native): a free-form development chat. The task is only created
+// on the first message (type nothing and nothing is created; closable anytime).
+// When the agent hits a real decision point it emits an ```ask-user block → rendered as a decision card
+// (clicking an option = the next message); clicking "open PR" lets the agent open it itself.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 
 const props = defineProps<{ projectId: string; featureId: string | null }>()
@@ -15,17 +17,17 @@ type Detail = { task: Task; turns: Turn[]; events?: { ts: string; kind: string; 
 
 const data = ref<Detail | null>(null)
 const input = ref('')
-const otherAnswer = ref('') // 决策卡「其它…」自由输入
+const otherAnswer = ref('') // decision card "other…" free-text input
 const liveAssistant = ref('')
 const logLines = ref<string[]>([])
 const { confirming } = useInlineConfirm() // '' | 'discard'
 const busy = ref(false)
-const sending = ref(false) // 发送/创建/开PR 在途：防重复派发（含决策卡按钮双击）
+const sending = ref(false) // send/create/open-PR in flight: prevents duplicate dispatch (including double-clicking a decision card button)
 let es: EventSource | null = null
-// load 竞态护栏（同 main 里的修复）：切任务时旧任务在途的 load 迟到返回不能盖回 data。
+// load race guard (same fix as in main): when switching tasks, a late in-flight load for the old task must not overwrite data.
 let loadToken = 0
 
-// ultracode 后台激活 + 允许危险命令：localStorage 持久（跨任务/刷新记住），前缀由后端注入。
+// ultracode activated in the background + allow dangerous commands: persisted in localStorage (remembered across tasks/reloads), the prefix is injected by the backend.
 const allowDanger = ref(false)
 const ultracodeOn = ref(false)
 const LS_DANGER = 'mr.feature.allowDanger'
@@ -55,10 +57,10 @@ const STATUS_CLS: Record<string, string> = {
   error: 'text-error border-error/40',
 }
 
-// 决策卡：最后一条 assistant 轮里含 ```ask-user 块 → 解析出问题 + 选项（用户还没回时才显示）。
-// 只要有块就渲染卡片（哪怕没列出选项，也用「其它」自由回答），绝不让问题凭空消失。
+// Decision card: the last assistant turn contains an ```ask-user block → parse out the question + options (shown only while the user hasn't answered yet).
+// Any block renders a card (even with no options listed, the "other" free-text answer is there) — the question must never silently disappear.
 const ASK_RE = /```ask-user\s*\n([\s\S]*?)```/i
-const IS_OPT = /^(?:[-*]|\d+[.)])\s+/ // 接受 - / * / 1. / 1) 各种列举写法
+const IS_OPT = /^(?:[-*]|\d+[.)])\s+/ // accepts - / * / 1. / 1) list styles
 const askCard = computed(() => {
   const ts = data.value?.turns ?? []
   const last = ts[ts.length - 1]
@@ -70,14 +72,14 @@ const askCard = computed(() => {
   const question = lines.filter((l) => !IS_OPT.test(l)).join('\n').trim()
   return { question, options }
 })
-// 展示：正在渲染卡片的那一轮把 ask 块整段去掉（卡片已呈现）；其它历史轮把块替换成问题文本（不留空白）。
+// Display: the turn currently rendered as a card drops the whole ask block (the card already shows it); other historical turns replace the block with the question text (so nothing is left blank).
 function askQuestionText(inner: string): string {
   return inner.split('\n').map((l) => l.trim()).filter((l) => l && !IS_OPT.test(l)).join('\n')
 }
 function displayText(content: string, stripAsk: boolean): string {
   return content.replace(/```ask-user\s*\n([\s\S]*?)```/gi, (_m, inner) => (stripAsk ? '' : askQuestionText(inner))).trim()
 }
-// 选项按钮上的推荐标记只用于展示；发送时去掉（标记本身定义在 ~core/agent/decisionCard）
+// The recommended marker on option buttons is display-only; strip it when sending (the marker itself is defined in ~core/agent/decisionCard)
 function optionLabel(o: string): string { return stripRecommendedMarker(o) }
 
 function notify(msg: string, ok = false) { toast.add({ title: msg, color: ok ? 'success' : 'error', icon: ok ? 'i-lucide-check' : 'i-lucide-triangle-alert' }) }
@@ -88,7 +90,7 @@ async function load() {
   if (!fid) return
   const my = ++loadToken
   const detail = await $fetch<Detail>(`/api/features/${fid}`)
-  if (my !== loadToken || fid !== props.featureId) return // 过期结果 → 丢弃
+  if (my !== loadToken || fid !== props.featureId) return // stale result → discard
   data.value = detail
   if (!logLines.value.length && detail.events?.length) {
     logLines.value = detail.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
@@ -101,7 +103,7 @@ function openSSE() {
   const fid = props.featureId
   es = new EventSource(`/api/features/${fid}/stream`)
   es.onmessage = (ev) => {
-    if (fid !== props.featureId) return // 过期流 → 忽略
+    if (fid !== props.featureId) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
@@ -114,13 +116,13 @@ function closeSSE() { es?.close(); es = null }
 
 watch([open, () => props.featureId], () => {
   if (!open.value) { closeSSE(); return }
-  // 打开 / 切任务 / 建好后切到新 id：先清空上一个残留（否则 load 返回前会闪出旧任务内容）
+  // Opening / switching tasks / switching to the new id after creation: clear the previous leftovers first (otherwise the old task's content flashes before load returns)
   data.value = null; liveAssistant.value = ''; logLines.value = []; confirming.value = ''; otherAnswer.value = ''
   if (props.featureId) { load(); openSSE() } else closeSSE()
 })
 onBeforeUnmount(closeSSE)
 
-// 进行中轮询兜底
+// Polling backstop while a turn is in progress
 let pollTimer: ReturnType<typeof setInterval> | null = null
 watch([running, open], ([r, o]) => {
   if (r && o && !pollTimer) pollTimer = setInterval(load, 2500)
@@ -131,7 +133,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 const { scrollEl, scrollToBottom } = useScrollToBottom()
 watch([() => data.value?.turns.length, liveAssistant, open], () => { if (open.value) scrollToBottom() })
 
-// 发消息：新任务(featureId=null) → 首条消息 = 创建 + 开跑；否则 → 继续对话。返回是否发送成功。
+// Send a message: new task (featureId=null) → the first message creates it and starts the run; otherwise → continue the chat. Returns whether the send succeeded.
 async function sendChat(overrideMsg?: string): Promise<boolean> {
   const msg = (overrideMsg ?? input.value).trim()
   if (!msg || !canChat.value) return false
@@ -141,7 +143,7 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
   try {
     if (!props.featureId) {
       const res = await $fetch<{ id: string }>(`/api/projects/${props.projectId}/features`, { method: 'POST', body: { description: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
-      emit('created', res.id) // 父组件把 activeId 切到新 id → 本抽屉 featureId 变化 → watch 加载运行中的任务
+      emit('created', res.id) // the parent switches activeId to the new id → this drawer's featureId changes → the watch loads the running task
       return true
     }
     await $fetch(`/api/features/${props.featureId}/chat`, { method: 'POST', body: { message: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
@@ -153,11 +155,11 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
     return false
   } finally { sending.value = false }
 }
-// 决策卡选项 / 「其它…」自由回答（发失败不丢用户手打的文本）
+// Decision card option / "other…" free-text answer (a failed send must not lose what the user typed)
 function answer(opt: string) { void sendChat(optionLabel(opt)) }
 function answerOther() { const v = otherAnswer.value.trim(); if (!v) return; sendChat(v).then((ok) => { if (ok) otherAnswer.value = '' }) }
 
-// 开 PR：给 agent 发一句「帮我开 PR」，它自己 commit/push/gh pr create（allowDanger 强制放行 push）。
+// Open PR: send the agent a "please open a PR" message and let it commit/push/gh pr create itself (allowDanger force-allows the push).
 async function openPr() {
   if (!props.featureId || !canChat.value) return
   liveAssistant.value = ''
@@ -198,7 +200,7 @@ async function doDelete() {
   <USlideover v-model:open="open" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
     <template #content>
       <div class="h-full flex flex-col bg-default text-default">
-        <!-- 顶部 header：标题 + 在 GitHub 打开 + ✕（同 PR 详情抽屉；GitHub 链接就在 X 旁边）-->
+        <!-- Top header: title + open on GitHub + ✕ (same as the PR detail drawer; the GitHub link sits right next to the X) -->
         <div class="shrink-0 flex items-center gap-3 px-6 py-4 border-b border-default">
           <h2 class="text-base font-medium truncate min-w-0 flex-1">{{ task ? (task.title || task.description || $t('feature.tab')) : $t('feature.newTitle') }}</h2>
           <a v-if="task?.prUrl" :href="task.prUrl" target="_blank" class="text-xs text-muted hover:text-highlighted whitespace-nowrap shrink-0">{{ $t('prDrawer.openInGithub') }}</a>
@@ -207,7 +209,7 @@ async function doDelete() {
 
         <!-- body -->
         <div class="flex-1 min-h-0 flex flex-col px-6 py-4">
-        <!-- 状态 + 删除任务（标题 / GitHub 已上移到顶部 header）-->
+        <!-- Status + delete task (title / GitHub have moved up into the top header) -->
         <div v-if="task" class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default">
           <span class="shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="STATUS_CLS[status] || 'text-dimmed border-default'">{{ $t('feature.status.' + status) }}</span>
           <template v-if="confirming === 'discard'">
@@ -218,10 +220,10 @@ async function doDelete() {
           <button v-else class="ml-auto text-xs text-dimmed hover:text-highlighted disabled:opacity-40 shrink-0" :disabled="running || busy" @click="confirming = 'discard'">{{ $t('feature.discard') }}</button>
         </div>
 
-        <!-- 运行日志（有任务时）-->
+        <!-- Run log (when there is a task) -->
         <ChatLogPanel v-if="featureId" :lines="logLines" />
 
-        <!-- 滚动区：对话 + 决策卡 -->
+        <!-- Scroll area: chat + decision card -->
         <div ref="scrollEl" class="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
           <div v-if="featureId && !task" class="text-xs text-dimmed py-4">{{ $t('common.loading') }}</div>
           <div v-else-if="!featureId && !(data?.turns.length)" class="text-xs text-dimmed py-10 text-center leading-relaxed whitespace-pre-line">{{ $t('feature.newHint') }}</div>
@@ -229,9 +231,9 @@ async function doDelete() {
           <div v-for="(turn, ti) in data?.turns ?? []" :key="turn.id" :class="turn.role === 'user' ? 'text-right' : ''">
             <div v-if="turn.role === 'user'" class="inline-block max-w-[92%] text-left text-sm rounded-lg px-3 py-2 whitespace-pre-wrap break-words bg-inverted text-inverted">{{ turn.content }}</div>
             <div v-else class="inline-block max-w-[92%] text-left text-sm rounded-lg px-3 py-2 break-words bg-muted">
-              <!-- 流式中：纯文本(避免半截 markdown 重叠)；完成后：markdown（卡片那轮才去掉 ask 块）-->
+              <!-- While streaming: plain text (avoids half-parsed markdown overlapping); once done: markdown (only the card's turn drops the ask block) -->
               <template v-if="turn.status === 'streaming' && ti === (data?.turns.length ?? 0) - 1">
-                <!-- 取 liveAssistant 与已落库 content 中较长者：迟到连 SSE 时 liveAssistant 只有尾段，别覆盖完整前半段 -->
+                <!-- Take whichever is longer, liveAssistant or the persisted content: when the SSE connection is late liveAssistant only holds the tail, don't let it override the complete earlier part -->
                 <span class="whitespace-pre-wrap break-words">{{ liveAssistant.length >= turn.content.length ? liveAssistant : turn.content }}</span>
                 <span class="animate-pulse">▍</span>
               </template>
@@ -244,7 +246,7 @@ async function doDelete() {
             <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ $t('feature.status.working') }}…
           </div>
 
-          <!-- 决策卡（agent 在等你拍板）-->
+          <!-- Decision card (the agent is waiting for your call) -->
           <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2">
             <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
             <p v-if="askCard.question" class="text-sm font-medium whitespace-pre-wrap">{{ askCard.question }}</p>
@@ -268,7 +270,7 @@ async function doDelete() {
           <p v-if="status === 'error' && task?.error" class="text-xs text-error">{{ task.error }}</p>
         </div>
 
-        <!-- 动作区 + composer -->
+        <!-- Actions + composer -->
         <div class="shrink-0 pt-3 mt-2 border-t border-default space-y-2">
           <div v-if="task" class="flex items-center gap-2 flex-wrap">
             <button
@@ -310,7 +312,7 @@ async function doDelete() {
 </template>
 
 <style scoped>
-/* ultracode 按钮：激活态才有高光扫过；未激活是灰的、不扫光。*/
+/* ultracode button: the shine sweep only runs when active; inactive is gray with no sweep. */
 .ultra-btn.is-active::after {
   content: '';
   position: absolute;

@@ -1,40 +1,40 @@
 # pr-cockpit / PR Cockpit
 
-## 项目定位
+## What this project is
 
-- 这是用户的本地批量 PR 审核工作台，产品名是 PR Cockpit，仓库路径通常是 `/Users/openstudio/work/products/tools/pr-cockpit`。
-- 核心流程：拉取 GitHub PR 列表，给每个 PR 建隔离 worktree，AI 产出结构化 review，人类在 Web UI 里把关后再发 GitHub 行级/汇总评论。
-- 技术栈：Nuxt 4 + @nuxt/ui/Tailwind v4，better-sqlite3 + drizzle，Nitro `server/api/`，本地 `gh` CLI，`@anthropic-ai/claude-agent-sdk` 和 `@openai/codex-sdk`。
-- 主要目录：`core/` 是业务和 agent 引擎，`server/api/` 是 Nitro API，`app/` 是 Vue UI，`tests/` 是轻量合同/回归测试，`data/` 是本地 SQLite 和旧集中 worktree 迁移源。
+- This is the user's local batch PR review workbench. The product name is PR Cockpit; the repo usually lives at `/Users/openstudio/work/products/tools/pr-cockpit`.
+- Core flow: pull the GitHub PR list, give each PR an isolated worktree, have the AI produce a structured review, and let the human vet it in the web UI before posting line-level/summary comments to GitHub.
+- Stack: Nuxt 4 + @nuxt/ui/Tailwind v4, better-sqlite3 + drizzle, Nitro `server/api/`, the local `gh` CLI, `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk`.
+- Main directories: `core/` is the business logic and agent engine, `server/api/` is the Nitro API, `app/` is the Vue UI, `tests/` holds lightweight contract/regression tests, `data/` is the local SQLite plus the migration source for the old central worktrees.
 
-## 本地运行
+## Running locally
 
-- 常用检查：`pnpm typecheck`、`pnpm test`，风险较大的 UI/打包改动再跑 `pnpm build`。
-- Dev server：`pnpm dev`，README 默认是 `http://localhost:3001`。
-- 用户机器上的常驻 pr-cockpit 实例通常在端口 `5332`，`4737` 是另一个项目。动进程前先确认端口，不要按 `.output/server/index.mjs` 进程名误杀。
-- SQLite 没有正式 drizzle migration 流程。实际建表在 `core/db/client.ts` 的 `ensureSchema()` 和 `ensureColumns()`，`core/db/schema.ts` 只提供查询类型。改 DB 时要同步这两处，并保持启动重跑幂等。
-- 默认 worktree 位置是每个项目本地 clone 内的 `.pr-cockpit-worktrees/<taskId>`；该目录会被写进目标 repo 的 `.git/info/exclude`（本地生效、不进版本库），**不要**去改目标 repo 共享的 `.gitignore`。这行 exclude 不影响 IDE 发现这些 worktree —— 编辑器找仓库靠文件系统扫描，不读 gitignore/exclude；真正决定能否发现的是编辑器自己的扫描深度设置（VS Code 是 `git.repositoryScanMaxDepth`，默认 1，需要 ≥2）。启动恢复会把仍存在的旧 `./data/worktrees/<taskId>` 持久 fix/feature worktree 用 `git worktree move` 迁过去，并把指向已消失目录的路径置空。`WORKTREE_LOCATION=central` 才继续使用 `REPOS_DIR`。
+- Usual checks: `pnpm typecheck`, `pnpm test`; also run `pnpm build` for riskier UI/bundling changes.
+- Dev server: `pnpm dev`, README defaults to `http://localhost:3001`.
+- The long-running pr-cockpit instance on the user's machine is usually on port `5332`; `4737` is a different project. Confirm the port before touching processes — don't kill the wrong project's server by matching on the `.output/server/index.mjs` process name.
+- SQLite has no formal drizzle migration flow. Tables are actually created by `ensureSchema()` and `ensureColumns()` in `core/db/client.ts`; `core/db/schema.ts` only provides query types. When changing the DB, update both places and keep them idempotent, so that re-running them on every startup stays safe.
+- The default worktree location is `.pr-cockpit-worktrees/<taskId>` inside each project's local clone; that directory is written into the target repo's `.git/info/exclude` (local only, not committed) — do **not** touch the target repo's shared `.gitignore`. That exclude line does not stop IDEs from discovering those worktrees — editors find repos by scanning the filesystem, not by reading gitignore/exclude; what actually decides discovery is the editor's own scan depth setting (in VS Code, `git.repositoryScanMaxDepth`, default 1, needs to be ≥2). On startup, recovery moves any still-existing old `./data/worktrees/<taskId>` persistent fix/feature worktrees over with `git worktree move`, and clears paths pointing at directories that are gone. Only `WORKTREE_LOCATION=central` keeps using `REPOS_DIR`.
 
-## 改代码时的约束
+## Constraints when changing code
 
-- 不要只信旧文档或 Claude memory。这里演进很快，做行为判断时优先读当前源码、测试和最近 commit。
-- Review agent 的硬约束是只读：只能审，不改文件，不 git 写，不 gh 写。对外发评论必须由引擎在用户确认后执行。
-- Provider 相关改动要保持 Claude/Codex 边界清楚。项目 provider、模型、effort、session id 都要按当前 provider 走；不要拿 Claude session id resume Codex thread，反之也不行。
-- Codex 代码路径优先复用现有 helper。历史上裸 `new Codex()` 在生产 bundle 里踩过二进制解析问题，新增入口应检查并复用 `core/agent/codexAgent.ts` 里的封装。
-- Codex SDK 的 `type: "error"` item 可能只是非致命 warning；致命失败要看当前 runner 对 `turn.failed`、顶层 error、无最终输出等的处理，不要机械地见 error item 就 throw。
-- Fix / Feature / Global chat 是会写 worktree 或跑命令的区域。默认不要让 agent 自己 push 或 `gh pr create`；涉及 `allowDanger`、网络、danger guard 的改动要逐条确认当前 provider 的真实执行边界。
-- PR automation 是高风险区。任何 live 验证都可能触发 review/comment/fix/push，除非用户明确要求，不要对真实 PR 开自动化冒烟。优先用单测和 mock。
+- Don't trust old docs or Claude memory alone. This evolves fast — when judging behavior, read the current source, tests and recent commits first.
+- The review agent's hard constraint is read-only: it may only review — it must not edit files, must not perform any git write, and must not perform any gh write. Posting comments externally must be done by the engine, after the user confirms.
+- Provider-related changes must keep the Claude/Codex boundary clean. Project provider, model, effort and session id all have to follow the current provider; don't resume a Codex thread with a Claude session id, or vice versa.
+- Codex code paths should reuse existing helpers. Historically, a bare `new Codex()` hit binary resolution problems in the production bundle — new entry points should check for and reuse the wrapper in `core/agent/codexAgent.ts`.
+- A `type: "error"` item from the Codex SDK may just be a non-fatal warning; for fatal failures, look at how the current runner handles `turn.failed`, top-level errors, no final output, etc. — don't mechanically throw on every error item.
+- Fix / Feature / Global chat are the areas that write to worktrees or run commands. By default, don't let the agent push or run `gh pr create` on its own; for changes involving `allowDanger`, the network, or the danger guard, verify the current provider's real execution boundary case by case.
+- PR automation is a high-risk area. Any live verification can trigger review/comment/fix/push — unless the user explicitly asks for it, don't run automation smoke tests against real PRs. Prefer unit tests and mocks.
 
-## 前端/UI 约定
+## Frontend/UI conventions
 
-- 这是工作台，不是落地页。界面应偏密集、可扫描、少装饰，优先复用已有 @nuxt/ui、lucide/iconify 和本地组件风格。
-- Drawer 里不要再套普通 modal 做确认；历史上 drawer 上的弹窗交互容易出问题。用现有内联确认模式，例如 `useInlineConfirm`。
-- 异步 `load()` 写组件状态时要防 stale result：记录 load token 和当前 id，await 后确认仍是同一个实体再落值；SSE handler 也要检查打开时捕获的 id；切换实体时清空旧的 live/log/detail 状态。
-- Operational screens 不要无理由套窄 `max-w-2xl` / `max-w-3xl`；这里的表格、drawer、diff、日志都应该充分利用横向空间。
+- This is a workbench, not a landing page. The UI should be dense, scannable and lightly decorated, and should reuse the existing @nuxt/ui, lucide/iconify and local component styles.
+- Don't nest a regular modal inside a drawer for confirmation; modal-on-drawer interactions have caused problems historically. Use the existing inline confirmation pattern, e.g. `useInlineConfirm`.
+- When an async `load()` writes component state, guard against stale results: record a load token and the current id, and after the await confirm it is still the same entity before committing the value; SSE handlers must also check the id captured when they opened. Clear stale live/log/detail state when switching entities.
+- Don't wrap operational screens in a narrow `max-w-2xl` / `max-w-3xl` without reason; tables, drawers, diffs and logs here should all use the horizontal space fully.
 
-## 历史风险点
+## Historical risk areas
 
-- `post.post.ts` 曾有发布评论并发竞态，修法是 posting 状态和 CAS 认领。碰 review 发布、recheck、automation dispatch 时要确认没有重新打开这个窗口。
-- 自动化曾出现 push 热循环、默认修别人 PR、findings 状态误判等问题。当前代码已有修复，但相关逻辑仍要靠测试锁住。
-- LAN remote access PR #51 的历史审查结论是 request changes：CSRF/Host/DNS rebinding/SSE/token 暴露等风险未应假定已修，除非当前代码或后续 PR 明确证明。
-- `runClaudeStream` 默认是 20 分钟空闲超时加 4 小时硬上限；无人值守路径如果复用它，可能需要显式更短 timeout。
+- `post.post.ts` used to have a concurrency race when posting comments; the fix was a posting state plus CAS claiming. When touching review posting, recheck or automation dispatch, make sure that window hasn't been reopened.
+- Automation has previously had problems such as push hot loops, fixing other people's PRs by default, and misjudged findings state. The current code has fixes for these, but the logic still has to be locked down by tests.
+- The historical review verdict on the LAN remote access PR #51 was request changes: risks such as CSRF/Host/DNS rebinding/SSE/token exposure must not be assumed fixed unless the current code or a later PR clearly proves it.
+- `runClaudeStream` defaults to a 20-minute idle timeout plus a 4-hour hard limit; unattended paths reusing it may need an explicitly shorter timeout.

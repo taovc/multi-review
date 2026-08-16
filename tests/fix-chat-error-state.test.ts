@@ -83,7 +83,7 @@ try {
   rmSync(wt, { recursive: true, force: true })
 }
 
-// 统一行为（不分 provider）：聊天轮真出错 → fix 标 error + 错误信息落库 + 该轮 error。
+// Uniform behavior across providers: when a chat turn really fails → fix marked error + error message persisted + that turn marked error.
 assert.equal(fixRow.status, 'error')
 assert.equal(fixRow.error, 'claude runtime failed')
 assert.equal(turns.at(-1)?.status, 'error')

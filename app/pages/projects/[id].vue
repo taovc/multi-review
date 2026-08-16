@@ -49,7 +49,7 @@ async function onProjectDeleted() {
   await navigateTo('/')
 }
 
-// PR 详情 drawer（含 AI 审核 + 修复 tab）
+// PR detail drawer (includes the AI review + fix tabs)
 const drawerOpen = ref(false)
 const drawerPr = ref<number | null>(null)
 const drawerReviewId = ref<string | null>(null)
@@ -62,27 +62,29 @@ function openDetail(prNumber: number, reviewId: string | null = null, fixId: str
   drawerTab.value = tab
   drawerOpen.value = true
 }
-// 抽屉里的两个自动化开关跟着列表实时数据走（每 8s 轮询会刷新有效状态/note/轮数）
+// The drawer's two automation switches follow the list's live data (the 8s poll refreshes the effective state/note/round count)
 const drawerPull = computed(() => (drawerPr.value != null ? pullsResp.value?.pulls.find((p) => p.number === drawerPr.value) ?? null : null))
 async function onTaskCreated() {
   await refreshPulls()
-  // drawer 开着时，把这个 PR 最新的 fixId 同步回来（验证表单刚建的 fix，重开 drawer 时别丢成空表单）
+  // While the drawer is open, sync back this PR's latest fixId (so a fix just created from the verify form isn't lost as an empty form when the drawer reopens)
   if (drawerPr.value != null) {
     const fresh = pullsResp.value?.pulls.find((p) => p.number === drawerPr.value)
     if (fresh?.fixId) drawerFixId.value = fresh.fixId
   }
 }
 
-// ── 全部 PR：一次拉够（FETCH_LIMIT），所有维度前端过滤 + 前端分页（总数/翻页都跟着 filter 走）──
+// ── All PRs: fetch enough in one go (FETCH_LIMIT), then filter and paginate on the client across every dimension (total/paging follow the filters) ──
 const PER_PAGE = 10
-const FETCH_LIMIT = 100 // 后端单次上限；「进行中」一般全拉得到，「全部」范围拉最近 100
+const FETCH_LIMIT = 100 // backend per-request cap; the in-progress scope usually fits entirely, the "all" scope fetches the latest 100
 type PullsResp = { pulls: Pull[]; totalCount: number; hasNextPage: boolean; endCursor: string | null }
 const pullsResp = ref<PullsResp | null>(null)
 const pullsPending = ref(false)
 const page = ref(0)
 
-// PR status 是后端分页维度：只在 open/draft 范围内时让后端拉 open（默认只 open、草稿不勾，不会被一堆 merged 淹没）；
-// 一旦勾了 merged/closed 就拉 all，再前端按 fPr 细分。其它三维（作者/审核/修复）纯前端过滤当前页。
+// PR status is the backend's pagination dimension: while the selection stays within open/draft, ask the
+// backend for open (the default is open only, drafts unchecked, so a pile of merged PRs can't drown it out);
+// as soon as merged/closed is checked, fetch all and refine by fPr on the client. The other three
+// dimensions (author/review/fix) filter the current page purely on the client.
 const fPr = ref<string[]>(['open'])
 const backendState = computed(() => {
   const f = fPr.value
@@ -104,13 +106,14 @@ async function loadPulls() {
 }
 function resetAndLoad() { page.value = 0; loadPulls() }
 onMounted(resetAndLoad)
-watch(backendState, resetAndLoad) // 切「进行中 ↔ 全部」范围 → 重新拉
+watch(backendState, resetAndLoad) // switching between the in-progress and all scopes → refetch
 async function refreshPulls() { await loadPulls() }
 function nextPage() { if (page.value < pageCount.value - 1) page.value++ }
 function prevPage() { if (page.value > 0) page.value-- }
 
-// 自动刷新：页面可见时每 8s 拉一次 PR 列表。两个「已更新」标识在后端实时算（head sha / review 计数），
-// 不需要后台 refresh-states，任何状态变化都会随列表刷新冒出来。
+// Auto-refresh: fetch the PR list every 8s while the page is visible. Both "updated" markers are computed
+// live on the backend (head sha / review count), so no background refresh-states is needed — any state
+// change surfaces with the list refresh.
 let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   pollTimer = setInterval(() => {
@@ -120,7 +123,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
-// ── 多维 filter（作者 / PR / 审核 / 修复，都多选，前端过滤）──
+// ── Multi-dimension filters (author / PR / review / fix, all multi-select, filtered on the client) ──
 const fAuthors = ref<string[]>([])
 const fReview = ref<string[]>([])
 const fFix = ref<string[]>([])
@@ -136,7 +139,7 @@ function toggleFilter(key: FilterKey, v: string) {
   const arr = filterRefs[key]
   arr.value = arr.value.includes(v) ? arr.value.filter((x) => x !== v) : [...arr.value, v]
 }
-// 一键全选 / 全不选该维度（已全选则清空，否则选满）
+// Select / deselect a whole dimension in one click (clears it when everything is already selected, otherwise selects all)
 function toggleAll(key: FilterKey, opts: string[]) {
   const arr = filterRefs[key]
   arr.value = arr.value.length === opts.length ? [] : [...opts]
@@ -181,18 +184,18 @@ const visiblePulls = computed(() => {
   if (fWorktree.value.length) list = list.filter((p) => worktreeKey(p).some((k) => fWorktree.value.includes(k)))
   return list
 })
-// 前端分页：总数/翻页都基于过滤后的结果
+// Client-side pagination: total and paging are both based on the filtered result
 const pageCount = computed(() => Math.max(1, Math.ceil(visiblePulls.value.length / PER_PAGE)))
 const pagedPulls = computed(() => visiblePulls.value.slice(page.value * PER_PAGE, page.value * PER_PAGE + PER_PAGE))
-watch([fAuthors, fReview, fFix, fWorktree], () => { page.value = 0 }) // 改 filter → 回第一页（fPr 走 backendState 的 reset）
+watch([fAuthors, fReview, fFix, fWorktree], () => { page.value = 0 }) // changing a filter → back to page one (fPr resets through backendState)
 
-// filter 可选项
+// filter options
 const PR_OPTS = ['open', 'draft', 'merged', 'closed']
 const REVIEW_OPTS = ['none', 'reviewing', 'reviewed', 'posted', 'approved', 'changes']
 const FIX_OPTS = ['none', 'open', 'ready', 'pushing', 'pushed', 'error']
 const WT_OPTS = ['has', 'stale', 'none']
 
-// ── 三列状态显示 ──
+// ── The three status columns ──
 const PR_STATE: Record<string, { label: string; cls: string }> = {
   open: { label: 'status.pr.open', cls: 'text-default border-accented' },
   merged: { label: 'status.pr.merged', cls: 'text-highlighted border-accented' },
@@ -200,7 +203,7 @@ const PR_STATE: Record<string, { label: string; cls: string }> = {
   draft: { label: 'status.pr.draft', cls: 'text-dimmed border-default' },
 }
 function pullBadge(p: Pull) {
-  // 纯 GitHub 生命周期：open/draft/merged/closed（评审决定挪到 Review 列）
+  // Pure GitHub lifecycle: open/draft/merged/closed (the review decision moved to the Review column)
   return PR_STATE[p.isDraft ? 'draft' : p.state] ?? { label: 'status.pr.unknown', cls: 'text-dimmed border-default' }
 }
 function taskStatusLabel(s: string) {
@@ -211,7 +214,7 @@ function fixStatusLabel(s: string) {
   const k = `status.fix.${s}`
   return te(k) ? t(k) : s
 }
-// Review 列：本系统审核任务态优先；否则 GitHub 评审决定 / 「已审核」；都无 → null（显示 —）
+// Review column: this system's review task state wins; otherwise GitHub's review decision / "reviewed"; neither → null (renders —)
 function reviewCell(p: Pull): { label: string; cls: string } | null {
   if (p.taskStatus) {
     const cls = p.taskStatus === 'error' ? 'text-highlighted font-medium' : INFLIGHT.includes(p.taskStatus) ? 'text-toned' : 'text-default'
@@ -226,7 +229,7 @@ function fixCell(p: Pull): { label: string; cls: string } | null {
   if (p.fixStatus) return { label: fixStatusLabel(p.fixStatus), cls: p.fixStatus === 'error' ? 'text-error font-medium' : 'text-toned' }
   return null
 }
-// filter 选项文案
+// filter option labels
 function reviewOptLabel(k: string) {
   if (k === 'none') return t('project.reviewNone')
   if (k === 'reviewed') return t('project.tag.reviewed')
@@ -243,7 +246,7 @@ function worktreeOptLabel(k: string) {
   if (k === 'stale') return t('project.worktree.stale')
   return t('project.worktree.none')
 }
-// filter 维度（sel 取 unref 数组用于显示 includes；toggle 走 toggleFilter）
+// filter dimensions (sel is the unref'd array, used for the includes check when rendering; toggling goes through toggleFilter)
 const filterDims = computed(() => [
   { key: 'author' as const, label: t('project.col.author'), sel: fAuthors.value, opts: authors.value, fmt: (k: string) => k },
   { key: 'pr' as const, label: t('project.col.prStatus'), sel: fPr.value, opts: PR_OPTS, fmt: (k: string) => t('status.pr.' + k) },
@@ -255,7 +258,7 @@ const filterDims = computed(() => [
 
 <template>
   <div class="max-w-6xl mx-auto px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-12">
-    <!-- 头 -->
+    <!-- header -->
     <div v-if="project" class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div class="min-w-0">
         <h1 class="text-2xl sm:text-3xl font-light tracking-tight break-words">{{ project.name }}</h1>
@@ -264,8 +267,8 @@ const filterDims = computed(() => [
       <span class="text-xs text-dimmed">{{ msg }}</span>
     </div>
 
-    <!-- Tabs：只剩 全部 PR + 项目配置 -->
-    <!-- overflow-y-hidden：overflow-x-auto 会把 y 轴也算成 auto，叠加 tab 的 -mb-px 会冒出多余的竖向滚动条 -->
+    <!-- Tabs: only All PRs + project config remain -->
+    <!-- overflow-y-hidden: overflow-x-auto also makes the y axis auto, which together with the tabs' -mb-px produces a stray vertical scrollbar -->
     <div class="mt-8 sm:mt-10 flex gap-6 sm:gap-8 border-b border-default text-sm overflow-x-auto overflow-y-hidden">
       <button
         class="pb-3 -mb-px border-b-2 transition-colors"
@@ -287,9 +290,9 @@ const filterDims = computed(() => [
     <FeatureTab v-if="tab === 'feature' && project" :project-id="projectId" />
     <ProjectConfig v-if="tab === 'config' && project" :project="project" @changed="onProjectChanged" @deleted="onProjectDeleted" />
 
-    <!-- ── 全部 PR ── -->
+    <!-- ── All PRs ── -->
     <div v-show="tab === 'pulls'" class="mt-8">
-      <!-- 多维 filter：每个维度一个独立下拉（点开是 multi-checkbox） -->
+      <!-- Multi-dimension filters: one dropdown per dimension (opens into a multi-checkbox list) -->
       <div class="flex items-center gap-2 flex-wrap">
         <UPopover v-for="dim in filterDims" :key="dim.key" :content="{ align: 'start' }">
           <UButton variant="outline" color="neutral" size="sm" trailing-icon="i-lucide-chevron-down" class="w-36 justify-between">
@@ -319,10 +322,10 @@ const filterDims = computed(() => [
         <UButton variant="ghost" color="neutral" size="sm" :loading="pullsPending" icon="i-lucide-refresh-cw" @click="refreshPulls()">{{ $t('project.refreshList') }}</UButton>
       </div>
 
-      <!-- PR 列表：PR | 标题(固定宽·换行) | 作者 | PR状态 | 审核 | 修复 -->
+      <!-- PR list: PR | title (fixed width, wraps) | author | PR status | review | fix -->
       <div class="mt-3 overflow-x-auto">
         <div class="md:min-w-[46rem]">
-        <!-- 列头：仅桌面显示（手机是卡片，不需要列名）-->
+        <!-- Column headers: desktop only (mobile renders cards, which don't need column names)-->
         <div class="hidden md:grid grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
           <span>PR</span>
           <span>{{ $t('project.col.title') }}</span>
@@ -331,33 +334,34 @@ const filterDims = computed(() => [
           <span class="text-center">{{ $t('project.col.reviewStatus') }}</span>
           <span class="text-center">{{ $t('project.col.fixStatus') }}</span>
         </div>
-        <!-- 手机=卡片(flex-col)，桌面=6 列网格。两个 md:contents 包裹层在桌面「消融」，
-             其子元素直接落进网格列；手机上它们各自成组(标题组 / 状态组)。 -->
+        <!-- Mobile = card (flex-col), desktop = 6-column grid. The two md:contents wrappers dissolve on
+             desktop so their children land directly in the grid columns; on mobile they each form a
+             group (title group / status group). -->
         <div
           v-for="p in pagedPulls"
           :key="p.number"
           class="flex flex-col gap-2 py-3 px-1 border-b border-default text-sm cursor-pointer hover:bg-elevated/40 transition-colors md:grid md:grid-cols-[3.5rem_minmax(20rem,1fr)_8rem_6rem_7rem_7rem] md:gap-x-4 md:items-center md:py-0 md:h-16"
           @click="openDetail(p.number, p.taskId, p.fixId)"
         >
-          <!-- PR# + 标题 -->
+          <!-- PR# + title -->
           <div class="flex items-baseline gap-2 md:contents">
             <span class="font-medium tabular-nums shrink-0">#{{ p.number }}</span>
             <span class="text-default break-words leading-snug line-clamp-2">{{ p.title }}</span>
           </div>
-          <!-- 作者 + 三个状态：手机 flex-wrap 成一行小标签；桌面各占一列 -->
+          <!-- Author + the three statuses: on mobile they flex-wrap into a row of small tags, on desktop each takes a column -->
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1 md:contents">
             <button class="text-xs text-muted hover:text-highlighted truncate text-left" @click.stop="toggleFilter('author', p.author)">{{ p.author }}</button>
             <!-- PR status -->
             <span class="md:text-center">
               <span class="inline-block whitespace-nowrap text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="pullBadge(p).cls">{{ $t(pullBadge(p).label) }}</span>
             </span>
-            <!-- Review status + 作者已更新 -->
+            <!-- Review status + author updated -->
             <span class="text-xs flex items-center gap-1 leading-tight md:flex-col md:items-center md:justify-center md:gap-0.5 md:text-center">
               <span v-if="reviewCell(p)" :class="reviewCell(p)!.cls">{{ reviewCell(p)!.label }}</span>
               <span v-else class="text-dimmed">—</span>
               <span v-if="p.authorUpdated" class="text-[9px] text-highlighted font-medium" :title="$t('project.authorUpdatedTitle')">● {{ $t('project.authorUpdated') }}</span>
             </span>
-            <!-- Fix status：对话中（我已介入）直接接管为主状态；否则显示状态 +（可选）审核已更新 -->
+            <!-- Fix status: "chatting" (I've stepped in) takes over as the main status; otherwise show the status + (optionally) reviewer updated -->
             <span class="text-xs flex items-center gap-1 leading-tight md:flex-col md:items-center md:justify-center md:gap-0.5 md:text-center">
               <button
                 v-if="p.fixChatting"
@@ -379,7 +383,7 @@ const filterDims = computed(() => [
           {{ pullsPending ? $t('common.loading') : $t('project.noPulls') }}
         </p>
 
-        <!-- 分页：总数 = 过滤后数量；只有多页才出翻页按钮 -->
+        <!-- Pagination: total = the filtered count; the paging buttons only appear when there is more than one page -->
         <div v-if="visiblePulls.length" class="flex items-center justify-between mt-5 text-xs text-dimmed">
           <span>{{ $t('project.pagination.summaryPages', { total: visiblePulls.length, page: page + 1, pages: pageCount }) }}</span>
           <div v-if="pageCount > 1" class="flex gap-4">

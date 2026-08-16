@@ -1,40 +1,42 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
 
-// 项目：一个 repo + 一套方法学（review 模板）
+// Project: one repo + one methodology (review template)
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull(),
   repo: text('repo').notNull(), // owner/repo
-  localPath: text('local_path'), // 复用的本地 clone 路径（worktree 从这里开）
-  methodologyRef: text('methodology_ref'), // 旧：方法学文件路径（保留兼容）
-  methodologyMd: text('methodology_md'), // 旧：内联方法学（保留兼容）
-  activeSkillId: text('active_skill_id'), // 当前启用的审核 skill
+  localPath: text('local_path'), // reused local clone path (worktrees are created from here)
+  methodologyRef: text('methodology_ref'), // legacy: methodology file path (kept for compatibility)
+  methodologyMd: text('methodology_md'), // legacy: inline methodology (kept for compatibility)
+  activeSkillId: text('active_skill_id'), // the review skill currently in use
   provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
-  model: text('model'), // 审核用模型别名/全名（空=全局默认）
-  effort: text('effort'), // 审核力度由 provider 模型目录决定；Codex 可含 minimal/low/medium/high/xhigh/max/ultra（空=不设）
-  codexServiceTier: text('codex_service_tier'), // Codex 专用服务档位；null=不覆盖，fast=启用快速档
-  // 自动化「修复↔复查」每条 PR 的回合上限（防自驱闭环烧 token）。在项目配置里和模型选择同处编辑。
+  model: text('model'), // model alias/full name used for review (empty = global default)
+  effort: text('effort'), // review effort comes from the provider's model catalog; Codex may include minimal/low/medium/high/xhigh/max/ultra (empty = unset)
+  codexServiceTier: text('codex_service_tier'), // Codex-only service tier; null = no override, fast = enable the fast tier
+  // Per-PR round cap for the automated "fix ↔ recheck" loop (keeps a self-driving loop from burning tokens).
+  // Edited in the project config, next to the model selection.
   autoMaxRounds: integer('auto_max_rounds').notNull().default(2),
-  // 自动化冷却期（分钟）：某条 PR 的 head 第一次被看到后等这么久才动手，给用户时间进去关掉不想跑的。0=不冷却。
+  // Automation cooldown (minutes): after a PR's head is first seen, wait this long before acting,
+  // giving the user time to go in and turn off the ones they don't want run. 0 = no cooldown.
   autoCooldownMinutes: integer('auto_cooldown_minutes').notNull().default(5),
   defaultBranch: text('default_branch').notNull().default('dev'),
   createdAt: text('created_at').notNull(),
 })
 
-// 项目的审核 skill（可多份，选一份 active）
+// A project's review skills (there can be several; one is active)
 export const skills = sqliteTable('skills', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
     .notNull()
     .references(() => projects.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  content: text('content').notNull(), // 方法学正文（markdown）
+  content: text('content').notNull(), // methodology body (markdown)
   source: text('source', { enum: ['manual', 'file', 'ai', 'optimized'] }).notNull().default('manual'),
   createdAt: text('created_at').notNull(),
 })
 
-// 一次 PR 审核 = 一行
+// One PR review = one row
 export const reviews = sqliteTable('reviews', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
@@ -46,7 +48,7 @@ export const reviews = sqliteTable('reviews', {
   author: text('author'),
   branch: text('branch'),
   headSha: text('head_sha'),
-  // 审核生命周期
+  // Review lifecycle
   status: text('status', {
     enum: [
       'queued',
@@ -54,7 +56,7 @@ export const reviews = sqliteTable('reviews', {
       'reviewing',
       'draft',
       'ready_to_post',
-      'posting', // 发评论「认领」中：组装/翻译/发布的整个窗口占住此状态，防并发重复发/发旧内容
+      'posting', // "claimed" for posting: assembling/translating/publishing all hold this status, preventing concurrent duplicate or stale posts
       'posted',
       'recheck_requested',
       'rechecking',
@@ -63,30 +65,34 @@ export const reviews = sqliteTable('reviews', {
   })
     .notNull()
     .default('queued'),
-  // GitHub 上的 PR 真实状态
+  // The PR's real state on GitHub
   prState: text('pr_state', { enum: ['open', 'merged', 'closed', 'draft', 'unknown'] })
     .notNull()
     .default('unknown'),
   additions: integer('additions'),
   deletions: integer('deletions'),
   changedFiles: integer('changed_files'),
-  // 审核四段（一次性出稿）
+  // The four review sections (drafted in one pass)
   logic: text('logic'),
   quality: text('quality'),
   risk: text('risk'),
   conclusion: text('conclusion'),
   requirement: text('requirement'),
   testPath: text('test_path'),
-  globalNotes: text('global_notes'), // 发评论前言
-  reviewInstruction: text('review_instruction'), // 给 AI 的审核指令（重新审核时参考）
-  // 发评论锚点：上次发评论时的 head sha → 刷新时和当前 head 比对，判断作者有没有又 push
+  globalNotes: text('global_notes'), // preamble of the posted comment
+  reviewInstruction: text('review_instruction'), // review instruction for the AI (reused when re-reviewing)
+  // Posting anchor: the head sha at the time of the last posted comment → compared with the current
+  // head on refresh to tell whether the author pushed again
   lastPostSha: text('last_post_sha'),
   lastPostUrl: text('last_post_url'),
-  // 刷新时发现作者在你上次发评论后又 push 了 → 持久化，列表/抽屉据此显示「作者已更新」
+  // Set when a refresh finds the author pushed after your last comment → persisted, and the list/drawer
+  // shows "author updated" based on it
   authorUpdated: integer('author_updated', { mode: 'boolean' }).notNull().default(false),
-  // GitHub PR 评审决定 APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED（刷新时取）→ PR 徽章显示「已批准」等
+  // GitHub PR review decision APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED (fetched on refresh)
+  // → drives the PR badge ("approved" etc.)
   reviewDecision: text('review_decision'),
-  // 预览缓存：组装好的英文评论 JSON + 输入签名（签名变了才重新生成）
+  // Preview cache: the assembled English comment JSON + a signature of its inputs
+  // (regenerated only when the signature changes)
   previewJson: text('preview_json'),
   previewSig: text('preview_sig'),
   error: text('error'),
@@ -94,7 +100,7 @@ export const reviews = sqliteTable('reviews', {
   updatedAt: text('updated_at').notNull(),
 })
 
-// 单条 finding
+// A single finding
 export const findings = sqliteTable('findings', {
   id: text('id').primaryKey(),
   reviewId: text('review_id')
@@ -108,21 +114,21 @@ export const findings = sqliteTable('findings', {
   detail: text('detail'),
   fix: text('fix'),
   introducedByPr: integer('introduced_by_pr', { mode: 'boolean' }).notNull().default(true),
-  checked: integer('checked', { mode: 'boolean' }).notNull().default(false), // 发到 PR comment
+  checked: integer('checked', { mode: 'boolean' }).notNull().default(false), // include in the PR comment
   notes: text('notes'),
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: text('created_at').notNull(),
 })
 
-// 复审追加（每条 finding 多轮）
+// Recheck entries appended per finding (multiple rounds each)
 export const findingRechecks = sqliteTable('finding_rechecks', {
   id: text('id').primaryKey(),
   findingId: text('finding_id')
     .notNull()
     .references(() => findings.id, { onDelete: 'cascade' }),
   round: integer('round').notNull(),
-  // 复审(作者改了没): fixed/partial/unaddressed/replied/new
-  // 带反馈复审(AI 回应我的 note): kept/retracted/adjusted/discuss/new
+  // Recheck (did the author fix it): fixed/partial/unaddressed/replied/new
+  // Recheck with feedback (AI responding to my note): kept/retracted/adjusted/discuss/new
   status: text('status', {
     enum: ['fixed', 'partial', 'unaddressed', 'replied', 'new', 'kept', 'retracted', 'adjusted', 'discuss'],
   }).notNull(),
@@ -130,7 +136,7 @@ export const findingRechecks = sqliteTable('finding_rechecks', {
   at: text('at').notNull(),
 })
 
-// 发评论记录（多轮）
+// Posted-comment records (multiple rounds)
 export const posts = sqliteTable('posts', {
   id: text('id').primaryKey(),
   reviewId: text('review_id')
@@ -144,7 +150,7 @@ export const posts = sqliteTable('posts', {
   at: text('at').notNull(),
 })
 
-// 事件流（进度 + 历史，喂 SSE）
+// Event stream (progress + history, fed to SSE)
 export const events = sqliteTable('events', {
   id: text('id').primaryKey(),
   reviewId: text('review_id')
@@ -155,9 +161,10 @@ export const events = sqliteTable('events', {
   message: text('message'),
 })
 
-// 一次「修复 PR」任务（纯对话版）：在 PR 分支的 worktree 里和 Claude 对话改代码（不自动 commit），
-// 用户点「提交并上传」才 commit + push。没有验证/批量修复/合并基础分支/回复作者这些阶段。
-// worktree 第一条对话时惰性建，保留到 push/discard。
+// One "fix PR" task (conversation-only): chat with Claude to change code inside the PR branch's
+// worktree (no automatic commit); it only commits + pushes when the user clicks "commit and upload".
+// There are no verify / batch-fix / merge-base-branch / reply-to-author stages.
+// The worktree is created lazily on the first message and kept until push/discard.
 export const fixes = sqliteTable('fixes', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
@@ -165,32 +172,33 @@ export const fixes = sqliteTable('fixes', {
     .references(() => projects.id, { onDelete: 'cascade' }),
   prNumber: integer('pr_number').notNull(),
   branch: text('branch').notNull(),
-  prAuthor: text('pr_author'), // PR 作者（展示 / reviewer-updated 用；push 不再限制只能自己的 PR）
+  prAuthor: text('pr_author'), // PR author (for display / reviewer-updated; push is no longer restricted to your own PRs)
   title: text('title'),
-  instruction: text('instruction'), // 建任务时 prompt 框里的针对性指示（可空 = 用系统默认）
-  lang: text('lang').notNull().default('en'), // 工作语言 = 建任务时的 UI locale（verdict/反馈用它写）
-  // open：建好/聊着、无待上传改动；ready：对话改了代码、有未提交/未推改动待上传；pushing：上传中；pushed：已上传；error：失败。
-  // discarded 是历史枚举值（discard 现在硬删行，不会再设）。
+  instruction: text('instruction'), // targeted instruction typed in the prompt box when creating the task (empty = system default)
+  lang: text('lang').notNull().default('en'), // working language = UI locale when the task was created (verdict/feedback are written in it)
+  // open: created/chatting, nothing to upload; ready: the conversation changed code, there are uncommitted/unpushed changes to upload;
+  // pushing: uploading; pushed: uploaded; error: failed.
+  // discarded is a legacy enum value (discard now hard-deletes the row, so it is never set again).
   status: text('status', {
     enum: ['open', 'ready', 'pushing', 'pushed', 'error', 'discarded'],
   })
     .notNull()
     .default('open'),
-  stage: text('stage'), // 当前细粒度阶段文案（实时展示）
-  summary: text('summary'), // 验证阶段的整体结论
+  stage: text('stage'), // current fine-grained stage text (shown live)
+  summary: text('summary'), // overall conclusion of the verify stage
   worktreePath: text('worktree_path'),
-  baseRef: text('base_ref'), // PR 的目标分支名（diff 三点基线 origin/<baseRef>...HEAD + merge 用）
-  baseHeadSha: text('base_head_sha'), // 改动前的 PR head（diff 基线）
-  fixHeadSha: text('fix_head_sha'), // 本地 commit 后的 head
-  lastPushSha: text('last_push_sha'), // 最近成功 push 上去的 commit；和 fixHeadSha 不等 = 有未上传改动
-  lastActionKind: text('last_action_kind', { enum: ['pushed'] }), // 最近一次对外动作（上传）→ 「查看改动」入口
-  reviewsAtPush: integer('reviews_at_push'), // push 修复时 PR 的 review 数；之后变多 = reviewer 又审了（「审核已更新」基线）
+  baseRef: text('base_ref'), // the PR's target branch name (three-dot diff baseline origin/<baseRef>...HEAD + used for merge)
+  baseHeadSha: text('base_head_sha'), // the PR head before the changes (diff baseline)
+  fixHeadSha: text('fix_head_sha'), // the head after the local commit
+  lastPushSha: text('last_push_sha'), // the last commit successfully pushed; different from fixHeadSha = there are changes not uploaded yet
+  lastActionKind: text('last_action_kind', { enum: ['pushed'] }), // the most recent outward action (upload) → drives the "view changes" entry point
+  reviewsAtPush: integer('reviews_at_push'), // the PR's review count when the fix was pushed; a higher count later = the reviewer reviewed again ("review updated" baseline)
   filesChanged: integer('files_changed'),
   additions: integer('additions'),
   deletions: integer('deletions'),
-  sessionId: text('session_id'), // claude stream-json 的会话 id（后续 --resume 续聊）
-  codexSessionId: text('codex_session_id'), // codex thread id（resumeThread 续聊）；与 claude 各存各的，切换 provider 不混用
-  lastUploadAt: text('last_upload_at'), // 上次上传时间 → 「审核已更新」基线（M3）
+  sessionId: text('session_id'), // session id of the claude stream-json run (used later with --resume)
+  codexSessionId: text('codex_session_id'), // codex thread id (resumeThread); stored separately from claude's, never mixed when switching provider
+  lastUploadAt: text('last_upload_at'), // time of the last upload → "review updated" baseline (M3)
   costUsd: real('cost_usd'),
   error: text('error'),
   createdAt: text('created_at').notNull(),
@@ -198,8 +206,10 @@ export const fixes = sqliteTable('fixes', {
   pushedAt: text('pushed_at'),
 })
 
-// M2 对话跟进：修复出稿后在 drawer 里继续聊、继续改（claude --resume 续会话）。
-// append-only，按 seq 排序；assistant 轮流式写入。重启恢复 + 展示都靠它。
+// M2 conversation follow-up: after the fix is drafted, keep chatting and editing in the drawer
+// (claude --resume continues the session).
+// Append-only, ordered by seq; assistant turns are written as they stream. Both restart recovery
+// and display rely on it.
 export const fixTurns = sqliteTable('fix_turns', {
   id: text('id').primaryKey(),
   fixId: text('fix_id')
@@ -212,8 +222,10 @@ export const fixTurns = sqliteTable('fix_turns', {
   createdAt: text('created_at').notNull(),
 })
 
-// 修复任务的进度事件（验证/修复/对话中 agent 一行行的动作）。和 events 表对 reviews 同构，
-// 单独建是因为 events FK 到 reviews。落库后打开任务能回填历史日志（同审核 drawer）。
+// Progress events of a fix task (the agent's line-by-line actions while verifying/fixing/chatting).
+// Structurally identical to what the events table is for reviews; it exists separately only because
+// events has an FK to reviews. Persisting them lets a reopened task backfill its history log (same as
+// the review drawer).
 export const fixEvents = sqliteTable('fix_events', {
   id: text('id').primaryKey(),
   fixId: text('fix_id')
@@ -224,7 +236,8 @@ export const fixEvents = sqliteTable('fix_events', {
   message: text('message'),
 })
 
-// ── 全局 chatbot 抽屉：独立于 PR/项目的自由会话（bypassPermissions「啥都能干」助手）。
+// ── Global chatbot drawer: a free-form session independent of any PR/project
+// (a bypassPermissions "can do anything" assistant).
 export const globalSessions = sqliteTable('global_sessions', {
   id: text('id').primaryKey(),
   title: text('title'),
@@ -252,7 +265,7 @@ export const globalTurns = sqliteTable('global_turns', {
   createdAt: text('created_at').notNull(),
 })
 
-// ── Feature 开发闭环。
+// ── Feature development loop.
 export const featureTasks = sqliteTable('feature_tasks', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
@@ -263,14 +276,15 @@ export const featureTasks = sqliteTable('feature_tasks', {
   provider: text('provider', { enum: ['claude', 'codex'] }).notNull().default('claude'),
   model: text('model'),
   lang: text('lang').notNull().default('en'),
-  // 单段式状态：working=在开发/可继续 · awaiting=agent 在等你拍板(ask-user) · opened=PR 已开 · error。
+  // Single-phase status: working = developing / can continue · awaiting = the agent is waiting for your
+  // decision (ask-user) · opened = the PR is open · error.
   status: text('status', {
     enum: ['working', 'awaiting', 'opened', 'error'],
   })
     .notNull()
     .default('working'),
-  planJson: text('plan_json'), // 遗留列（两段式方案已删，保留列避免破坏旧库；不再写）
-  decisions: text('decisions'), // 遗留列，同上
+  planJson: text('plan_json'), // legacy column (the two-phase design was removed; kept so old DBs still work; never written)
+  decisions: text('decisions'), // legacy column, same as above
   baseBranch: text('base_branch'),
   branch: text('branch'),
   worktreePath: text('worktree_path'),
@@ -306,27 +320,30 @@ export const featureEvents = sqliteTable('feature_events', {
   message: text('message'),
 })
 
-// ── PR 自动化（自动审核 / 自动修复）。一条项目级配置 + 每条 PR 的运行态。
-// 引擎（server/plugins/automation.ts 的轮询）读这两张表 + GitHub 状态，复用现有端点派活。
-// 项目级：自动化配置弹窗存这里（每个项目一行）。authors/statuses 是 JSON 数组（空数组=不限）。
+// ── PR automation (auto review / auto fix). One project-level config + per-PR runtime state.
+// The engine (the poll loop in server/plugins/automation.ts) reads these two tables + GitHub state
+// and dispatches work through the existing endpoints.
+// Project level: the automation config dialog is stored here (one row per project).
+// authors/statuses are JSON arrays (empty array = no restriction).
 export const projectAutomation = sqliteTable('project_automation', {
   projectId: text('project_id')
     .primaryKey()
     .references(() => projects.id, { onDelete: 'cascade' }),
-  masterEnabled: integer('master_enabled', { mode: 'boolean' }).notNull().default(false), // 弹窗底部「是否开启系统」总闸
-  reviewEnabled: integer('review_enabled', { mode: 'boolean' }).notNull().default(false), // 自动审核系统开关
-  reviewMode: text('review_mode', { enum: ['once', 'every_push'] }).notNull().default('once'), // 一次 / 每次push（每次push=作者更新后自动复查）
-  reviewAuthors: text('review_authors').notNull().default('[]'), // JSON string[]，空=不限作者
-  reviewStatuses: text('review_statuses').notNull().default('["open"]'), // JSON string[]（pullKey: open/draft/merged/closed），默认 open（草稿默认不勾）
-  fixEnabled: integer('fix_enabled', { mode: 'boolean' }).notNull().default(false), // 自动修复系统开关
+  masterEnabled: integer('master_enabled', { mode: 'boolean' }).notNull().default(false), // the "enable the system" master switch at the bottom of the dialog
+  reviewEnabled: integer('review_enabled', { mode: 'boolean' }).notNull().default(false), // auto-review system switch
+  reviewMode: text('review_mode', { enum: ['once', 'every_push'] }).notNull().default('once'), // once / every push (every push = auto recheck after the author updates)
+  reviewAuthors: text('review_authors').notNull().default('[]'), // JSON string[], empty = any author
+  reviewStatuses: text('review_statuses').notNull().default('["open"]'), // JSON string[] (pullKey: open/draft/merged/closed), defaults to open (drafts unchecked by default)
+  fixEnabled: integer('fix_enabled', { mode: 'boolean' }).notNull().default(false), // auto-fix system switch
   fixAuthors: text('fix_authors').notNull().default('[]'),
   fixStatuses: text('fix_statuses').notNull().default('["open"]'),
   updatedAt: text('updated_at').notNull(),
 })
 
-// 自动化工作流时间线：引擎对某条 PR 做了什么（创建审核/审核/发评论/修复/上传/复查/封顶/收敛…），按时间排。
-// PR 抽屉的「自动化」tab 据此渲染时间线。和 events/fix_events 同构，但按 (projectId, prNumber) 而非任务 id 归集，
-// 这样删了 review/fix 任务后历史仍在。
+// Automation workflow timeline: what the engine did to a given PR (create review / review / post comment /
+// fix / upload / recheck / cap / converge …), in chronological order.
+// The PR drawer's "automation" tab renders its timeline from this. Same shape as events/fix_events, but
+// keyed by (projectId, prNumber) instead of a task id, so the history survives deleting the review/fix task.
 export const automationEvents = sqliteTable('automation_events', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
@@ -338,23 +355,25 @@ export const automationEvents = sqliteTable('automation_events', {
   message: text('message'),
 })
 
-// 每条 PR 的自动化运行态 + 实例级覆盖开关（PR 抽屉里的两个 switch）。
-// reviewOn/fixOn 为 null = 跟随项目配置（继承）；显式 0/1 = 用户在该 PR 上覆盖。
-// 删除审核/修复任务 → optOut=1（防全局配置在下一轮把它复活）。重新打开开关 → 清零 round/note/optOut。
+// Per-PR automation runtime state + instance-level override switches (the two switches in the PR drawer).
+// reviewOn/fixOn null = follow the project config (inherit); explicit 0/1 = the user overrode it on this PR.
+// Deleting the review/fix task → optOut=1 (keeps the global config from reviving it on the next round).
+// Turning a switch back on → clears round/note/optOut.
 export const prAutomation = sqliteTable('pr_automation', {
   id: text('id').primaryKey(),
   projectId: text('project_id')
     .notNull()
     .references(() => projects.id, { onDelete: 'cascade' }),
   prNumber: integer('pr_number').notNull(),
-  reviewOn: integer('review_on', { mode: 'boolean' }), // null=继承配置
-  fixOn: integer('fix_on', { mode: 'boolean' }), // null=继承配置
-  round: integer('round').notNull().default(0), // 已派出的自动修复次数（到 autoMaxRounds 即封顶）
-  lastFixReviewSha: text('last_fix_review_sha'), // 上次针对哪个 review head 派过修复（同一 head 不重复修）
-  pendingFix: integer('pending_fix', { mode: 'boolean' }).notNull().default(false), // 已派修复、等它跑完（push / 判定修不动）
-  optOut: integer('opt_out', { mode: 'boolean' }).notNull().default(false), // 用户删任务 → 本 PR 退出自动化，直到手动再开
-  note: text('note'), // 引擎最近一次的停手原因：capped/converged/cant_fix/fix_error/user_off（喂 UI 提示）
-  // 冷却期：引擎第一次看到这个 head 的 sha + 时间。head 变了就重置；未过 autoCooldownMinutes 不动手。
+  reviewOn: integer('review_on', { mode: 'boolean' }), // null = inherit the config
+  fixOn: integer('fix_on', { mode: 'boolean' }), // null = inherit the config
+  round: integer('round').notNull().default(0), // how many auto fixes have been dispatched (capped at autoMaxRounds)
+  lastFixReviewSha: text('last_fix_review_sha'), // which review head the last fix was dispatched for (no repeat fix for the same head)
+  pendingFix: integer('pending_fix', { mode: 'boolean' }).notNull().default(false), // a fix was dispatched, waiting for it to finish (push / declared unfixable)
+  optOut: integer('opt_out', { mode: 'boolean' }).notNull().default(false), // the user deleted the task → this PR leaves automation until manually re-enabled
+  note: text('note'), // the engine's most recent reason for stopping: capped/converged/cant_fix/fix_error/user_off (feeds the UI hint)
+  // Cooldown: the sha + time when the engine first saw this head. Reset when the head changes;
+  // no action until autoCooldownMinutes has elapsed.
   headSeenSha: text('head_seen_sha'),
   headSeenAt: text('head_seen_at'),
   updatedAt: text('updated_at').notNull(),

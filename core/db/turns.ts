@@ -1,10 +1,11 @@
 import { nanoid } from 'nanoid'
 import { eq } from 'drizzle-orm'
 
-// append-only 对话轮的统一写入：查当前最大 seq → 插一条 user 轮(done) + 一条 assistant 占位轮(streaming)。
-// fix/global/feature 三条 pipeline 各写了一份完全相同的逻辑，抽出来共用。
-// turnTable 是 drizzle 表对象，fkField 是它的外键属性名（'fixId' / 'sessionId' / 'taskId'）——
-// drizzle 表对象用属性名取到列对象，所以 turnTable[fkField] 既能做 where 又能做 values 的键。
+// Single writer for append-only chat turns: look up the current max seq → insert one user turn (done) plus one
+// assistant placeholder turn (streaming).
+// The fix/global/feature pipelines each carried an identical copy of this logic; extracted here to share.
+// turnTable is a drizzle table object and fkField is its foreign-key property name ('fixId' / 'sessionId' / 'taskId') —
+// a drizzle table object resolves a property name to a column object, so turnTable[fkField] works both in where and as a values key.
 export function appendTurns(opts: {
   db: any
   turnTable: any

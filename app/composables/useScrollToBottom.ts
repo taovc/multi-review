@@ -1,10 +1,10 @@
-// 聊天/日志区「滚动到底」：几个 drawer 各写了一份同样的 scrollEl + nextTick 滚动。
-// 消费方把 scrollEl 绑到滚动容器，自己决定何时调 scrollToBottom（各 drawer 的触发条件不同，保留可配）。
+// "Scroll to bottom" for chat/log areas: several drawers each carried their own copy of the same scrollEl + nextTick scrolling.
+// Consumers bind scrollEl to their scroll container and decide when to call scrollToBottom (each drawer triggers on different conditions, so it stays configurable).
 export function useScrollToBottom() {
   const scrollEl = ref<HTMLElement | null>(null)
   function scrollToBottom() {
-    // 单次 nextTick 常常滚不到真正的底：MarkdownBody 是异步(动态 import marked/dompurify)渲染的，
-    // 首次跳时内容高度还没撑开。补两帧 rAF + 一次延时，等异步渲染 / 图片 / 方案卡把高度撑满再滚。
+    // A single nextTick often doesn't reach the real bottom: MarkdownBody renders asynchronously (dynamic import of marked/dompurify),
+    // so on the first jump the content height hasn't grown yet. Add two rAF frames + one timeout, letting async rendering / images / plan cards fill out the height before scrolling.
     const go = () => { const el = scrollEl.value; if (el) el.scrollTop = el.scrollHeight }
     nextTick(() => {
       go()

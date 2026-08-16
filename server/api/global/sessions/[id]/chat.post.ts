@@ -8,7 +8,7 @@ import { runGlobalChatJob, isGlobalChatting, type GlobalChatJobCtx } from '~core
 import type { ReviewProvider } from '~core/agent/runners'
 import { resolveGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../../../../utils/globalAgentConfig'
 
-// 发一条全局会话消息（fire-and-forget，进度走 SSE）。可带 cwd（/cd）：校验存在后持久化到 session。
+// Send one global session message (fire-and-forget; progress goes over SSE). May carry a cwd (/cd): validated to exist, then persisted on the session.
 const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), projectId: z.string().optional() })
 
 function existingPath(path?: string | null): string | null {
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   const cfg = useRuntimeConfig()
   const defaults = resolveGlobalAgentDefaults(d, cfg, projectId)
 
-  // 工作目录：session.cwd → 项目 localPath → 用户主目录。传了 cwd（/cd）就校验并更新。
+  // Working directory: session.cwd → the project's localPath → the user's home dir. If a cwd (/cd) is passed, validate and update it.
   const defaultCwd = existingPath(defaults.cwd)
   let workdir = existingPath(session.cwd) || defaultCwd || os.homedir()
   if (cwd && cwd.trim()) {
@@ -43,8 +43,8 @@ export default defineEventHandler(async (event) => {
     d.update(schema.globalSessions).set({ cwd: workdir }).where(eq(schema.globalSessions.id, id)).run()
   }
 
-  // 没有原生 Claude/Codex session 前，允许当前项目配置决定全局助手走哪个 provider。
-  // 一旦已有原生 session，就固定原 provider，避免拿 Claude session 去 resume Codex 或反过来。
+  // Until a native Claude/Codex session exists, let the current project config decide which provider the global assistant uses.
+  // Once a native session exists, pin the original provider, so we never resume Codex from a Claude session or the other way round.
   const hasNativeSession = !!session.sessionId || !!session.codexSessionId
   const provider: ReviewProvider = hasNativeSession ? (session.provider === 'codex' ? 'codex' : 'claude') : defaults.provider
   const providerDefaults = provider === defaults.provider ? defaults : runtimeGlobalAgentDefaults(cfg, provider)
@@ -64,7 +64,7 @@ export default defineEventHandler(async (event) => {
   const ctx: GlobalChatJobCtx = {
     db: d, schema, sessionId: id, cwd: workdir,
     provider,
-    // 不混用：codex 会话兜底用 codex 模型（空=Codex 默认），别把 claude 模型塞进 codex。
+    // Never mix: a codex session falls back to a codex model (empty = Codex default); don't push a claude model into codex.
     model: (canReuseSessionConfig ? session.model : null) || providerDefaults.model || '',
     effort: (canReuseSessionConfig ? session.effort : null) || providerDefaults.effort,
     codexServiceTier: provider === defaults.provider ? defaults.codexServiceTier : null,

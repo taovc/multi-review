@@ -10,7 +10,7 @@ import {
   type PrStatusKey,
 } from '../core/automation/decide'
 
-// ── 测试夹具：默认配置 + 快照构造器 ──────────────────────────────
+// ── Test fixtures: default config + snapshot builder ────────────────────────
 const CFG: AutoConfig = {
   masterEnabled: true,
   reviewEnabled: true,
@@ -37,81 +37,81 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
   }
 }
 
-// ── 1) effective 开关：继承 / 覆盖 / optOut / 过滤 ────────────────
+// ── 1) effective switches: inherit / override / optOut / filters ────────────
 {
   const pr = { author: 'alice', status: 'open' as PrStatusKey }
-  // 继承：总闸+系统开+命中过滤 → on
+  // Inherited: master on + system on + filters match → on
   assert.equal(effectiveReviewOn(CFG, null, pr), true)
   assert.equal(effectiveFixOn(CFG, null, pr), true)
-  // 总闸关 → 继承为 off
+  // Master off → inherits off
   assert.equal(effectiveReviewOn({ ...CFG, masterEnabled: false }, null, pr), false)
-  // 系统关 → off
+  // System off → off
   assert.equal(effectiveReviewOn({ ...CFG, reviewEnabled: false }, null, pr), false)
-  // 作者过滤不命中 → off
+  // Author filter misses → off
   assert.equal(effectiveReviewOn({ ...CFG, reviewAuthors: ['bob'] }, null, pr), false)
   assert.equal(effectiveReviewOn({ ...CFG, reviewAuthors: ['alice'] }, null, pr), true)
-  // 状态过滤不命中（PR 是 open，过滤只要 merged）→ off
+  // Status filter misses (PR is open, filter only wants merged) → off
   assert.equal(effectiveReviewOn({ ...CFG, reviewStatuses: ['merged'] }, null, pr), false)
-  // 显式覆盖优先：行里 reviewOn=false → off（即便配置全开）
+  // Explicit override wins: row has reviewOn=false → off (even with everything enabled in config)
   assert.equal(effectiveReviewOn(CFG, { ...EMPTY_AUTO_ROW, reviewOn: false }, pr), false)
-  // 显式打开即便总闸关也跑（用户拍板：没配置也能在 ticket 里手动开）
+  // Explicitly turned on runs even with the master switch off (owner's call: works per ticket without any config)
   assert.equal(effectiveReviewOn({ ...CFG, masterEnabled: false }, { ...EMPTY_AUTO_ROW, reviewOn: true }, pr), true)
   assert.equal(effectiveFixOn({ ...CFG, masterEnabled: false }, { ...EMPTY_AUTO_ROW, fixOn: true }, pr), true)
-  // optOut 一律关，压过一切
+  // optOut always wins and forces off
   assert.equal(effectiveReviewOn(CFG, { ...EMPTY_AUTO_ROW, reviewOn: true, optOut: true }, pr), false)
   assert.equal(effectiveFixOn(CFG, { ...EMPTY_AUTO_ROW, fixOn: true, optOut: true }, pr), false)
   console.log('automation-decide effective: ok')
 }
 
-// ── 1b) 自动修复作者白名单护栏（H2）────────────────────────────────
+// ── 1b) Auto-fix author allowlist guard (H2) ────────────────────────────────
 {
   const mine = { author: 'alice', status: 'open' as PrStatusKey }
   const theirs = { author: 'bob', status: 'open' as PrStatusKey }
-  // 空作者过滤 + 继承：只对当前用户(alice)自己的 PR 生效，不碰 bob 的
+  // Empty author filter + inherited: only applies to the current user's (alice) own PRs, never bob's
   assert.equal(effectiveFixOnGuarded(CFG, null, mine, 'alice'), true)
   assert.equal(effectiveFixOnGuarded(CFG, null, theirs, 'alice'), false)
-  // 拿不到 currentUser（null）+ 空过滤 → 谁都不修（安全默认）
+  // currentUser unavailable (null) + empty filter → fix nobody (safe default)
   assert.equal(effectiveFixOnGuarded(CFG, null, mine, null), false)
-  // 显式选了作者 bob → 修 bob 的、不修 alice 的
+  // Author bob explicitly selected → fix bob's, not alice's
   assert.equal(effectiveFixOnGuarded({ ...CFG, fixAuthors: ['bob'] }, null, theirs, 'alice'), true)
   assert.equal(effectiveFixOnGuarded({ ...CFG, fixAuthors: ['bob'] }, null, mine, 'alice'), false)
-  // 在某 PR 上显式打开开关 = 人工授权，绕过作者白名单（即便是 bob 的 PR）
+  // Turning the switch on for a specific PR = manual authorization, bypasses the author allowlist (even on bob's PR)
   assert.equal(effectiveFixOnGuarded(CFG, { ...EMPTY_AUTO_ROW, fixOn: true }, theirs, 'alice'), true)
-  // 显式关 → 关
+  // Explicitly off → off
   assert.equal(effectiveFixOnGuarded(CFG, { ...EMPTY_AUTO_ROW, fixOn: false }, mine, 'alice'), false)
   console.log('automation-decide fix-author-guard: ok')
 }
 
-// ── 2) 单步分支判定 ──────────────────────────────────────────────
+// ── 2) Single-step branch decisions ─────────────────────────────────────────
 {
-  // 合并/关闭 → 停手
+  // Merged/closed → stop
   assert.equal(decideAutoAction(snap({ prStatus: 'merged' })).action.kind, 'none')
   assert.equal(decideAutoAction(snap({ prStatus: 'closed' })).action.kind, 'none')
-  // optOut → 停手
+  // optOut → stop
   assert.equal(decideAutoAction(snap({ auto: { ...snap().auto, optOut: true } })).action.kind, 'none')
-  // 两个开关都关 → 停手
+  // Both switches off → stop
   assert.equal(decideAutoAction(snap({ auto: { ...snap().auto, reviewOn: false, fixOn: false } })).action.kind, 'none')
 
-  // 没有审核任务 + reviewOn → 首审
+  // No review task yet + reviewOn → first review
   assert.equal(decideAutoAction(snap({ review: null })).action.kind, 'review')
-  // 只开自动修复（reviewOn 关）+ 还没审核 → 不会自动建审核
+  // Only auto-fix on (reviewOn off) + not reviewed yet → never creates a review by itself
   assert.equal(decideAutoAction(snap({ review: null, auto: { ...snap().auto, reviewOn: false } })).action.kind, 'none')
 
-  // 审核在跑 → 等
+  // Review running → wait
   assert.equal(decideAutoAction(snap({ review: { exists: true, status: 'reviewing', headSha: 'H0' } })).action.kind, 'none')
 
-  // 草稿未发布 + 有 finding + reviewOn → 自动发评论
+  // Draft not posted + has findings + reviewOn → post comments automatically
   assert.equal(
     decideAutoAction(snap({ review: { exists: true, status: 'draft', headSha: 'H0' }, actionableCount: 2, reviewFindingsCount: 2 })).action.kind,
     'post',
   )
-  // 干净 PR：草稿但 0 条 finding → 不发空评论（不再撞发布端点 400 空转）
+  // Clean PR: draft but 0 findings → don't post an empty comment (no more spinning on the post endpoint's 400)
   assert.equal(
     decideAutoAction(snap({ review: { exists: true, status: 'draft', headSha: 'H0' }, actionableCount: 0, reviewFindingsCount: 0 })).action.kind,
     'none',
   )
 
-  // 已发布 + 有可处理 finding + 该 head 没修过 → 修
+  // Posted + has actionable findings + this head hasn't been fixed yet → fix
   {
     const d = decideAutoAction(snap({
       review: { exists: true, status: 'posted', headSha: 'H0' },
@@ -124,7 +124,7 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
     assert.equal(d.patch?.pendingFix, true)
   }
 
-  // 同一 review head 已修过（lastFixReviewSha == review.headSha）→ 不重复修
+  // Same review head already fixed (lastFixReviewSha == review.headSha) → don't fix again
   assert.equal(
     decideAutoAction(snap({
       review: { exists: true, status: 'posted', headSha: 'H0' },
@@ -134,7 +134,7 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
     'none',
   )
 
-  // 每次push + head 变了 → 复查
+  // every_push + head changed → recheck
   assert.equal(
     decideAutoAction(snap({
       reviewMode: 'every_push',
@@ -143,7 +143,7 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
     })).action.kind,
     'recheck',
   )
-  // once 模式 + head 变了 → 不复查
+  // once mode + head changed → no recheck
   assert.equal(
     decideAutoAction(snap({
       reviewMode: 'once',
@@ -155,8 +155,8 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
     'none',
   )
 
-  // 封顶：round 已到 max + 还要修 → cap（关两个开关 + note=capped）
-  // headSha 与 review.headSha 对齐（head 没再变，不走复查），隔离出 fix/cap 分支
+  // Cap: round already at max + still needs fixing → cap (both switches off + note=capped)
+  // headSha aligned with review.headSha (head didn't change again, so no recheck), isolating the fix/cap branch
   {
     const d = decideAutoAction(snap({
       headSha: 'H2',
@@ -171,7 +171,7 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
     assert.equal(d.patch?.note, 'capped')
   }
 
-  // 收敛：审过 + 没有可处理 finding + 修过至少一轮 → none + note=converged
+  // Converged: reviewed + no actionable findings + fixed at least one round → none + note=converged
   {
     const d = decideAutoAction(snap({
       headSha: 'H1',
@@ -185,21 +185,21 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
   console.log('automation-decide branches: ok')
 }
 
-// ── 3) pendingFix 收尾：push / 修不动 / 报错 ─────────────────────
+// ── 3) pendingFix wrap-up: push / nothing fixable / error ───────────────────
 {
   const base = snap({ auto: { ...snap().auto, pendingFix: true } })
-  // 还在跑 → 等
+  // Still running → wait
   assert.equal(decideAutoAction({ ...base, fix: { status: 'open', chatting: true } }).action.kind, 'none')
-  // 跑完有可上传 → push
+  // Finished with something uploadable → push
   assert.equal(decideAutoAction({ ...base, fix: { status: 'ready', chatting: false } }).action.kind, 'push')
-  // 跑完没有可上传（修不动）→ 停手 + 清 pendingFix + note=cant_fix
+  // Finished with nothing uploadable (couldn't fix it) → stop + clear pendingFix + note=cant_fix
   {
     const d = decideAutoAction({ ...base, fix: { status: 'open', chatting: false } })
     assert.equal(d.action.kind, 'none')
     assert.equal(d.patch?.pendingFix, false)
     assert.equal(d.patch?.note, 'cant_fix')
   }
-  // 跑完报错 → note=fix_error
+  // Finished with an error → note=fix_error
   {
     const d = decideAutoAction({ ...base, fix: { status: 'error', chatting: false } })
     assert.equal(d.patch?.note, 'fix_error')
@@ -207,12 +207,12 @@ function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
   console.log('automation-decide pendingFix: ok')
 }
 
-// ── 4) 完整回路模拟器：把 decide 反复跑 + 模拟动作副作用，验证一定会停 ──
-// world 模拟真实管线对状态的影响；actionableGen 决定每次审核/复查后还剩几条要修。
+// ── 4) Full-loop simulator: run decide repeatedly + mimic action side effects, prove it always stops ──
+// world mimics how the real pipeline moves state; actionableGen decides how many items remain after each review/recheck.
 function simulate(opts: {
   reviewMode: 'once' | 'every_push'
   maxRounds: number
-  actionableAfter: (reviewRound: number) => number // 第 n 次审核/复查后的待修数
+  actionableAfter: (reviewRound: number) => number // items left to fix after the nth review/recheck
 }) {
   let headN = 0
   const head = () => `H${headN}`
@@ -230,7 +230,7 @@ function simulate(opts: {
       actionableCount: actionable, reviewFindingsCount: review ? 2 : 0, review, fix, auto: { ...auto },
     }
     const d = decideAutoAction(s)
-    // 落 patch
+    // apply patch
     if (d.patch) {
       if (d.patch.round != null) auto.round = d.patch.round
       if (d.patch.lastFixReviewSha !== undefined) auto.lastFixReviewSha = d.patch.lastFixReviewSha
@@ -240,7 +240,7 @@ function simulate(opts: {
       if (d.patch.fixOn != null) auto.fixOn = d.patch.fixOn
     }
     trace.push(d.action.kind)
-    // 模拟动作副作用（mimic 真实端点对世界的影响）
+    // simulate the action's side effects (mimic what the real endpoints do to the world)
     switch (d.action.kind) {
       case 'review':
         reviewRound++
@@ -257,12 +257,12 @@ function simulate(opts: {
         break
       case 'fix':
         fixDispatches++
-        fix = { status: 'ready', chatting: false } // 假设修复产生了可上传改动
+        fix = { status: 'ready', chatting: false } // assume the fix produced uploadable changes
         break
       case 'push':
-        headN++ // 推上去 → head 变
+        headN++ // pushed → head changes
         fix = { status: 'pushed', chatting: false }
-        auto.pendingFix = false // 引擎在 push 成功后清（decide 的 push 分支不带这个 patch）
+        auto.pendingFix = false // the engine clears it after a successful push (decide's push branch carries no such patch)
         break
       case 'cap':
         return { ended: 'cap', step, trace, fixDispatches, auto }
@@ -276,32 +276,32 @@ function simulate(opts: {
   return { ended: 'TIMEOUT', step: 60, trace, fixDispatches, auto }
 }
 
-// 4a) 一直修不彻底（每轮都还剩 2 条）→ 必然在 maxRounds 次修复后封顶
+// 4a) Never fully fixed (2 items left every round) → must cap after maxRounds fixes
 {
   const r = simulate({ reviewMode: 'every_push', maxRounds: 2, actionableAfter: () => 2 })
-  assert.equal(r.ended, 'cap', `期望封顶，实际 ${r.ended} · trace=${r.trace.join('>')}`)
-  assert.equal(r.fixDispatches, 2, `期望恰好修 2 次，实际 ${r.fixDispatches}`)
+  assert.equal(r.ended, 'cap', `expected cap, got ${r.ended} · trace=${r.trace.join('>')}`)
+  assert.equal(r.fixDispatches, 2, `expected exactly 2 fixes, got ${r.fixDispatches}`)
   console.log(`automation-decide loop/cap: ok (修 ${r.fixDispatches} 次后封顶，${r.step} 步)`)
 }
 
-// 4b) 第一次复查就判定全修好（之后 0 条）→ 收敛，不会跑满 maxRounds
+// 4b) First recheck already finds everything fixed (0 items afterwards) → converges without using up maxRounds
 {
   const r = simulate({ reviewMode: 'every_push', maxRounds: 5, actionableAfter: (n) => (n >= 2 ? 0 : 2) })
-  assert.equal(r.ended, 'converged', `期望收敛，实际 ${r.ended} · trace=${r.trace.join('>')}`)
-  assert.equal(r.fixDispatches, 1, `期望只修 1 次就收敛，实际 ${r.fixDispatches}`)
+  assert.equal(r.ended, 'converged', `expected converged, got ${r.ended} · trace=${r.trace.join('>')}`)
+  assert.equal(r.fixDispatches, 1, `expected to converge after just 1 fix, got ${r.fixDispatches}`)
   console.log(`automation-decide loop/converge: ok (修 ${r.fixDispatches} 次后收敛，${r.step} 步)`)
 }
 
-// 4c) once 模式 + fix：审一次 + 修一次 + push，之后没有自动复查 → 不空转，记 fix_unverified、关开关停手（M3）
+// 4c) once mode + fix: review once + fix once + push, then no auto recheck → no spinning, record fix_unverified, switches off, stop (M3)
 {
   const r = simulate({ reviewMode: 'once', maxRounds: 3, actionableAfter: () => 2 })
-  assert.equal(r.fixDispatches, 1, `once 模式期望只修 1 次，实际 ${r.fixDispatches}`)
-  assert.equal(r.auto.note, 'fix_unverified', `期望 fix_unverified，实际 ${r.auto.note} · trace=${r.trace.join('>')}`)
-  assert.ok(!r.trace.includes('recheck'), 'once 模式不应有 recheck')
+  assert.equal(r.fixDispatches, 1, `once mode expected exactly 1 fix, got ${r.fixDispatches}`)
+  assert.equal(r.auto.note, 'fix_unverified', `expected fix_unverified, got ${r.auto.note} · trace=${r.trace.join('>')}`)
+  assert.ok(!r.trace.includes('recheck'), 'once mode should never recheck')
   console.log(`automation-decide loop/once: ok (修 ${r.fixDispatches} 次后记 fix_unverified 停手，${r.step} 步)`)
 }
 
-// 4d) maxRounds=3 同样在 3 次修复后封顶（参数化验证上限可配）
+// 4d) maxRounds=3 likewise caps after 3 fixes (parameterized check that the limit is configurable)
 {
   const r = simulate({ reviewMode: 'every_push', maxRounds: 3, actionableAfter: () => 1 })
   assert.equal(r.ended, 'cap')
