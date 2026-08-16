@@ -19,7 +19,7 @@ export type SkillGenOptions = {
   codexServiceTier?: string | null
   baseContent?: string | null
   instruction?: string | null // 用户自定义指令（介入生成方向）
-  lang?: string | null // 产出语言（跟 UI locale 走）；缺省 zh
+  lang?: string | null // 产出语言（跟 UI locale 走）；缺省与其它 core agent 一致，落到 zh
   onTool?: (name: string, info: string) => void
 }
 
@@ -43,7 +43,7 @@ ${userInstruction}
 - 对拿不准的约定，多读几个真实文件确认，而不是猜
 
 调研要充分（宁可多读多 grep），想清楚再写。然后产出一套**面向本项目的审核方法学**：
-- 用${langName(opts.lang)}撰写整套方法学（所有标题、正文、检查项都用这门语言；专有名词/代码标识符保留原文）
+- Write the entire methodology in ${langName(opts.lang)} — every heading, paragraph and checklist item in that language; keep proper nouns and code identifiers verbatim
 - 包含：横向影响检查、该项目特有的架构/约定专项检查（按你调研到的实际情况，不要套用无关技术栈）、安全/权限、测试、风险点
 - 具体、可执行，引用真实的目录/文件/标识符约定
 - 不要泛泛而谈

@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { generateSkill } from '~core/agent/skillgen'
 import { generateSkillCodex } from '~core/agent/codexSkill'
+import { resolveLang, type LangCode } from '~core/agent/lang'
 import { cockpitBus } from '~core/events'
 
 // AI 读本地项目生成/赋能审核 skill。结果存为**新候选**(不激活、不覆盖)，返回新 skill 供预览/对比。
@@ -47,15 +48,16 @@ const SKILLGEN_MESSAGES = {
     done: (n, cost) => `Génération terminée · ${n} lectures/recherches · $${cost}`,
     label: (o, s) => `${o ? 'IA · Optimisé' : 'IA · Généré'} · ${s}`,
   },
-} satisfies Record<string, SkillGenMessages>
+} satisfies Record<LangCode, SkillGenMessages>
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const b = Body.parse((await readBody(event)) || {})
   const d = db()
   // 产出语言跟 UI locale 走（与其它 AI 端点一致：reviews/features/fix）；缺省 zh。
-  const lang = getCookie(event, 'mr-locale') || 'zh'
-  const t: SkillGenMessages = SKILLGEN_MESSAGES[lang.slice(0, 2) as keyof typeof SKILLGEN_MESSAGES] ?? SKILLGEN_MESSAGES.zh
+  // 归一化只做一次，技能正文和这些用户可见文案共用同一个结果，不会出现一边英文一边中文。
+  const lang = resolveLang(getCookie(event, 'mr-locale'))
+  const t: SkillGenMessages = SKILLGEN_MESSAGES[lang]
 
   const project = d.select().from(schema.projects).where(eq(schema.projects.id, id)).get()
   if (!project) throw createError({ statusCode: 404, statusMessage: t.notFound })

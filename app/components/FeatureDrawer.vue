@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // Feature 任务抽屉（单段式原生）：一个自由开发对话。首条消息才建任务（不输入不建、随时可关）。
 // agent 遇到真决策点会输出 ```ask-user 块 → 渲染成决策卡（点选项=下一条消息）；点「开 PR」让 agent 自己开。
+import { stripRecommendedMarker } from '~core/agent/decisionCard'
+
 const props = defineProps<{ projectId: string; featureId: string | null }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string] }>()
@@ -75,8 +77,8 @@ function askQuestionText(inner: string): string {
 function displayText(content: string, stripAsk: boolean): string {
   return content.replace(/```ask-user\s*\n([\s\S]*?)```/gi, (_m, inner) => (stripAsk ? '' : askQuestionText(inner))).trim()
 }
-// 选项按钮上的推荐标记只用于展示；发送时去掉
-function optionLabel(o: string): string { return o.replace(/\s*[（(]\s*推荐\s*[)）]\s*$/i, '') }
+// 选项按钮上的推荐标记只用于展示；发送时去掉（标记本身定义在 ~core/agent/decisionCard）
+function optionLabel(o: string): string { return stripRecommendedMarker(o) }
 
 function notify(msg: string, ok = false) { toast.add({ title: msg, color: ok ? 'success' : 'error', icon: ok ? 'i-lucide-check' : 'i-lucide-triangle-alert' }) }
 function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString()).toLocaleTimeString(locale.value, { hour12: false }) }

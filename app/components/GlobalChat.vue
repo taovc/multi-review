@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 全局「啥都能干」助手:右下角悬浮按钮 + 抽屉。bypassPermissions 原生 claude 体验。
 // 命令面板(/clear /resume /copy /cd)是自建的(headless 没有原生 slash REPL)。
+import { stripRecommendedMarker } from '~core/agent/decisionCard'
+
 const { t, locale } = useI18n()
 const toast = useToast()
 const route = useRoute()
@@ -154,7 +156,7 @@ function displayText(content: string, stripAsk: boolean): string {
 }
 function answer(opt: string) {
   if (chatting.value || busy.value) return
-  input.value = opt.replace(/\s*[（(]\s*推荐\s*[)）]\s*$/i, '')
+  input.value = stripRecommendedMarker(opt) // 推荐标记只用于展示（定义在 ~core/agent/decisionCard）
   send(true) // 绕开 slash 拦截
 }
 
