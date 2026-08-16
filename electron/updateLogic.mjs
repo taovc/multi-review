@@ -1,8 +1,8 @@
-// 纯逻辑:从 nightly release 判断「是否有更新的构建」。抽出来不依赖 electron，便于单测。
+// Pure logic: decide from a nightly release whether "a newer build exists". Extracted so it doesn't depend on electron and can be unit tested.
 
-// 当前平台对应的安装包资产。mac=.dmg / win=.exe / linux=.AppImage，优先匹配 CPU 架构。
-// 架构名有多种写法:x64 的安装包常叫 x86_64(electron-builder 的 AppImage),arm64 也叫 aarch64;
-// 用同义词组匹配,避免「x64 用户被推 arm64 包」这类错配。
+// The installer asset for the current platform. mac=.dmg / win=.exe / linux=.AppImage, preferring a CPU-architecture match.
+// Architecture names are spelled several ways: x64 installers are often called x86_64 (electron-builder's AppImage), and arm64 is also aarch64;
+// match on synonym groups to avoid mismatches like "an x64 user offered an arm64 package".
 export function pickAsset(assets, platform = process.platform, arch = process.arch) {
   const ext = platform === 'darwin' ? '.dmg' : platform === 'win32' ? '.exe' : '.appimage'
   const synonyms = arch === 'arm64' ? ['arm64', 'aarch64'] : arch === 'x64' ? ['x64', 'x86_64', 'amd64'] : [arch]
@@ -10,14 +10,14 @@ export function pickAsset(assets, platform = process.platform, arch = process.ar
   return byExt.find((a) => synonyms.some((tok) => (a.name || '').toLowerCase().includes(tok))) || byExt[0] || null
 }
 
-// 从 release 说明里解析短 sha:"Rolling build ... (abc1234)"。
+// Parse the short sha out of the release notes: "Rolling build ... (abc1234)".
 export function parseRemoteSha(body) {
   const m = (body || '').match(/\(([0-9a-f]{7,40})\)/i)
   return m ? m[1].toLowerCase() : null
 }
 
-// 是否有更新的构建:sha 不同 且 资产更新时间晚于本地构建时间。
-// 同 sha → 一律不提示(避免运行的正是该 nightly 时因秒级时间差误报)。
+// Whether a newer build exists: the sha differs AND the asset's update time is later than the local build time.
+// Same sha → never prompt (avoids a false positive from a seconds-level time difference when you're already running that nightly).
 export function computeUpdate(build, release, platform = process.platform, arch = process.arch) {
   const asset = pickAsset(release.assets, platform, arch)
   const remoteSha = parseRemoteSha(release.body)

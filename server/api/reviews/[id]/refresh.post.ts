@@ -2,8 +2,9 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { fetchPrState } from '~core/github/gh'
 
-// 刷新 PR 真实状态 + head sha。
-// 若已发过评论(last_post_sha)，比对当前 head → 告诉前端作者评论后又 push 了没。
+// Refresh the PR's real state + head sha.
+// If a comment was already posted (last_post_sha), compare against the current head → tell the frontend
+// whether the author pushed again after the comment.
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const d = db()
@@ -19,14 +20,16 @@ export default defineEventHandler(async (event) => {
 
   const { state, headSha: liveHead, reviewDecision, author } = await fetchPrState(project.repo, review.prNumber)
 
-  // 「作者已更新」基线 = 你上次审/复审看的那个 sha(review.headSha)，不是上次发评论的 sha——
-  // 否则复审后(headSha 前进)红点清不掉。门控也用 headSha（不再要求先发过评论），与列表 pulls.get 口径一致：
-  // 首次审核后只要作者再 push 就提示「有我没看过的新改动」。
-  // 注意：不用线上 head 覆盖 review.headSha，否则基线丢失、发评论的行锚点也会错位。
+  // The "author updated" baseline is the sha you last reviewed/re-reviewed (review.headSha), not the sha of
+  // the last posted comment — otherwise the red dot never clears after a re-review (which moves headSha forward).
+  // The gate uses headSha too (it no longer requires a comment to have been posted), matching what the
+  // pulls.get list does: after the first review, any further push by the author flags "new changes I have not
+  // seen". Note: do not overwrite review.headSha with the live head, or the baseline is lost and the line
+  // anchors of posted comments drift.
   const authorUpdated = !!review.headSha && !!liveHead && liveHead !== review.headSha
 
   d.update(schema.reviews)
-    // 顺便回填空的 author（老记录建任务时漏存 → 列表显示「-」）
+    // Also backfill an empty author (older rows missed it at creation time → the list shows "-")
     .set({ prState: state, reviewDecision: reviewDecision || null, authorUpdated, updatedAt: new Date().toISOString(), ...(review.author ? {} : { author: author || null }) })
     .where(eq(schema.reviews.id, id))
     .run()

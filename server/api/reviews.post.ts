@@ -6,7 +6,7 @@ import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 
-// 从「全部 PR」勾选的条目直接建审核任务（元数据由列表带来，免再调 gh）。
+// Create review tasks straight from the entries ticked in "all PRs" (the metadata comes with the list, no extra gh call needed).
 const Pull = z.object({
   number: z.number().int().positive(),
   title: z.string().optional(),
@@ -51,9 +51,9 @@ export default defineEventHandler(async (event) => {
       continue
     }
 
-    // 勾选列表会带齐元数据；但「PR 详情抽屉」只传 { number } → branche manquante.
-    // On complète alors via GitHub (comme fix.post.ts) plutôt que de laisser une branche vide
-    // casser plus loin sur `git rev-parse origin/`.
+    // Ticking entries in the list brings the full metadata; but the "PR detail drawer" only sends { number } → no branch.
+    // In that case fill it in via GitHub (like fix.post.ts) rather than letting an empty branch
+    // break further down on `git rev-parse origin/`.
     let meta = p
     if (!p.branch) {
       try {
@@ -61,7 +61,7 @@ export default defineEventHandler(async (event) => {
         meta = {
           ...p,
           title: p.title ?? m.title,
-          author: p.author ?? m.author, // 只传 {number} 时这里曾漏掉 → 列表作者显示「-」
+          author: p.author ?? m.author, // this used to be missed when only {number} was sent → the list showed "-" as the author
           branch: m.branch,
           headSha: p.headSha ?? m.headSha,
           state: p.state ?? m.state,
@@ -88,7 +88,7 @@ export default defineEventHandler(async (event) => {
       author: meta.author ?? null,
       branch: meta.branch,
       headSha: meta.headSha ?? null,
-      status: 'queued' as const, // 引擎在批次二接入；本轮先排队
+      status: 'queued' as const, // the engine hooks in on the second batch; for now just queue it
       prState: meta.state ?? 'unknown',
       additions: meta.additions ?? null,
       deletions: meta.deletions ?? null,
@@ -98,7 +98,7 @@ export default defineEventHandler(async (event) => {
     d.insert(schema.reviews).values(row).run()
     created.push(row)
 
-    // 有本地路径就自动开审；否则留在 queued，等用户配置后手动 run
+    // Start the review automatically when a local path is set; otherwise leave it queued for the user to run manually after configuring one
     if (canAutoRun) {
       enqueueReview({
         db: d,

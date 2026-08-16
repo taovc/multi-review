@@ -8,9 +8,9 @@ export default defineNuxtConfig({
   modules: ['@nuxt/ui', '@nuxtjs/i18n'],
   css: ['~~/assets/css/main.css'],
   ssr: true,
-  // 跟随系统偏好，支持手动切换（持久化）；极简单色风
+  // Follows the system preference, manual switching supported (persisted); minimal monochrome style
   colorMode: { preference: 'system', fallback: 'light', storageKey: 'mr-color-mode' },
-  // 三语：中文（原始） + 法语 + 英语。无 URL 前缀（内部工具），按浏览器语言自动选择并持久化
+  // Three languages: Chinese (the original) + French + English. No URL prefix (internal tool); picked automatically from the browser language and persisted
   i18n: {
     strategy: 'no_prefix',
     defaultLocale: 'fr',
@@ -28,7 +28,7 @@ export default defineNuxtConfig({
       fallbackLocale: 'fr',
     },
     bundle: { optimizeTranslationDirective: false },
-    // 部分提示文案含 <b>/<br> 等内联标签（由我们维护的静态文案，模板里用 v-html 渲染）
+    // Some hint strings contain inline tags like <b>/<br> (static copy we maintain, rendered with v-html in templates)
     compilation: { strictMessage: false },
   },
   typescript: { strict: true },
@@ -39,9 +39,9 @@ export default defineNuxtConfig({
     anthropicModel: process.env.ANTHROPIC_MODEL || 'sonnet',
     codexModel: process.env.CODEX_MODEL || '',
     recheckModel: process.env.RECHECK_MODEL || process.env.ANTHROPIC_MODEL || 'sonnet',
-    // 发评论时把中文翻成英文——机械活，用快模型，不跟审核的重模型/effort 走
+    // Translating Chinese into English when posting comments — mechanical work, use a fast model instead of the review's heavy model/effort
     translateModel: process.env.TRANSLATE_MODEL || 'sonnet',
-    // 助手(global)默认 effort：它不属于任何 project，读不到 project.effort，用这个中心默认兜底（按会话可覆盖）
+    // Default effort for the (global) assistant: it belongs to no project, so there is no project.effort to read; this central default is the backstop (overridable per session)
     globalEffort: process.env.GLOBAL_EFFORT || 'high',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     // github (defaults to local `gh` CLI auth; token optional)
@@ -52,17 +52,17 @@ export default defineNuxtConfig({
     worktreeLocation: process.env.WORKTREE_LOCATION || 'repo',
     reposDir: process.env.REPOS_DIR || './data/worktrees',
     maxConcurrency: Number(process.env.MAX_CONCURRENCY || 3),
-    // PR 自动化引擎（自动审核 / 自动修复的常驻轮询）。AUTOMATION_ENABLED=false 整体关停。
+    // PR automation engine (the resident polling for auto review / auto fix). AUTOMATION_ENABLED=false shuts the whole thing down.
     automationEnabled: process.env.AUTOMATION_ENABLED !== 'false',
     automationIntervalMs: Number(process.env.AUTOMATION_INTERVAL_MS || 45000),
-    // 引擎由定时器驱动、没有发起请求的用户上下文，故无法从 cookie 取 locale；用这个中心默认决定自动审核/修复的工作语言。
+    // The engine is timer-driven with no requesting-user context, so it can't read the locale from a cookie; this central default decides the working language for auto review/fix.
     automationLang: process.env.AUTOMATION_LANG || 'zh',
     public: {
       appName: 'PR Cockpit',
     },
   },
   nitro: {
-    // Electron 打包：用 node-server 产物（.output/server/index.mjs），由主进程 spawn
+    // Electron packaging: use the node-server output (.output/server/index.mjs), spawned by the main process
     preset: process.env.NITRO_PRESET || 'node-server',
     alias: { '~core': coreDir },
     experimental: { asyncContext: true },

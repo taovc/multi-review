@@ -2,7 +2,7 @@ import { asc, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { isFeatureBusy } from '~core/feature/pipeline'
 
-// feature 任务详情：task + 对话轮 + 运行事件。带孤儿流式轮自愈（重启/被杀后不卡「进行中」）。
+// feature task detail: task + chat turns + run events. Self-heals orphaned streaming turns (so a restart/kill doesn't leave it stuck "in progress").
 export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id')!
   const d = db()
@@ -15,8 +15,9 @@ export default defineEventHandler((event) => {
     .orderBy(asc(schema.featureTurns.seq))
     .all()
 
-  // 自愈孤儿流式轮：流式轮存在 ⟺ 正在跑，唯一例外是进程已死（重启/被杀）→ 标 stopped，
-  // 任务退回 working（worktree 改动保留，可继续对话 / 开 PR）。opened/error 保持不动。
+  // Self-heal orphaned streaming turns: a streaming turn exists ⟺ something is running; the only
+  // exception is a dead process (restart/kill) → mark it stopped and put the task back to working
+  // (worktree changes are kept, you can keep chatting / open a PR). opened/error are left alone.
   const last = turns[turns.length - 1] as any
   if (last && last.role === 'assistant' && last.status === 'streaming' && !isFeatureBusy(id)) {
     d.update(schema.featureTurns).set({ status: 'stopped' }).where(eq(schema.featureTurns.id, last.id)).run()

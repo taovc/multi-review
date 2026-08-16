@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// nuxt build 把 better-sqlite3 的 *系统 node* ABI 预编译二进制拷进了 .output。
-// Electron 用自带的 node(ABI 不同,electron 35 = ABI 133)跑 Nitro,直接加载会因
-// NODE_MODULE_VERSION 不匹配崩溃。这里用 better-sqlite3 自带的 prebuild-install 下载
-// 对应 Electron 版本的预编译二进制,覆盖 .output 里的那份。
+// nuxt build copies better-sqlite3's prebuilt binary for the *system node* ABI into .output.
+// Electron runs Nitro on its own bundled node (different ABI, electron 35 = ABI 133), so loading that
+// binary directly crashes on a NODE_MODULE_VERSION mismatch. This uses the prebuild-install that ships
+// with better-sqlite3 to download the prebuilt binary for the matching Electron version and overwrite
+// the one in .output.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -23,10 +24,10 @@ if (!fs.existsSync(outputBinary)) {
   process.exit(1)
 }
 
-// Electron 版本 → prebuild-install 据此映射到正确的 ABI
+// Electron version → prebuild-install maps it to the right ABI
 const electronVersion = require('electron/package.json').version
 const bs3Dir = path.dirname(require.resolve('better-sqlite3/package.json'))
-// 直接定位 prebuild-install 的 JS 入口(.bin 下是 shell wrapper,不能交给 node 解析)
+// Resolve prebuild-install's JS entry directly (the one under .bin is a shell wrapper, which node can't parse)
 const bs3Require = createRequire(path.join(bs3Dir, 'package.json'))
 let prebuildBin
 try {
@@ -42,7 +43,7 @@ if (!prebuildBin || !fs.existsSync(prebuildBin)) {
   process.exit(1)
 }
 
-// 隔离目录里下载,避免污染根 node_modules 的二进制(dev 仍用系统 node ABI)
+// Download into an isolated directory so the root node_modules binary stays untouched (dev keeps using the system node ABI)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-bs3-electron-'))
 fs.cpSync(path.join(bs3Dir, 'package.json'), path.join(tmpDir, 'package.json'))
 

@@ -5,7 +5,7 @@ import { schema } from '~core/db/client'
 import type { ReviewProvider } from '~core/agent/runners'
 import { resolveGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../../utils/globalAgentConfig'
 
-// 新建一段全局会话（空会话，session id 在第一轮对话时由 runner 回填）。
+// Create a global session (empty; the session id is filled in by the runner on the first turn).
 const Body = z.object({
   provider: z.enum(['claude', 'codex']).optional(),
   model: z.string().optional(),

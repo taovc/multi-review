@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 服务端目录选择器：浏览运行 PR Cockpit 那台机器的文件系统，挑一个本地 git 克隆目录。
-// 选中的目录若是 git 仓库，连带它的 origin → owner/repo 一起回填。
+// Server-side directory picker: browse the file system of the machine running PR Cockpit and pick a
+// local git clone directory.
+// If the selected directory is a git repo, its origin → owner/repo is filled in along with it.
 interface Entry {
   name: string
   path: string
@@ -32,7 +33,7 @@ const error = ref('')
 async function load(p?: string) {
   loading.value = true
   error.value = ''
-  currentIsGit.value = false // 先清掉上一目录的 git 提示，避免加载中显示过期的 owner/repo
+  currentIsGit.value = false // clear the previous directory's git hint first, so a stale owner/repo isn't shown while loading
   repo.value = null
   try {
     const r = await $fetch<BrowseResult>('/api/fs/browse', { query: { path: p ?? '' } })
@@ -50,13 +51,15 @@ async function load(p?: string) {
   }
 }
 
-// 打开时从 initialPath（已填的值）或上次位置开始。
+// On open, start from initialPath (the already-filled value) or the last location.
 watch(open, (v) => {
   if (v) load(props.initialPath || current.value || undefined)
 })
 
-// 路径框里可能手敲了路径却没回车 → 点「选择」时先按它加载校验，确认有效再保存；
-// 无效（404 等）就停在错误态、不把上一个目录当成选择结果。
+// The path box may hold a hand-typed path that was never submitted with Enter → on "Select", load it
+// first to validate, and only save once it is confirmed valid;
+// if invalid (404 etc.) stay in the error state instead of treating the previous directory as the
+// selection.
 async function choose() {
   if (pathInput.value.trim() && pathInput.value !== current.value) {
     await load(pathInput.value)
@@ -70,7 +73,7 @@ async function choose() {
 <template>
   <BaseModal v-model:open="open" :title="$t('layout.picker.title')">
     <div class="space-y-3">
-      <!-- 当前路径：可编辑，回车直接跳转 -->
+      <!-- Current path: editable, Enter navigates straight there -->
       <div class="flex items-center gap-2">
         <button
           class="text-dimmed hover:text-highlighted disabled:opacity-30 text-sm shrink-0 px-1.5 py-1 border border-default rounded"
@@ -96,7 +99,7 @@ async function choose() {
         />
       </div>
 
-      <!-- 子目录列表 -->
+      <!-- Subdirectory list -->
       <div class="h-64 overflow-y-auto border border-default rounded divide-y divide-default">
         <p v-if="loading" class="px-3 py-3 text-xs text-dimmed">{{ $t('common.loading') }}</p>
         <p v-else-if="error" class="px-3 py-3 text-xs text-error">{{ error }}</p>
@@ -114,7 +117,7 @@ async function choose() {
         </button>
       </div>
 
-      <!-- 当前目录是 git 仓库时，提示会一并带出 owner/repo -->
+      <!-- When the current directory is a git repo, the hint also surfaces owner/repo -->
       <p v-if="currentIsGit" class="text-xs text-dimmed">
         <span class="text-dimmed">◆ git ·</span>
         <template v-if="repo"> {{ $t('layout.picker.repoDetected') }} <span class="font-mono text-muted">{{ repo }}</span></template>

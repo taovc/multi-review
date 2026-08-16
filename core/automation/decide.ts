@@ -1,16 +1,16 @@
-// PR 自动化的「纯决策核心」：给定一条 PR 的当前快照，算出下一步该做什么。
-// 没有任何副作用（不碰 DB / 不调 gh / 不跑 agent），所以能用造出来的快照穷举测试每条分支和整条回路。
-// 引擎（core/automation/engine.ts）负责采集快照、把这里返回的动作翻译成对现有端点的调用、并落库 patch。
+// The "pure decision core" of PR automation: given the current snapshot of one PR, work out what to do next.
+// Zero side effects (no DB / no gh / no agent runs), so synthetic snapshots can exhaustively test every branch and the whole loop.
+// The engine (core/automation/engine.ts) collects the snapshot, translates the action returned here into calls to existing endpoints, and persists the patch.
 //
-// 闭环安全性（和用户拍板一致）：
-//  - 不忽略自己的 push：复查触发只看 head 变没变，不区分是不是我们自己推的（要审「自己修没修好」）。
-//  - 回合上限：每条 PR 的「自动修复」最多派 autoMaxRounds 次（默认 2），到顶把两个开关自动关、记 capped。
-//  - 去重：同一个 review head 只修一次（lastFixReviewSha）；同一草稿只发一次（status=draft→posted）。
-//  - 终止性：自动修复/复查只在 round < max 时触发，round 单调增 → 最多 max 次写码必然熄火；或更早走「收敛」出口。
+// Loop safety (matching what the user decided):
+//  - Don't ignore our own pushes: a recheck triggers purely on whether head changed, regardless of who pushed it (we want to review "did we actually fix it").
+//  - Round cap: each PR gets at most autoMaxRounds (default 2) "auto fix" dispatches; on reaching the cap both switches are turned off automatically and capped is recorded.
+//  - Dedup: one fix per review head (lastFixReviewSha); one post per draft (status=draft→posted).
+//  - Termination: auto fix/recheck only fire while round < max and round increases monotonically → at most max code-writing rounds before it necessarily stops; or it exits earlier through "converged".
 
-// 审核任务「在跑」的状态（引擎也会跳过，但这里再兜底当作 wait）
+// Review statuses that mean the task is "running" (the engine skips these too; here as a backstop we treat them as wait)
 export const REVIEW_INFLIGHT = ['queued', 'cloning', 'reviewing', 'recheck_requested', 'rechecking', 'posting']
-// 审核「跑完、有结果可据此动手」的状态（error 不算——审失败了没 findings 可修，留人工）
+// Review statuses that mean "finished, with results we can act on" (error doesn't count — a failed review has no findings to fix, leave it to a human)
 const REVIEW_TERMINAL = ['draft', 'posted', 'ready_to_post']
 
 export type PrStatusKey = 'open' | 'draft' | 'merged' | 'closed'
@@ -19,23 +19,23 @@ export type AutoConfig = {
   masterEnabled: boolean
   reviewEnabled: boolean
   reviewMode: 'once' | 'every_push'
-  reviewAuthors: string[] // 空 = 不限作者
-  reviewStatuses: PrStatusKey[] // 空 = 不限状态
+  reviewAuthors: string[] // empty = any author
+  reviewStatuses: PrStatusKey[] // empty = any status
   fixEnabled: boolean
   fixAuthors: string[]
   fixStatuses: PrStatusKey[]
 }
 
-// pr_automation 行（可能不存在 = 全继承配置）
+// A pr_automation row (may not exist = everything inherited from config)
 export type PrAutoRow = {
-  reviewOn: boolean | null // null = 继承配置
+  reviewOn: boolean | null // null = inherit from config
   fixOn: boolean | null
   round: number
   lastFixReviewSha: string | null
   pendingFix: boolean
   optOut: boolean
   note: string | null
-  headSeenSha: string | null // 冷却期：引擎第一次看到的 head + 时间（仅引擎用）
+  headSeenSha: string | null // cooldown: the head the engine first saw + when (engine-only)
   headSeenAt: string | null
 }
 
@@ -50,8 +50,8 @@ function matches(authors: string[], statuses: PrStatusKey[], pr: { author: strin
   return aOk && sOk
 }
 
-// 实例级开关的「有效值」：显式覆盖（0/1）优先；null 时继承「总闸 && 系统开 && 命中作者/状态过滤」。
-// 退出（optOut，删过任务）一律关。注意：用户在 PR 上显式打开时，即使项目总闸是关的也照样跑（用户拍板）。
+// The "effective value" of an instance-level switch: an explicit override (0/1) wins; when null, inherit "master switch && system switch && author/status filter matches".
+// Opting out (optOut, task was deleted) always turns it off. Note: when the user explicitly turns it on for a PR it runs even if the project master switch is off (user's call).
 export function effectiveReviewOn(cfg: AutoConfig, row: PrAutoRow | null, pr: { author: string; status: PrStatusKey }): boolean {
   if (row?.optOut) return false
   if (row && row.reviewOn != null) return row.reviewOn
@@ -63,10 +63,10 @@ export function effectiveFixOn(cfg: AutoConfig, row: PrAutoRow | null, pr: { aut
   return cfg.masterEnabled && cfg.fixEnabled && matches(cfg.fixAuthors, cfg.fixStatuses, pr)
 }
 
-// 自动修复的有效开关（带安全护栏）。修复会对该 PR 跑 agent 并自动 push，风险远高于只读的审核，所以：
-// 项目级规则里「空作者过滤」绝不等于「所有人」——默认只对当前用户(机主)自己的 PR 生效（在别人/机器人的 PR 上
-// 跑 headless agent 执行其分支代码 + 自动 push 是危险的，且易受 prompt injection）。
-// 在某条 PR 上显式打开开关(row.fixOn===true) = 人工逐条授权，放行（不受作者白名单限制）。
+// The effective switch for auto fix (with a safety guardrail). A fix runs an agent on the PR and pushes automatically, far riskier than a read-only review, so:
+// in project-level rules an "empty author filter" never means "everyone" — by default it only applies to the current user's (the machine owner's) own PRs (running a
+// headless agent that executes someone else's / a bot's branch code + auto-pushing is dangerous, and prone to prompt injection).
+// Explicitly turning the switch on for a given PR (row.fixOn===true) = manual per-PR authorization, allowed (not restricted by the author allowlist).
 export function effectiveFixOnGuarded(
   cfg: AutoConfig,
   row: PrAutoRow | null,
@@ -74,25 +74,25 @@ export function effectiveFixOnGuarded(
   currentUser: string | null,
 ): boolean {
   if (!effectiveFixOn(cfg, row, pr)) return false
-  if (row && row.fixOn === true) return true // 显式 per-PR 授权，不受作者白名单约束
+  if (row && row.fixOn === true) return true // explicit per-PR authorization, not bound by the author allowlist
   const allow = cfg.fixAuthors.length ? cfg.fixAuthors : currentUser ? [currentUser] : []
-  return allow.includes(pr.author) // 空白名单（且拿不到 currentUser）→ 谁都不修（安全默认）
+  return allow.includes(pr.author) // empty allowlist (and no currentUser available) → fix nobody (safe default)
 }
 
 export type ReviewSnapshot = { exists: boolean; status: string; headSha: string | null }
 export type FixSnapshot = { status: string; chatting: boolean } | null
 
-// 喂给 decide 的一条 PR 快照
+// One PR snapshot fed to decide
 export type PrSnapshot = {
   prStatus: PrStatusKey
-  headSha: string | null // PR 当前 head（GitHub 实时）
+  headSha: string | null // the PR's current head (live from GitHub)
   reviewMode: 'once' | 'every_push'
   maxRounds: number
-  actionableCount: number // 还需处理的 finding 数（High/Med 且未修，引擎从 DB 算）
-  reviewFindingsCount: number // 审核出的 finding 总数（0=干净 PR，没东西可发评论）
+  actionableCount: number // number of findings still to handle (High/Med and unfixed; the engine computes it from the DB)
+  reviewFindingsCount: number // total findings from the review (0 = clean PR, nothing to post a comment about)
   review: ReviewSnapshot | null
   fix: FixSnapshot
-  // 有效后的运行态（reviewOn/fixOn 已是 effective 布尔；round/lastFixReviewSha/pendingFix/optOut 来自 pr_automation 行）
+  // Resolved runtime state (reviewOn/fixOn are already effective booleans; round/lastFixReviewSha/pendingFix/optOut come from the pr_automation row)
   auto: {
     reviewOn: boolean
     fixOn: boolean
@@ -106,7 +106,7 @@ export type PrSnapshot = {
 
 export type AutoActionKind = 'none' | 'review' | 'recheck' | 'post' | 'fix' | 'push' | 'cap'
 export type AutoAction = { kind: AutoActionKind }
-// 落到 pr_automation 行的增量更新
+// Incremental update written to the pr_automation row
 export type PrAutoPatch = Partial<{
   reviewOn: boolean | null
   fixOn: boolean | null
@@ -127,7 +127,7 @@ function reviewInflight(status: string): boolean {
 export function decideAutoAction(s: PrSnapshot): AutoDecision {
   const none = (reason: string, patch?: PrAutoPatch): AutoDecision => ({ action: { kind: 'none' }, patch, reason })
 
-  // 0. PR 合并/关闭 → 一律停手（默认过滤只认进行中，这里再兜底防中途状态变化）
+  // 0. PR merged/closed → always stop (the default filter only accepts in-progress PRs; this is a backstop against the status changing mid-flight)
   if (s.prStatus === 'merged' || s.prStatus === 'closed') return none('pr-closed')
   if (s.auto.optOut) return none('opt-out')
 
@@ -137,28 +137,28 @@ export function decideAutoAction(s: PrSnapshot): AutoDecision {
   const review = s.review
   if (review?.exists && reviewInflight(review.status)) return none('review-inflight')
 
-  // 1. 先把「上一次派出的修复」收尾（最高优先级，避免在它没落定时叠加新动作）
+  // 1. First wrap up "the fix dispatched last time" (highest priority, so we don't stack new actions on top of one that hasn't settled)
   if (s.auto.pendingFix) {
     if (s.fix?.chatting) return none('fix-running')
     if (s.fix?.status === 'ready') {
-      // 修完有可上传改动 → 上传（pendingFix 由引擎在 push 成功后清）
+      // fix produced changes to upload → upload (the engine clears pendingFix after a successful push)
       return { action: { kind: 'push' }, reason: 'fix-ready-push' }
     }
     if (s.fix?.status === 'pushed') {
-      // 已经推上去了（引擎正常会同步清 pendingFix，这里兜底）
+      // already pushed (the engine normally clears pendingFix at the same time; backstop here)
       return none('fix-pushed', { pendingFix: false })
     }
-    // 修复跑完却没有可上传改动（修不动）或报错 → 记原因停手，不空转重试（这一轮预算已消耗）
+    // the fix ran but produced nothing to upload (can't fix it) or errored → record the reason and stop, no idle retries (this round's budget is spent)
     const note = s.fix?.status === 'error' ? 'fix_error' : 'cant_fix'
     return none(note, { pendingFix: false, note })
   }
 
-  // 2. 自动审核：还没有审核任务 → 首审
+  // 2. Auto review: no review task yet → first review
   if (reviewOn && !review?.exists) {
     return { action: { kind: 'review' }, reason: 'first-review' }
   }
 
-  // 3. 自动审核（每次push）：head 变了（作者改了 / 我们自己修复推了）→ 复查「改了没 / 修好没」
+  // 3. Auto review (every push): head changed (the author edited it / our own fix pushed) → recheck "did it change / is it fixed"
   if (
     reviewOn && review?.exists && s.reviewMode === 'every_push' &&
     isTerminalReview(review.status) &&
@@ -167,19 +167,19 @@ export function decideAutoAction(s: PrSnapshot): AutoDecision {
     return { action: { kind: 'recheck' }, reason: 'author-updated-recheck' }
   }
 
-  // 4. 自动审核：审核/复查出了草稿（未发布）且有 finding 可发 → 自动全选 + 发评论到 GitHub
-  //    干净 PR（0 条 finding）不发空评论，停在 draft（避免每个 tick 撞发布端点的 400 空评论拦截而空转报错）。
+  // 4. Auto review: the review/recheck produced a draft (unpublished) and there are findings to post → auto select all + post the comment to GitHub
+  //    A clean PR (0 findings) doesn't post an empty comment and stays in draft (otherwise every tick would hit the post endpoint's 400 empty-comment guard and spin on errors).
   if (reviewOn && review?.exists && review.status === 'draft' && s.reviewFindingsCount > 0) {
     return { action: { kind: 'post' }, reason: 'auto-post-draft' }
   }
 
-  // 5. 自动修复：还有未解决的可处理 finding，且这个 review head 还没修过 → 修（或封顶）
+  // 5. Auto fix: unresolved actionable findings remain and this review head hasn't been fixed yet → fix (or hit the cap)
   const fixableNow =
     fixOn && review?.exists && isTerminalReview(review.status) &&
     s.actionableCount > 0 && s.auto.lastFixReviewSha !== review.headSha
   if (fixableNow) {
     if (s.auto.round >= s.maxRounds) {
-      // 到回合上限：把该 PR 两个开关自动关（显式 false），记 capped，停手等人工
+      // round cap reached: turn both switches off for this PR (explicit false), record capped, stop and wait for a human
       return { action: { kind: 'cap' }, patch: { reviewOn: false, fixOn: false, note: 'capped' }, reason: 'round-capped' }
     }
     return {
@@ -189,8 +189,8 @@ export function decideAutoAction(s: PrSnapshot): AutoDecision {
     }
   }
 
-  // 5.5 修复已推上去、但不会被自动复查（once 模式 / 没开自动审核）→ 这条修复永远不会被验证、PR 会一直 armed-idle 空转。
-  //     记 fix_unverified、关两开关停手（修复在 GitHub 上，等人工确认/复查）。every_push 模式不会到这（branch 3 会先复查）。
+  // 5.5 The fix is pushed but will never be rechecked automatically (once mode / auto review off) → that fix would never be verified and the PR would sit armed-idle forever.
+  //     Record fix_unverified, turn both switches off and stop (the fix is on GitHub, waiting for a human to confirm/recheck). every_push mode never gets here (branch 3 rechecks first).
   if (
     fixOn && review?.exists && isTerminalReview(review.status) &&
     s.actionableCount > 0 && s.fix?.status === 'pushed' &&
@@ -200,7 +200,7 @@ export function decideAutoAction(s: PrSnapshot): AutoDecision {
     return { action: { kind: 'none' }, patch: { reviewOn: false, fixOn: false, note: 'fix_unverified' }, reason: 'fix-unverified' }
   }
 
-  // 6. 收敛：审过且没有可处理 finding（至少修过一轮）→ 记 converged、停手
+  // 6. Converged: reviewed with no actionable findings left (after at least one fix round) → record converged and stop
   if (
     review?.exists && isTerminalReview(review.status) &&
     s.actionableCount === 0 && s.auto.round > 0 && s.auto.note !== 'converged'

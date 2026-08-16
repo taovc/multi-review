@@ -4,7 +4,7 @@ import { enqueueRecheck } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 
-// 触发复审（作者在评论后又 push 了，想让 AI 再看一遍改了没）
+// Trigger a re-review (the author pushed again after our comment and we want the AI to check whether it was fixed)
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const cfg = useRuntimeConfig()
@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
   if (!project) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
   if (!project.localPath) throw createError({ statusCode: 400, statusMessage: '项目未配置本地 clone 路径' })
 
-  // Tâche sans branche (créée via le drawer) → résoudre via GitHub et persister avant de relancer.
+  // Task without a branch (created via the drawer) → resolve it through GitHub and persist it before re-running.
   let branch = review.branch
   if (!branch) {
     try {
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   }
 
   reviewQueue.setLimit(Number(cfg.maxConcurrency) || 3)
-  // 重入复审时清掉上一轮的 error（可能是从 error 状态重新发起）
+  // Clear the previous round's error when re-entering a re-review (it may have been restarted from the error state)
   d.update(schema.reviews).set({ status: 'recheck_requested', error: null, updatedAt: new Date().toISOString() }).where(eq(schema.reviews.id, id)).run()
 
   const rc = resolveReviewConfig(d, project)

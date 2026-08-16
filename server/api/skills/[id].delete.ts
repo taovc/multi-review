@@ -4,7 +4,7 @@ import { schema } from '~core/db/client'
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const d = db()
-  // 若删的是 active，清掉项目的 activeSkillId
+  // If the deleted skill is the active one, clear the project's activeSkillId
   const skill = d.select().from(schema.skills).where(eq(schema.skills.id, id)).get()
   if (skill) {
     const proj = d.select().from(schema.projects).where(eq(schema.projects.id, skill.projectId)).get()

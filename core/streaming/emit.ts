@@ -1,9 +1,9 @@
 import { nanoid } from 'nanoid'
 import { cockpitBus } from '../events'
 
-// 统一的进度事件发射器：实时推到 cockpitBus（频道=channel），并把非 'text' 事件落到事件表（可选）。
-// 'text' 是 token 流（高频），只实时不落库。fix/feature 落库(各自 *_events)，global 不落库(不传 eventTable)。
-// fkField/fkValue 是事件表的外键列名与值（'fixId'/'taskId'）；drizzle 表用属性名取列，所以用 [fkField] 当 values 键。
+// Unified progress event emitter: pushes live to cockpitBus (channel = channel) and optionally persists non-'text' events to an event table.
+// 'text' is the token stream (high frequency) — live only, never persisted. fix/feature persist (to their own *_events), global does not (no eventTable passed).
+// fkField/fkValue are the event table's foreign-key column name and value ('fixId'/'taskId'); drizzle tables address columns by property name, so [fkField] is used as the values key.
 export function makeEmit(opts: {
   channel: string
   now: () => string
@@ -19,7 +19,7 @@ export function makeEmit(opts: {
     if (kind !== 'text' && db && eventTable && fkField) {
       try {
         db.insert(eventTable).values({ id: nanoid(), [fkField]: fkValue, ts, kind, message: message ?? null }).run()
-      } catch { /* 落库失败不影响主流程 */ }
+      } catch { /* a failed insert doesn't affect the main flow */ }
     }
   }
 }

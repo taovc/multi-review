@@ -4,9 +4,12 @@ import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runFeatureDevelopJob, isFeatureBusy, type FeatureDevelopJobCtx } from '~core/feature/pipeline'
 
-// 单段式开发对话：在隔离 worktree 里 bypassPermissions 全权限开发。
-// allowDanger 放行危险命令（含 git push / gh pr create —— 「开 PR」按钮会带上 true）。
-// ultracode = 后台激活；存库仍是干净消息，具体执行方式交给 provider runner。
+// Single-phase development conversation: full-permission development in an isolated worktree via
+// bypassPermissions.
+// allowDanger lets dangerous commands through (including git push / gh pr create — the "open PR" button
+// sends true).
+// ultracode = activated behind the scenes; the stored message stays clean, and how it is executed is left
+// to the provider runner.
 const Body = z.object({
   message: z.string().min(1).max(20000),
   allowDanger: z.boolean().default(false),

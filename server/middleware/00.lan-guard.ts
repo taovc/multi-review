@@ -2,26 +2,29 @@ import { networkInterfaces } from 'node:os'
 import { getLanState, isValidToken, isLoopbackAddress, LAN_COOKIE, LAN_TOKEN_PARAM } from '../utils/lanState'
 import { trackRemoteStream } from '../utils/remoteStreams'
 
-// 「绑广口、按请求鉴权」：Nitro 监听 0.0.0.0，但这道闸决定谁能真正用。
-// - 本机(Electron 窗口 / SSR 内部请求)恒放行。
-// - 远端设备：远程访问关闭时一律 403；开启时必须带有效 token(URL 里一次，之后靠 cookie)。
-// 文件名 00. 前缀确保它在所有其它 middleware 之前跑。
+// "Bind wide, authenticate per request": Nitro listens on 0.0.0.0, but this gate decides who can
+// actually use it.
+// - The local machine (Electron window / internal SSR requests) is always allowed.
+// - Remote devices: always 403 while remote access is off; when on, a valid token is required (once
+//   in the URL, then via cookie).
+// The 00. filename prefix makes it run before every other middleware.
 
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 天
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
 
-// 统一泛化的 403，避免用不同文案给攻击者做指纹。
+// One generic 403 everywhere, so different wording can't fingerprint the system for an attacker.
 function forbidden(): never {
   throw createError({ statusCode: 403, statusMessage: 'Forbidden' })
 }
 
-// Host 白名单(不含端口):loopback + 本机所有 LAN IPv4。防 DNS-rebinding——攻击者把
-// evil.com 短 TTL 重绑到 127.0.0.1,peer 变成 loopback 但 Host 头仍是 evil.com → 拒绝。
+// Host allowlist (port excluded): loopback + every LAN IPv4 of this machine. Prevents DNS rebinding —
+// an attacker rebinds evil.com with a short TTL to 127.0.0.1, so the peer looks like loopback but the
+// Host header is still evil.com → reject.
 function allowedHost(hostHeader: string | undefined): boolean {
-  if (!hostHeader) return true // 无 Host(进程内请求)→ 放行
+  if (!hostHeader) return true // no Host (in-process request) → allow
   const host = hostHeader
     .split(':')[0]
     .toLowerCase()
-    .replace(/^\[|\]$/g, '') // 去掉 IPv6 字面量的方括号
+    .replace(/^\[|\]$/g, '') // strip the brackets of an IPv6 literal
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true
   for (const list of Object.values(networkInterfaces())) {
     for (const ni of list || []) {
@@ -32,23 +35,27 @@ function allowedHost(hostHeader: string | undefined): boolean {
 }
 
 export default defineEventHandler((event) => {
-  // Host 白名单先行:即便 peer 是 loopback(rebinding 会伪装成 loopback)也要校验 Host。
+  // Host allowlist first: check the Host even when the peer is loopback (rebinding disguises itself
+  // as loopback).
   if (!allowedHost(getRequestHeader(event, 'host'))) forbidden()
 
   const remote = event.node.req.socket?.remoteAddress
-  // 本机(含无地址的 SSR 内部请求，顶层文档请求已经过闸) → 放行。
+  // Local machine (including address-less internal SSR requests; the top-level document request has
+  // already passed the gate) → allow.
   if (isLoopbackAddress(remote)) return
 
   const state = getLanState()
   if (!state.enabled) forbidden()
 
-  // 已认证的设备:cookie 有效直接放行,并登记其长连接(关闭/轮换 token 时好断开)。
+  // Already-authenticated device: a valid cookie passes straight through, and its long-lived
+  // connections are registered (so they can be dropped when access is turned off / the token is
+  // rotated).
   if (isValidToken(getCookie(event, LAN_COOKIE))) {
     trackRemoteStream(event)
     return
   }
 
-  // 首次通过带 token 的链接/QR 进入 → 校验并换成 httpOnly cookie。
+  // First entry through a token-bearing link/QR → validate it and exchange it for an httpOnly cookie.
   const q = getQuery(event)
   const qtoken = typeof q[LAN_TOKEN_PARAM] === 'string' ? (q[LAN_TOKEN_PARAM] as string) : undefined
   if (isValidToken(qtoken)) {
@@ -59,7 +66,8 @@ export default defineEventHandler((event) => {
       maxAge: COOKIE_MAX_AGE,
     })
     setResponseHeader(event, 'Referrer-Policy', 'no-referrer')
-    // 文档 GET:302 去掉 URL 里的 token(cookie 已设),避免 token 留在地址栏/历史/日志。
+    // Document GET: 302 to strip the token from the URL (the cookie is already set), keeping it out
+    // of the address bar / history / logs.
     if (event.method === 'GET') {
       const url = getRequestURL(event)
       url.searchParams.delete(LAN_TOKEN_PARAM)

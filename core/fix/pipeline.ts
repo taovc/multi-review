@@ -21,21 +21,21 @@ import type { ChatRunner, ReviewProvider } from '../agent/runners'
 const pexec = promisify(execFile)
 const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024 })
 
-// 修复 PR = 一个常驻对话：在 PR 分支的 git worktree 里和 agent 聊，让它直接改文件（落盘，不 commit）。
-// 用户在 UI 点「提交并上传」才 commit + push（见 push.post.ts）。没有验证/批量修复/合并默认分支/回复作者这些阶段。
+// Fixing a PR = one always-on conversation: chat with the agent inside a git worktree of the PR branch and let it edit files directly (written to disk, not committed).
+// The commit + push only happens when the user clicks "commit and upload" in the UI (see push.post.ts). There are no verification / batch-fix / merge-default-branch / reply-to-author stages.
 
 export function selectChatRunner(provider?: ReviewProvider): ChatRunner {
   return provider === 'codex' ? codexChatRunner : claudeChatRunner
 }
 
-// 并发锁：job 一进来就占（spawn 前就生效），直到整个 job 结束才释放。
-// 用它防并发，而不是 activeChats —— 后者要等子进程 spawn 才有、子进程一结束就空，两头都漏窗口。
+// Concurrency lock: taken the moment a job enters (before spawn), released only when the whole job ends.
+// Use this to prevent concurrency rather than activeChats — the latter only exists once the child process is spawned and is emptied as soon as it exits, leaving a gap at both ends.
 const chatLocks = new Set<string>()
-// 真子进程句柄（spawn 后才有），停止按钮 kill 用。
+// The real child-process handle (only after spawn), used by the stop button to kill.
 const activeChats = new Map<string, ChildProcess>()
-// SDK runner 没有子进程句柄，用 runner 暴露的 stop 回调中断。
+// The SDK runner has no child-process handle; interrupt it via the stop callback the runner exposes.
 const activeChatStops = new Map<string, () => void>()
-const stopRequested = new Set<string>() // 用户主动停止的 → job 把那轮标记 stopped（而非 error）
+const stopRequested = new Set<string>() // stopped by the user → the job marks that turn stopped (not error)
 export function isChatting(fixId: string): boolean {
   return chatLocks.has(fixId)
 }
@@ -47,25 +47,25 @@ export function stopFixChat(fixId: string): boolean {
     return true
   }
   const cp = activeChats.get(fixId)
-  if (!cp || cp.pid == null) return false // 还在准备 worktree（没 spawn）或没在跑 → 没句柄可 kill
+  if (!cp || cp.pid == null) return false // still preparing the worktree (not spawned) or not running → no handle to kill
   stopRequested.add(fixId)
   const pid = cp.pid
-  // 子进程是 detached 起的进程组组长 → 给「整个组」发 SIGINT（含它 spawn 的子进程），等同 Ctrl+C。
-  // agent 已落盘的改动会保留，等用户上传。
-  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* 已退出 */ } }
-  // 兜底：1.5s 还没退就强杀整组
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* 已退出 */ } }, 1500)
+  // The child process is started detached as a process-group leader → send SIGINT to the "whole group" (including processes it spawned), same as Ctrl+C.
+  // Changes the agent already wrote to disk are kept, waiting for the user to upload.
+  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* already exited */ } }
+  // Fallback: force-kill the whole group if it hasn't exited after 1.5s
+  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* already exited */ } }, 1500)
   return true
 }
 
-// 进程退出(app 关闭)时把所有在跑的修复会话停掉(CLI 子进程组 + SDK runner),别留孤儿。
+// On process exit (app closing) stop every running fix session (CLI process groups + SDK runners) so nothing is orphaned.
 export function stopAllFixChats(): boolean {
   let any = false
   for (const id of new Set([...activeChats.keys(), ...activeChatStops.keys()])) any = stopFixChat(id) || any
   return any
 }
 
-// db/schema 由调用方注入（core 不直接依赖运行时 db）。
+// db/schema are injected by the caller (core does not depend on the runtime db directly).
 export type FixJobCtx = {
   db: any
   schema: any
@@ -78,26 +78,26 @@ export type FixJobCtx = {
   reposDir: string
   worktreeLocation?: string | null
   provider?: ReviewProvider
-  model: string // 当前 provider 的实模型（不混用）
+  model: string // the real model of the current provider (never mixed)
   effort?: string
   codexServiceTier?: string | null
   lang: string
-  allowDanger?: boolean // 放行危险命令守卫（含 git push / gh pr create），默认拦
-  ultracode?: boolean // 后台激活 ultracode（前缀由运行器注入）
-  assetsDir: string // issue/PR 配图下载根目录（读图统一）
+  allowDanger?: boolean // let commands past the dangerous-command guard (including git push / gh pr create); blocked by default
+  ultracode?: boolean // activate ultracode in the background (the prefix is injected by the runner)
+  assetsDir: string // root directory for downloaded issue/PR images (unified image reading)
 }
 
-// ── 共用的小工具 ──────────────────────────────────────────────
+// ── Shared little helpers ──────────────────────────────────────────────
 function helpers(ctx: FixJobCtx) {
   const { db, schema, fixId } = ctx
   const now = () => new Date().toISOString()
-  // 事件走实时总线 + 落 fix_events（供打开任务时回填历史日志，同审核 drawer）。频道=裸 fixId。
+  // Events go on the realtime bus + into fix_events (to backfill the history log when the task is opened, same as the review drawer). Channel = the bare fixId.
   const emit = makeEmit({ channel: fixId, now, db, eventTable: schema.fixEvents, fkField: 'fixId', fkValue: fixId })
   const row = () => db.select().from(schema.fixes).where(eq(schema.fixes.id, fixId)).get()
   return { now, emit, row }
 }
 
-// worktree 复用：第一次对话时建好，之后一直留到 push/discard；中途丢了（重启清理等）就按原分支重建。
+// Worktree reuse: created on the first conversation and kept until push/discard; if it goes missing in between (restart cleanup, etc.) it is recreated from the same branch.
 async function ensureWorktree(ctx: FixJobCtx, h: ReturnType<typeof helpers>) {
   const r = h.row()
   if (r?.worktreePath && existsSync(r.worktreePath)) {
@@ -110,7 +110,7 @@ async function ensureWorktree(ctx: FixJobCtx, h: ReturnType<typeof helpers>) {
     reviewId: ctx.fixId,
     branch: ctx.branch,
     defaultBranch: ctx.defaultBranch,
-    mergeDefault: false, // 修复要 push，不 merge 默认分支 → 推上去的 commit 干净
+    mergeDefault: false, // a fix gets pushed, so don't merge the default branch → the commits we push stay clean
     onStep: (m) => h.emit('stage', m),
   })
   ctx.db.update(ctx.schema.fixes).set({ worktreePath: wt.path, baseHeadSha: wt.headSha, updatedAt: h.now() }).where(eq(ctx.schema.fixes.id, ctx.fixId)).run()
@@ -129,30 +129,30 @@ async function conflictHint(wt: string): Promise<string | undefined> {
   return `There are UNRESOLVED merge conflicts in these files (they contain <<<<<<< / ======= / >>>>>>> markers): ${files.join(', ')}. Resolve every conflict by editing the files and removing all conflict markers.`
 }
 
-// ── 对话：在 worktree 里续聊继续改 ──────────────────────────────
-// 不走 reviewQueue（交互式，即时跑）；同一 fix 同时只允许一个 chat（endpoint 用 isChatting 拦）。
+// ── Conversation: keep chatting inside the worktree and keep editing ──────────────────────────────
+// Doesn't go through reviewQueue (interactive, runs immediately); only one chat at a time per fix (the endpoint blocks with isChatting).
 export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<void> {
   const { db, schema, fixId } = ctx
   const h = helpers(ctx)
 
-  // 并发锁：进函数立即占（endpoint 已用 isChatting 拦一道，这里再兜底防 race）。整个 job 结束才释放。
+  // Concurrency lock: taken as soon as we enter the function (the endpoint already blocks with isChatting; this is the fallback against a race). Released only when the whole job ends.
   if (chatLocks.has(fixId)) return
   chatLocks.add(fixId)
 
-  // append-only 轮次：user 轮 + assistant 占位轮（流式写入）
+  // Append-only turns: a user turn + an assistant placeholder turn (written to as the stream comes in)
   const { assistantId: asstId } = appendTurns({ db, turnTable: schema.fixTurns, fkField: 'fixId', fkValue: fixId, now: h.now, message })
   h.emit('chat', 'user')
 
-  // 我介入对话 = 已回应这一轮审核 → 在对话起点把「审核已更新」基线（reviewsAtPush）抬到当前 review 数，清掉红点。
-  // 放在起点而非结束：对话期间/之后才提交的新审核（count 继续增长）仍会重新点亮。
-  // 仅在已 push 过（pushedAt 有值，reviewerUpdated 才可能为真）时才取数，省掉无谓的网络调用。
+  // Me stepping into the conversation = this round of review has been answered → at the start of the conversation raise the "reviews updated" baseline (reviewsAtPush) to the current review count, clearing the red dot.
+  // Done at the start rather than the end: new reviews submitted during/after the conversation (the count keeps growing) will still light it up again.
+  // Only fetch the count when we have already pushed (pushedAt set, the only case where reviewerUpdated can be true), to save a pointless network call.
   try {
     const fr = h.row()
     if (fr?.pushedAt) {
       const reviewsNow = await fetchReviewsCount(ctx.repo, ctx.prNumber).catch(() => null)
       if (reviewsNow != null) db.update(schema.fixes).set({ reviewsAtPush: reviewsNow, updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
     }
-  } catch { /* 取数失败不影响对话 */ }
+  } catch { /* a failed fetch must not affect the conversation */ }
 
   let acc = ''
   let lastWrite = 0
@@ -164,22 +164,22 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       const wt = await ensureWorktree(ctx, h)
       const fix = h.row()
       let stopped = false
-      // 读图（统一）：reviewer 消息里引用的 GitHub issue/PR → 抓正文 + 下载配图（含私有附件，用 gh token）→ 喂路径。
+      // Image reading (unified): a GitHub issue/PR referenced in the reviewer's message → fetch the body + download the images (including private attachments, using the gh token) → feed in the paths.
       let agentMessage = message
       try {
         const ic = await fetchIssueContext(message, join(ctx.assetsDir, `fix-${fixId}`))
         if (ic) {
-          agentMessage = `${message}\n\n【消息里引用的 issue/PR 内容（后端已抓取）】\n${ic.enrichedText}`
+          agentMessage = `${message}\n\n[Content of the issue/PR referenced in the message (already fetched by the backend)]\n${ic.enrichedText}`
           if (ic.imagePaths.length) {
-            agentMessage += `\n\n【配图（已下载到本地，先用 Read 逐张打开看）】\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
+            agentMessage += `\n\n[Images (already downloaded locally — open each one with Read first)]\n${ic.imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
           }
           h.emit('stage', `已抓取 issue/PR 内容（${ic.summary}）`)
         }
       } catch (e) {
         h.emit('stage', `issue/PR 抓取失败，用原始消息继续：${(e as Error).message}`)
       }
-      // session 按 provider 各存各的列：claude→session_id，codex→codex_session_id。
-      // 切换 provider 时各自 resume 自己的线程，不会拿对方的 id 去 resume（避免报错 / 串上下文 / 混用）。
+      // Each provider stores its session in its own column: claude→session_id, codex→codex_session_id.
+      // When the provider is switched each one resumes its own thread and never resumes with the other's id (avoids errors / crossed context / mixing).
       const saveSession = (sid: string | null) => sessionFields(ctx.provider, sid)
       const resumeId: string | null = (ctx.provider === 'codex' ? fix?.codexSessionId : fix?.sessionId) ?? null
       let newSessionId: string | null = resumeId
@@ -210,12 +210,12 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
             newSessionId = sessionId
             db.update(schema.fixes).set({ ...saveSession(sessionId), updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
           },
-          onTool: (name, info) => h.emit('tool', `${name} ${info}`), // 工具调用 → tool 事件 → 实时进日志 + 内联步骤
+          onTool: (name, info) => h.emit('tool', `${name} ${info}`), // tool call → tool event → live into the log + inline steps
           onText: (t) => {
             acc += t
             const n = new Date().getTime()
-            if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') } // 节流写库
-            h.emit('text', t) // 完整推给前端实时流式拼接（不落库，见 emit 的 text 排除）
+            if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') } // throttled db writes
+            h.emit('text', t) // pushed in full to the frontend for live streaming assembly (not persisted, see the text exclusion in emit)
           },
         })
         acc = r.text || acc
@@ -227,7 +227,7 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
           }
         }
       } catch (e) {
-        if (stopRequested.has(fixId)) stopped = true // 用户停的，不算错误
+        if (stopRequested.has(fixId)) stopped = true // stopped by the user, not an error
         else throw e
       } finally {
         activeChats.delete(fixId)
@@ -237,9 +237,9 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
 
       flushTurn(stopped ? 'stopped' : 'done')
 
-      // 不自动 commit：agent 的改动留在 worktree 未提交，等用户点「提交并上传」。
-      // 有未提交改动 或 已提交未推 → 标 ready「待上传」(列表/抽屉一眼可见)；否则停留 open / 保持 pushed。
-      // 只更新 sessionId 供下次续聊；改动统计由 [id].get 用 fixChangesStat 从（含未提交的）worktree 实时算。
+      // No automatic commit: the agent's changes stay uncommitted in the worktree until the user clicks "commit and upload".
+      // Uncommitted changes, or committed but not pushed → mark ready "pending upload" (visible at a glance in the list/drawer); otherwise stay open / stay pushed.
+      // Only sessionId is updated so the next turn can resume; the change stats are computed live by [id].get via fixChangesStat from the worktree (including uncommitted changes).
       const up = await hasUploadable(wt.path, ctx.branch).catch(() => ({ dirty: false, ahead: false }))
       const cur = h.row()
       const nextStatus = computeFixNextStatus({ dirty: up.dirty, ahead: up.ahead, currentStatus: cur?.status })
@@ -251,13 +251,13 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       stopRequested.delete(fixId)
       flushTurn('error')
       const errMsg = (e as Error).message
-      // 出错时两个 provider 一致：fix 标 error + 错误信息落库可见（轮也是 error）。
-      // 已落盘的改动仍留在 worktree，error 状态也允许上传（UPLOADABLE 含 error）。
+      // Both providers behave the same on error: the fix is marked error and the message is persisted so it is visible (the turn is error too).
+      // Changes already written to disk stay in the worktree, and the error state still allows uploading (UPLOADABLE includes error).
       db.update(schema.fixes).set({ status: 'error', error: errMsg, updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
       h.emit('error', errMsg)
     }
   } finally {
-    // 并发锁直到这里（整个 job 含 db 收尾都结束）才释放，杜绝第二个 chat 在收尾期间挤进来
+    // The concurrency lock is only released here (once the whole job, db wrap-up included, is done), so a second chat can never squeeze in during the wrap-up
     chatLocks.delete(fixId)
     activeChats.delete(fixId)
     activeChatStops.delete(fixId)
@@ -265,7 +265,7 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
   }
 }
 
-// discard / 删除任务时清 worktree
+// Clean up the worktree when the task is discarded / deleted
 export async function cleanupFixWorktree(
   localPath: string | null,
   reposDir: string,

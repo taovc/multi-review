@@ -8,11 +8,11 @@ function tryParse(s: string): { ok: true; value: unknown } | { ok: false } {
   }
 }
 
-// 把 agent 输出解析成 JSON 对象。模型偶尔产出非法 JSON（如 fix 字段里塞了未转义的代码）。
-// 1) 直接 parse → 2) 抽取最外层 {...} → 3) 兜底用 claude -p 修成合法 JSON（不重跑整个审核）。
-// 注意：修复是机械活，固定用快模型 + 低 effort，**不能跟项目的重模型/effort 走**（否则修个 JSON 也几分钟，会超时被杀）。
-// timeoutMs：兜底修复调用的超时。默认 120s（审核/复审够用）；feature plan 那种「analysis 跑很久、
-// 收尾才修 JSON」的路径传更长，避免大半天分析在最后一步修 JSON 时被 120s 砍掉、整轮白跑。
+// Parse agent output into a JSON object. The model occasionally emits invalid JSON (e.g. unescaped code stuffed into the fix field).
+// 1) parse directly → 2) extract the outermost {...} → 3) fall back to claude -p to repair it into valid JSON (without rerunning the whole review).
+// Note: repairing is mechanical work — always use the fast model + low effort, it **must not follow the project's heavy model/effort** (otherwise even fixing a bit of JSON takes minutes and gets killed by the timeout).
+// timeoutMs: timeout of the fallback repair call. Defaults to 120s (enough for review/recheck); paths like feature plan, where
+// "the analysis runs for ages and the JSON is only repaired at the very end", pass something longer, so half a day of analysis isn't cut off by the 120s limit at the last step and the whole round wasted.
 export async function salvageJson(raw: string, _model?: string, timeoutMs = 120_000): Promise<unknown> {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
 
@@ -25,7 +25,7 @@ export async function salvageJson(raw: string, _model?: string, timeoutMs = 120_
     if (r.ok) return r.value
   }
 
-  // 兜底：快模型 + 低 effort 修成合法 JSON
+  // Fallback: fast model + low effort to repair it into valid JSON
   const target = m ? m[0] : cleaned
   const prompt = `The following is meant to be a single JSON object but is malformed (likely unescaped quotes/newlines inside string values). Fix it into ONE valid JSON object. Output ONLY the JSON — no code fences, no commentary. Preserve all content; just make it valid JSON.\n\n${target}`
   const stdout = await runClaude(['--print', '--model', 'sonnet', '--effort', 'low'], { input: prompt, timeout: timeoutMs })

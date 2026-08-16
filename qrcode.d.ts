@@ -1,4 +1,4 @@
-// 最小声明：qrcode 1.5.x 不带自带类型，我们只用到 toDataURL。
+// Minimal declaration: qrcode 1.5.x ships no types of its own and we only use toDataURL.
 declare module 'qrcode' {
   export interface QRCodeToDataURLOptions {
     margin?: number

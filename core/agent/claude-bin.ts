@@ -3,19 +3,19 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-// 找一个可用的 claude 可执行文件，交给 SDK 的 pathToClaudeCodeExecutable。
+// Find a usable claude executable to hand to the SDK's pathToClaudeCodeExecutable.
 //
-// 为什么需要：SDK 把平台相关的原生 binary 放进 optional 依赖里
-// (@anthropic-ai/claude-agent-sdk-<platform>-<arch>，~200MB)。dev 跑在项目
-// node_modules 下，SDK 能自己找到；但 nitro 打 production 包时只把 SDK 的 JS
-// trace 进了 .output，没把那个 binary 一起打包 —— 于是 production 进程报
-// "Native CLI binary for darwin-arm64 not found"。显式指定一个确定存在的
-// 可执行文件，dev / production 两边都稳。
+// Why this is needed: the SDK ships the platform-specific native binary in an optional
+// dependency (@anthropic-ai/claude-agent-sdk-<platform>-<arch>, ~200MB). In dev we run under
+// the project's node_modules, so the SDK finds it on its own; but when nitro builds the
+// production bundle it only traces the SDK's JS into .output, without bundling that binary —
+// so the production process reports "Native CLI binary for darwin-arm64 not found". Pointing
+// explicitly at an executable that definitely exists is stable in both dev and production.
 //
-// 解析顺序：
-//   ① 环境变量逃生口（手动指定）
-//   ② SDK 自带的同版本 binary（dev 的模块上下文能 resolve 到）
-//   ③ PATH / 常见安装目录里用户已登录的 claude CLI（production 兜底）
+// Resolution order:
+//   ① env var escape hatch (manual override)
+//   ② the same-version binary shipped with the SDK (resolvable from dev's module context)
+//   ③ the claude CLI the user is already logged into, from PATH / common install dirs (production fallback)
 
 let cached: string | null | undefined
 
@@ -38,7 +38,7 @@ function fromSdk(): string | undefined {
 
 function fromPath(): string | undefined {
   const dirs = (process.env.PATH || '').split(path.delimiter)
-  // production 进程的 PATH 可能不全，补上常见安装目录
+  // the production process's PATH may be incomplete, so add the common install dirs
   dirs.push(path.join(os.homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin')
   for (const d of dirs) {
     if (!d) continue

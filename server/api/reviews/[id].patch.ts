@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 
-// 编辑 review：整体注释 / 手动改状态（如 draft→ready_to_post）
+// Edit a review: overall notes / manual status change (e.g. draft→ready_to_post)
 const Body = z.object({
   globalNotes: z.string().optional(),
   reviewInstruction: z.string().optional(),

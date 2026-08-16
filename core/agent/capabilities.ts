@@ -12,11 +12,11 @@ export type ModelCap = {
 let _cache: { models: ModelCap[]; at: number } | null = null
 const TTL = 5 * 60_000
 
-// 从本地登录的 claude 读真实可用模型（含每个模型支持的 effort 档）。
+// Read the actually available models (including each model's supported effort levels) from the locally logged-in claude.
 export async function getCapabilities(force = false): Promise<{ models: ModelCap[] }> {
   if (!force && _cache && Date.now() - _cache.at < TTL) return { models: _cache.models }
 
-  const gate = new Promise<void>(() => {}) // 永不 resolve，保持 streaming input 开着
+  const gate = new Promise<void>(() => {}) // never resolves, keeps the streaming input open
   async function* input() {
     await gate
   }

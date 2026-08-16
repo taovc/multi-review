@@ -3,9 +3,9 @@ import { schema } from '~core/db/client'
 import { stopFixChat } from '~core/fix/pipeline'
 import { pausePr } from '~core/automation/state'
 
-// 停止正在生成的对话轮：Claude kill 子进程，Codex abort 当前 SDK turn。
-// 已生成的文本 + worktree 里已落盘的改动都保留；上传/commit 仍由用户在上传路径里手动触发。
-// 用户主动停止 = 接管这条 PR：关掉它的自动审核/自动修复开关，免得引擎下一轮又冲进来抢（人机不打架）。
+// Stop the turn currently being generated: for Claude kill the child process, for Codex abort the current SDK turn.
+// Text already generated and changes already written to the worktree are kept; upload/commit still has to be triggered manually by the user on the upload path.
+// The user stopping it = taking over this PR: turn off its auto-review/auto-fix switches so the engine doesn't barge back in on the next round (no human/machine tug-of-war).
 export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id')!
   const ok = stopFixChat(id)
@@ -13,6 +13,6 @@ export default defineEventHandler((event) => {
     const d = db()
     const fix = d.select().from(schema.fixes).where(eq(schema.fixes.id, id)).get()
     if (fix) pausePr(d, schema, fix.projectId, fix.prNumber, new Date().toISOString())
-  } catch { /* 暂停联动失败不影响停止本身 */ }
+  } catch { /* a failed pause sync doesn't affect the stop itself */ }
   return { ok, stopped: ok }
 })

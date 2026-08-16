@@ -1,7 +1,9 @@
 <script setup lang="ts">
-// 「修复 PR」面板（纯对话版）：点进来就是一个常驻对话框，和 Claude 在 PR 的 worktree 里聊、让它直接改代码。
-// 不自动 commit；点「提交并上传」跳到预览 view（待上传 diff + 生成的 commit message，可改）→ 确认才 commit+push。
-// 布局：自身 flex 撑满抽屉 fix tab 高度——对话流区域内部滚动，输入条固定钉在最底。
+// "Fix PR" panel (pure chat): opening it lands you in a persistent chat box where you talk to Claude inside the PR's worktree and
+// let it edit the code directly.
+// Nothing is committed automatically; "commit and upload" switches to the preview view (the diff to be uploaded + a generated,
+// editable commit message) → commit+push happens only after you confirm.
+// Layout: flexes to fill the drawer's fix tab height — the chat stream scrolls internally, the input bar stays pinned at the bottom.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 
 const props = defineProps<{ projectId: string; prNumber: number; fixId: string | null; active: boolean }>()
@@ -24,13 +26,13 @@ watch(() => props.fixId, (v) => { currentFixId.value = v })
 const data = ref<FixData | null>(null)
 const busy = ref('') // '' | 'discard' | 'rmwt' | 'upload'
 const view = ref<'chat' | 'preview'>('chat')
-const logLines = ref<string[]>([]) // 运行日志（worktree 准备 / 工具调用 / 阶段等），可展开
+const logLines = ref<string[]>([]) // run log (worktree setup / tool calls / stages, etc.), expandable
 const showLog = ref(false)
 let es: EventSource | null = null
-// load 竞态护栏（同 FeatureDrawer）：切 fix / 放弃时，旧 fix 在途的 load 迟到返回不能盖回 data。
+// load race guard (same as FeatureDrawer): when switching fixes / discarding, an in-flight load for the old fix must not land back into data.
 let loadToken = 0
 
-// 允许危险命令 + ultracode 后台激活：localStorage 持久（跨 PR/刷新，同 feature/global）；前缀后端注入。
+// Allow dangerous commands + ultracode background activation: persisted in localStorage (across PRs/reloads, same as feature/global); the prefix is injected by the backend.
 const allowDanger = ref(false)
 const ultracodeOn = ref(false)
 const LS_DANGER = 'mr.fix.allowDanger'
@@ -45,7 +47,7 @@ function toggleUltracode() {
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
 }
 
-// 决策卡（同 FeatureDrawer）：最后一条 assistant 轮含 ```ask-user 块 → 问题+选项；点选项=下一条消息。
+// Decision card (same as FeatureDrawer): the last assistant turn contains an ```ask-user block → question + options; clicking an option sends it as the next message.
 const otherAnswer = ref('')
 const ASK_RE = /```ask-user\s*\n([\s\S]*?)```/i
 const IS_OPT = /^(?:[-*]|\d+[.)])\s+/
@@ -66,7 +68,7 @@ function askQuestionText(inner: string): string {
 function displayText(content: string, stripAsk: boolean): string {
   return content.replace(/```ask-user\s*\n([\s\S]*?)```/gi, (_m, inner) => (stripAsk ? '' : askQuestionText(inner))).trim()
 }
-// 选项按钮上的推荐标记只用于展示；发送时去掉（标记本身定义在 ~core/agent/decisionCard）
+// The recommended marker on an option button is display-only; strip it before sending (the marker itself is defined in ~core/agent/decisionCard)
 function optionLabel(o: string): string { return stripRecommendedMarker(o) }
 
 function hhmmss(iso?: string) {
@@ -78,7 +80,7 @@ function notify(msg: string, ok = false) {
   toast.add({ title: msg, color: ok ? 'success' : 'error', icon: ok ? 'i-lucide-check' : 'i-lucide-triangle-alert' })
 }
 
-// 对话进行中 = 最后一条 assistant 轮还在 streaming
+// Chat in progress = the last assistant turn is still streaming
 const chatting = computed(() => {
   const ts = data.value?.turns ?? []
   return ts.length > 0 && ts[ts.length - 1]!.role === 'assistant' && ts[ts.length - 1]!.status === 'streaming'
@@ -92,9 +94,9 @@ async function load() {
   if (!fid) return
   const my = ++loadToken
   const detail = await $fetch<FixData>(`/api/fixes/${fid}`)
-  if (my !== loadToken || fid !== currentFixId.value) return // 过期结果（切了 fix / 有更新的 load）→ 丢弃
+  if (my !== loadToken || fid !== currentFixId.value) return // stale result (fix switched / a newer load started) → drop it
   data.value = detail
-  // 首次：用落库的历史事件回填运行日志
+  // First time: backfill the run log from the persisted historical events
   if (!logLines.value.length && detail.events?.length) {
     logLines.value = detail.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
   }
@@ -103,10 +105,10 @@ async function load() {
 function openSSE() {
   if (!currentFixId.value || !import.meta.client) return
   es?.close()
-  const fid = currentFixId.value // 绑定这条流所属 fix：切走后残留消息不再写入
+  const fid = currentFixId.value // bind the stream to its fix: leftover messages are no longer written after switching away
   es = new EventSource(`/api/fixes/${fid}/stream`)
   es.onmessage = (ev) => {
-    if (fid !== currentFixId.value) return // 过期流 → 忽略
+    if (fid !== currentFixId.value) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
@@ -121,7 +123,7 @@ function openSSE() {
 }
 function closeSSE() { es?.close(); es = null }
 
-// tab 激活时连 SSE / load；切走时断开。切回 tab 总是回到对话视图。load 完滚到底（看最新一条）。
+// Connect SSE / load when the tab activates; disconnect when leaving. Coming back to the tab always returns to the chat view. Scroll to the bottom after load (to see the latest message).
 watch(() => [props.active, currentFixId.value] as const, async ([on, id]) => {
   if (on) {
     view.value = 'chat'
@@ -130,15 +132,15 @@ watch(() => [props.active, currentFixId.value] as const, async ([on, id]) => {
 }, { immediate: true })
 onBeforeUnmount(() => { closeSSE(); if (chatTimer) clearInterval(chatTimer); if (pollTimer) clearInterval(pollTimer) })
 
-// ── 对话 ──
+// ── Chat ──
 const chatInput = ref('')
 const liveAssistant = ref('')
 
-// 进对话 / 来新消息时自动滚到最底
+// Auto-scroll to the bottom when entering the chat / when a new message arrives
 const chatScroll = ref<HTMLElement | null>(null)
 function scrollChatToBottom() {
   const go = () => { const el = chatScroll.value; if (el) el.scrollTop = el.scrollHeight }
-  // 二次补滚：MarkdownBody 渲染后内容高度可能再变（首次滚不到真正的底）
+  // Second scroll pass: the content height can change again after MarkdownBody renders (the first scroll misses the real bottom)
   nextTick(() => { go(); setTimeout(go, 80) })
 }
 watch([view, () => data.value?.turns.length, liveAssistant], ([v]) => { if (v === 'chat') scrollChatToBottom() })
@@ -164,7 +166,7 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
   if (overrideMsg == null) chatInput.value = ''
   liveAssistant.value = ''
   try {
-    // 惰性创建：还没有 fix 行就先建一个（不跑验证），再发第一条
+    // Lazy creation: if there is no fix row yet, create one first (without running validation), then send the first message
     if (!currentFixId.value) {
       const res = await $fetch<{ id: string }>(`/api/projects/${props.projectId}/pulls/${props.prNumber}/fix`, { method: 'POST' })
       currentFixId.value = res.id
@@ -180,7 +182,7 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
     return false
   }
 }
-// 决策卡选项 / 「其它…」自由回答（发失败不丢用户手打的文本）
+// Decision-card option / free-form "other…" answer (a failed send must not lose the text the user typed)
 function answer(opt: string) { void sendChat(optionLabel(opt)) }
 function answerOther() { const v = otherAnswer.value.trim(); if (!v) return; sendChat(v).then((ok) => { if (ok) otherAnswer.value = '' }) }
 async function stopChat() {
@@ -188,7 +190,7 @@ async function stopChat() {
   catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
 }
 
-// ── 提交并上传：预览 view ──
+// ── Commit and upload: preview view ──
 const preview = ref<{ diff: string; truncated: boolean; message: string; needsCommit: boolean; filesChanged: number; additions: number; deletions: number } | null>(null)
 const commitMsg = ref('')
 async function openPreview() {
@@ -215,7 +217,7 @@ async function confirmUpload() {
   finally { busy.value = '' }
 }
 
-// ── 放弃任务 / 删工作区 ──
+// ── Discard task / delete worktree ──
 const confirming = ref<'' | 'discard'>('')
 async function doDiscard() {
   confirming.value = ''
@@ -244,13 +246,13 @@ async function doDeleteWorktree() {
 async function copyWorktree() {
   const p = data.value?.fix?.worktreePath
   if (!p) return
-  try { await navigator.clipboard.writeText(p); notify(t('fix.pathCopied'), true) } catch { /* 忽略 */ }
+  try { await navigator.clipboard.writeText(p); notify(t('fix.pathCopied'), true) } catch { /* ignore */ }
 }
 </script>
 
 <template>
   <div class="flex flex-col min-h-0 flex-1">
-    <!-- ── 预览 view：待上传 diff + 可编辑 commit message ── -->
+    <!-- ── Preview view: diff to be uploaded + editable commit message ── -->
     <template v-if="view === 'preview' && preview">
       <div class="shrink-0">
         <div class="flex items-center gap-3 mb-3">
@@ -283,9 +285,9 @@ async function copyWorktree() {
       </div>
     </template>
 
-    <!-- ── 对话 view ── -->
+    <!-- ── Chat view ── -->
     <template v-else>
-      <!-- 头（固定）：状态 + 统计 + 放弃 + 出错横幅 -->
+      <!-- Header (fixed): status + stats + discard + error banner -->
       <div v-if="currentFixId && data" class="shrink-0">
         <div class="flex items-center gap-3 text-xs mb-3">
           <span :class="data.fix.status === 'error' ? 'text-error font-medium' : 'text-toned'">{{ fixStatusLabel(data.fix.status) }}</span>
@@ -308,7 +310,7 @@ async function copyWorktree() {
         </div>
       </div>
 
-      <!-- 对话流（滚动区） -->
+      <!-- Chat stream (scrolling area) -->
       <div ref="chatScroll" class="flex-1 min-h-0 overflow-y-auto">
         <p v-if="(!data || !data.turns.length)" class="text-sm text-dimmed py-8">{{ $t('fix.chatHint') }}</p>
         <template v-else>
@@ -325,7 +327,7 @@ async function copyWorktree() {
           </div>
         </template>
 
-        <!-- 决策卡（agent 在等你拍板；同 feature 开发）-->
+        <!-- Decision card (the agent is waiting on your call; same as feature development) -->
         <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2 mb-3">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
           <p v-if="askCard.question" class="text-sm font-medium whitespace-pre-wrap text-highlighted">{{ askCard.question }}</p>
@@ -338,16 +340,16 @@ async function copyWorktree() {
           </div>
         </div>
 
-        <!-- 对话进行中：活动指示（步骤详情看上方「展开日志」） -->
+        <!-- Chat in progress: activity indicator (step details are under "expand log" above) -->
         <div v-if="chatting" class="mb-3 flex items-center gap-2 text-xs text-toned">
           <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />
           <span class="font-mono">{{ chatVerb }}… {{ chatElapsed }}s</span>
         </div>
       </div>
 
-      <!-- 输入条（固定钉在最底） -->
+      <!-- Input bar (pinned at the bottom) -->
       <div class="shrink-0 border-t border-default pt-3 mt-1">
-        <!-- 允许危险命令（默认拦 git push / gh pr create；开了才放行，同 feature/global）-->
+        <!-- Allow dangerous commands (git push / gh pr create are blocked by default and only let through once enabled, same as feature/global) -->
         <label class="flex items-center gap-2 text-[11px] cursor-pointer mb-2">
           <input v-model="allowDanger" type="checkbox" class="accent-error" />
           <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
@@ -357,7 +359,7 @@ async function copyWorktree() {
           class="w-full text-sm bg-muted border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-accented disabled:opacity-50"
         />
         <div class="mt-2 flex items-center gap-3">
-          <!-- ultracode 后台激活：未激活=灰渐变，激活=紫渐变+扫光；点一次永久记住 -->
+          <!-- ultracode background activation: inactive = grey gradient, active = purple gradient + shine sweep; one click is remembered permanently -->
           <button
             type="button"
             class="ultra-btn relative overflow-hidden shrink-0 text-xs rounded px-2.5 py-1.5 font-medium text-white shadow-sm transition"
@@ -386,7 +388,7 @@ async function copyWorktree() {
         </div>
       </div>
 
-      <!-- worktree 工具（固定在最底） -->
+      <!-- worktree tools (pinned at the bottom) -->
       <div v-if="data?.fix?.worktreePath" class="shrink-0 mt-2 text-[10px] text-dimmed">
         <div v-if="rmwtConfirm" class="flex items-center gap-2">
           <span class="flex-1">{{ data.hasUnpushed ? $t('fix.deleteWorktreeConfirmUnpushed') : $t('fix.deleteWorktreeConfirm') }}</span>
@@ -405,7 +407,7 @@ async function copyWorktree() {
 </template>
 
 <style scoped>
-/* ultracode 按钮：激活态才有高光扫过；未激活是灰的、不扫光。*/
+/* ultracode button: the highlight sweep only runs in the active state; inactive is grey with no sweep. */
 .ultra-btn.is-active::after {
   content: '';
   position: absolute;

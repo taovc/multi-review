@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 
-// 新建 skill（手写空白 / 粘贴内容）。activate=true 则同时设为项目 active。
+// Create a skill (blank hand-written / pasted content). activate=true also sets it as the project's
+// active skill.
 const Body = z.object({
   name: z.string().min(1),
   content: z.string().default(''),

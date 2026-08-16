@@ -7,14 +7,15 @@ import { generateSkillCodex } from '~core/agent/codexSkill'
 import { resolveLang, type LangCode } from '~core/agent/lang'
 import { cockpitBus } from '~core/events'
 
-// AI 读本地项目生成/赋能审核 skill。结果存为**新候选**(不激活、不覆盖)，返回新 skill 供预览/对比。
+// The AI reads the local project and generates/improves a review skill. The result is stored as a
+// **new candidate** (not activated, nothing overwritten), and the new skill is returned for preview/comparison.
 const Body = z.object({
   baseSkillId: z.string().optional(),
   name: z.string().optional(),
-  instruction: z.string().optional(), // 用户自定义指令（介入生成方向）
+  instruction: z.string().optional(), // user-supplied instruction (steers the generation)
 })
 
-// 用户可见文案（错误 / 进度 / 候选标签）跟 UI locale 走（mr-locale），与技能正文同语言。缺省 zh。
+// User-visible text (errors / progress / candidate label) follows the UI locale (mr-locale), same language as the skill body. Defaults to zh.
 type SkillGenMessages = {
   notFound: string
   noLocalPath: string
@@ -54,8 +55,8 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const b = Body.parse((await readBody(event)) || {})
   const d = db()
-  // 产出语言跟 UI locale 走（与其它 AI 端点一致：reviews/features/fix）；缺省 zh。
-  // 归一化只做一次，技能正文和这些用户可见文案共用同一个结果，不会出现一边英文一边中文。
+  // Output language follows the UI locale (consistent with the other AI endpoints: reviews/features/fix); defaults to zh.
+  // Normalized once, so the skill body and this user-visible text share the same result and can't end up half English half Chinese.
   const lang = resolveLang(getCookie(event, 'mr-locale'))
   const t: SkillGenMessages = SKILLGEN_MESSAGES[lang]
 
@@ -69,16 +70,16 @@ export default defineEventHandler(async (event) => {
     baseContent = base?.content ?? null
   }
 
-  // 走项目配置的 model + effort（与审核引擎一致）
+  // Use the project's configured model + effort (same as the review engine)
   const rc = resolveReviewConfig(d, project)
-  // 进度事件用项目级 key 推到事件总线，前端开 SSE 监听（见 genstream.get.ts）
+  // Progress events are pushed to the event bus under a project-level key, the frontend listens over SSE (see genstream.get.ts)
   const key = `skillgen:${id}`
   const emit = (kind: string, message: string) =>
     cockpitBus.emit({ reviewId: key, ts: new Date().toISOString(), kind, message })
 
   let content: string
   let toolN = 0
-  // 跟随项目 provider（不混用）：codex 项目用 Codex 读项目生成方法学，claude 项目用 Claude。
+  // Follow the project's provider (never mixed): codex projects use Codex to read the project and generate the methodology, claude projects use Claude.
   const runGenerate = rc.provider === 'codex' ? generateSkillCodex : generateSkill
   try {
     emit('stage', t.stage(rc.provider, rc.model || t.defaultModel, rc.effort ? ' · ' + rc.effort : ''))
@@ -109,5 +110,5 @@ export default defineEventHandler(async (event) => {
     createdAt: new Date().toISOString(),
   }
   d.insert(schema.skills).values(row).run()
-  return row // 不激活；前端做 diff 预览后由用户决定激活
+  return row // not activated; the frontend shows a diff preview and the user decides whether to activate
 })

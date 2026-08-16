@@ -1,7 +1,8 @@
 import { stopFeatureImpl } from '~core/feature/pipeline'
 
-// 停止当前 develop 回合（单段式）：codex 走 runner 暴露的 abort 句柄；claude 走子进程组 SIGINT→SIGKILL。
-// 没有在跑（没句柄也没子进程）时返回 false。
+// Stop the current develop turn (single-phase): codex uses the abort handle the runner exposes;
+// claude gets SIGINT→SIGKILL on its child process group.
+// Returns false when nothing is running (no handle and no child process).
 export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id')!
   const ok = stopFeatureImpl(id)

@@ -4,14 +4,16 @@ import { appendFileSync, mkdirSync, existsSync, readFileSync, rmSync } from 'nod
 import { dirname, relative, resolve } from 'node:path'
 
 const pexec = promisify(execFile)
-// 点开头：worktree 是整份源码副本，落在项目仓库里会被项目自己的 tsc / eslint / vitest / 构建
-// 一路扫进去（重复定义、重复用例、搜索结果翻倍）。大多数工具默认跳过 dot 目录，而 IDE 的文件树
-// 和仓库扫描不受 dot 影响 —— 可见性不打折，工具链干扰最小。
+// Leading dot: a worktree is a full copy of the source, and inside the project repo it gets picked up
+// by the project's own tsc / eslint / vitest / build (duplicate definitions, duplicate test cases,
+// doubled search results). Most tools skip dot directories by default, while IDE file trees and repo
+// scans ignore the dot — full visibility, minimal toolchain interference.
 const REPO_WORKTREES_DIR = '.pr-cockpit-worktrees'
 export type WorktreeLocation = 'repo' | 'central'
 
-// 每个本地仓库一把互斥锁：并发审核会对同一个 .git 跑 git fetch / worktree add，
-// 同时更新 refs/remotes/origin/* 会撞 "cannot lock ref"。同仓库的 git 准备串行化。
+// One mutex per local repo: concurrent reviews run git fetch / worktree add against the same .git,
+// and updating refs/remotes/origin/* at the same time hits "cannot lock ref". Serialize the git
+// preparation for a given repo.
 const repoLocks = new Map<string, Promise<unknown>>()
 async function withRepoLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = repoLocks.get(key) ?? Promise.resolve()
@@ -49,10 +51,12 @@ function isInside(parent: string, child: string): boolean {
   return rel === '' || (!!rel && !rel.startsWith('..') && !rel.startsWith('/'))
 }
 
-// worktree 根落在项目仓库内 → 主仓库 `git status` 会把它当一坨未跟踪目录列出来，agent 在主仓库
-// 跑 `git add -A` 就有误提交风险。写进 .git/info/exclude 挡掉（info/exclude 不进版本库，不碰
-// 项目共享的 .gitignore）。
-// 这不影响 IDE 发现这些 worktree：编辑器找仓库靠文件系统扫描，不读 gitignore/exclude。
+// With the worktree root inside the project repo, the main repo's `git status` lists it as a pile of
+// untracked directories, and an agent running `git add -A` in the main repo risks committing it.
+// Block that via .git/info/exclude (info/exclude is not versioned, so the project's shared .gitignore
+// stays untouched).
+// This does not stop IDEs from finding those worktrees: editors locate repos by scanning the file
+// system, they don't read gitignore/exclude.
 async function ensureRepoWorktreeExclude(localPath: string) {
   const excludePath = resolve(localPath, (await git(localPath, ['rev-parse', '--git-path', 'info/exclude'])).trim())
   if (!excludePath) return
@@ -68,13 +72,15 @@ export async function ensureWorktreeRoot(localPath: string, reposDir: string, lo
   const root = resolveWorktreeRoot(localPath, reposDir, location)
   mkdirSync(root, { recursive: true })
   if (normalizeWorktreeLocation(location) === 'repo' && isInside(resolve(localPath), root)) {
-    // 挡不住只是主仓库 git status 脏一点，不该让整个任务挂掉 → 失败吞掉。
-    await ensureRepoWorktreeExclude(localPath).catch(() => { /* 非致命 */ })
+    // Failing to exclude only makes the main repo's git status a bit dirty; it shouldn't kill the
+    // whole task → swallow the failure.
+    await ensureRepoWorktreeExclude(localPath).catch(() => { /* non-fatal */ })
   }
   return root
 }
 
-// 删除某个 review 的 worktree（git 注销 + 删目录）。task 关闭/删除时调用，避免泄漏。
+// Remove a review's worktree (deregister from git + delete the directory). Called when a task is
+// closed/deleted, to avoid leaking them.
 export async function removeWorktree(
   localPath: string | null,
   reposDir: string,
@@ -87,7 +93,7 @@ export async function removeWorktree(
       try {
         await git(localPath, ['worktree', 'remove', '--force', wtPath])
       } catch {
-        /* 未注册/已删 */
+        /* not registered / already removed */
       }
     })
   }
@@ -124,8 +130,9 @@ export async function migrateWorktreeToRepo(opts: {
   return targetPath
 }
 
-// Feature 开发用：从最新 origin/<defaultBranch> 拉一个**新功能分支**并建 worktree（区别于审核/修复的
-// 「checkout 已有 PR 分支」）。-B = 不存在则建、存在则重置到 origin/default（重跑安全）。
+// For feature development: cut a **new feature branch** from the latest origin/<defaultBranch> and
+// create a worktree for it (as opposed to review/fix, which check out an existing PR branch).
+// -B = create if missing, reset to origin/default if it exists (safe to re-run).
 export async function prepareFeatureWorktree(opts: {
   localPath: string
   reposDir: string
@@ -142,7 +149,7 @@ export async function prepareFeatureWorktree(opts: {
 
   const cleanup = async () => {
     await withRepoLock(localPath, async () => {
-      try { await git(localPath, ['worktree', 'remove', '--force', wtPath]) } catch { /* 已不存在 */ }
+      try { await git(localPath, ['worktree', 'remove', '--force', wtPath]) } catch { /* already gone */ }
     })
   }
 
@@ -150,33 +157,39 @@ export async function prepareFeatureWorktree(opts: {
     if (existsSync(wtPath)) {
       try { await git(localPath, ['worktree', 'remove', '--force', wtPath]) } catch { /* ignore */ }
     }
-    // worktree 目录可能被外部清掉但 .git/worktrees 里登记还在 → prune 清陈旧登记，否则 add 会报「already used」。
+    // The worktree directory may have been wiped externally while the registration in .git/worktrees
+    // remains → prune the stale entry, otherwise add fails with "already used".
     try { await git(localPath, ['worktree', 'prune']) } catch { /* ignore */ }
 
     onStep?.(`fetch origin ${defaultBranch}`)
     await git(localPath, ['fetch', 'origin', defaultBranch])
 
-    // 功能分支若已推到远端（PR 开过、worktree 丢了要恢复）→ 基于 origin/<newBranch> 重建，保留已推送的提交；
-    // 否则硬重置到 origin/default 会丢已推提交，且之后 open-pr 的 push 非快进被拒、卡死无法更新 PR。
+    // If the feature branch has already been pushed (PR was opened, worktree lost and needs restoring)
+    // → rebuild from origin/<newBranch> so pushed commits are kept; otherwise a hard reset to
+    // origin/default loses them, and the later open-pr push is rejected as non-fast-forward, leaving
+    // the PR stuck and un-updatable.
     let baseRef = `origin/${defaultBranch}`
     const remote = await git(localPath, ['ls-remote', '--heads', 'origin', newBranch]).catch(() => '')
     if (remote.trim()) {
       try {
         await git(localPath, ['fetch', 'origin', newBranch])
         baseRef = `origin/${newBranch}`
-      } catch { /* 拉不到就退回 default */ }
+      } catch { /* can't fetch it → fall back to default */ }
     }
     const sha = (await git(localPath, ['rev-parse', baseRef])).trim()
     onStep?.(`创建新分支 worktree（${newBranch} ← ${baseRef}）`)
-    // -B：强制建/重置功能分支到 baseRef，并在新 worktree 里 checkout
+    // -B: force-create/reset the feature branch to baseRef and check it out in the new worktree
     await git(localPath, ['worktree', 'add', '-B', newBranch, wtPath, baseRef])
-    // 从 origin/<default> 建的新功能分支：autoSetupMerge 会把它的 upstream 设成默认分支。
-    // 那样裸 `git push`（push.default=simple）会被拒，且 git 首条建议是 push 到默认分支——
-    // agent 照做就把功能提交直接推上了 base，污染基线并绕过 PR。→ 清掉这个误导性 upstream，
-    // 让裸 push 转而给出可自纠的 `--set-upstream origin <newBranch>` 提示。
-    // 恢复场景（baseRef=origin/<newBranch>，同名）保留跟踪不动，push 正常更新 PR 分支。
+    // For a new feature branch cut from origin/<default>, autoSetupMerge points its upstream at the
+    // default branch. A bare `git push` (push.default=simple) is then rejected, and git's first
+    // suggestion is to push to the default branch — an agent following it pushes feature commits
+    // straight onto base, polluting the baseline and bypassing the PR. → Clear that misleading
+    // upstream so a bare push instead prints the self-correcting
+    // `--set-upstream origin <newBranch>` hint.
+    // In the restore case (baseRef=origin/<newBranch>, same name) tracking is left alone, so push
+    // updates the PR branch normally.
     if (baseRef === `origin/${defaultBranch}`) {
-      await git(wtPath, ['branch', '--unset-upstream']).catch(() => { /* 没设 upstream 就忽略 */ })
+      await git(wtPath, ['branch', '--unset-upstream']).catch(() => { /* no upstream set → ignore */ })
     }
     return sha
   })
@@ -186,15 +199,17 @@ export async function prepareFeatureWorktree(opts: {
 
 export type Worktree = { path: string; headSha: string; cleanup: () => Promise<void> }
 
-// 在项目已有本地 clone 上开一个隔离 worktree：fetch PR 分支 → detached checkout → merge 默认分支。
-// 全程只读性质，不动主工作目录。返回 worktree 路径 + 清理函数。
+// Open an isolated worktree on the project's existing local clone: fetch the PR branch → detached
+// checkout → merge the default branch. Read-only in effect, never touching the main working tree.
+// Returns the worktree path + a cleanup function.
 export async function prepareWorktree(opts: {
   localPath: string
   reposDir: string
   reviewId: string
   branch: string
   defaultBranch: string
-  // 审核默认 merge 默认分支再看 diff；「修复」要 push，传 false 不 merge → 推上去的提交才干净。
+  // Review merges the default branch before looking at the diff; fix has to push, so pass false to
+  // skip the merge → the commits that get pushed stay clean.
   mergeDefault?: boolean
   location?: string | null
   onStep?: (msg: string) => void
@@ -204,25 +219,26 @@ export async function prepareWorktree(opts: {
   if (!localPath || !existsSync(localPath)) {
     throw new Error(`项目未配置有效的本地 clone 路径：${localPath || '(空)'}`)
   }
-  // Sans branche, `git rev-parse origin/${branch}` deviendrait `origin/` → erreur git illisible.
-  // On échoue tôt avec un message clair (l'appelant doit fournir/résoudre la branche en amont).
+  // Without a branch, `git rev-parse origin/${branch}` would become `origin/` → an unreadable git error.
+  // Fail early with a clear message instead (the caller must supply/resolve the branch upstream).
   if (!branch) {
     throw new Error('PR 分支为空，无法准备 worktree（PR 元数据缺失或分支已删除）')
   }
   const wtPath = resolve(await ensureWorktreeRoot(localPath, reposDir, opts.location), reviewId)
 
-  // 清理也走仓库锁（worktree remove 也动 .git/worktrees）
+  // Cleanup goes through the repo lock too (worktree remove also touches .git/worktrees)
   const cleanup = async () => {
     await withRepoLock(localPath, async () => {
       try {
         await git(localPath, ['worktree', 'remove', '--force', wtPath])
       } catch {
-        /* 已不存在则忽略 */
+        /* already gone → ignore */
       }
     })
   }
 
-  // 准备阶段的 git 操作（fetch + worktree add）对同一仓库串行化，避免并发抢 ref
+  // Serialize the preparation git operations (fetch + worktree add) per repo, so concurrent runs
+  // don't fight over refs
   const headSha = await withRepoLock(localPath, async () => {
     if (existsSync(wtPath)) {
       try {
@@ -236,12 +252,13 @@ export async function prepareWorktree(opts: {
     const sha = (await git(localPath, ['rev-parse', `origin/${branch}`])).trim()
 
     onStep?.('创建 worktree')
-    // detached 在 PR head，避免与主仓已 checkout 的分支冲突
+    // Detached at the PR head, to avoid clashing with a branch already checked out in the main repo
     await git(localPath, ['worktree', 'add', '--detach', wtPath, `origin/${branch}`])
     return sha
   })
 
-  // merge 在各自 worktree 内进行（不抢主仓 refs），可并发，放锁外
+  // The merge happens inside each worktree (no contention on the main repo's refs), so it can run
+  // concurrently — keep it outside the lock
   if (mergeDefault) {
     onStep?.(`merge origin/${defaultBranch}`)
     try {

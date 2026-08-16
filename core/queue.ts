@@ -1,4 +1,4 @@
-// 极简并发队列：限制同时跑的任务数（worktree + 算力约束）。
+// Minimal concurrency queue: caps how many jobs run at once (worktree + compute constraints).
 type Job = () => Promise<void>
 
 class ConcurrencyQueue {

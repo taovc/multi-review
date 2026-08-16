@@ -13,8 +13,9 @@ export function selectReviewRunner(provider?: ReviewProvider): ReviewRunner {
   return provider === 'codex' ? codexReviewRunner : claudeReviewRunner
 }
 
-// 合并冲突那条合成 finding 会入库、在 UI 上显示、之后又被当 prompt 喂回给发评论和自动修复，
-// 所以它必须跟这次审核的工作语言一致。冲突标记 <<<<<<< / ======= / >>>>>>> 三语都保持原样。
+// The synthetic merge-conflict finding is stored in the DB, shown in the UI, and later fed back as a prompt to
+// comment posting and auto-fix, so it must match this review's working language. The conflict markers
+// <<<<<<< / ======= / >>>>>>> stay as-is in all three languages.
 const CONFLICT_FINDING = {
   zh: {
     title: '解决与目标分支的合并冲突',
@@ -36,7 +37,7 @@ const CONFLICT_FINDING = {
   },
 }
 
-// 这里不直接 import db client，避免 core 依赖运行时；由调用方注入 db + 表 + 配置。
+// Don't import the db client here, so core doesn't depend on the runtime; the caller injects db + tables + config.
 export type ReviewJobCtx = {
   db: any
   schema: any
@@ -46,15 +47,15 @@ export type ReviewJobCtx = {
   branch: string
   defaultBranch: string
   localPath: string | null
-  methodology: string // 已解析的方法学（active skill 或默认）
+  methodology: string // the resolved methodology (active skill or default)
   reposDir: string
   worktreeLocation?: string | null
   provider?: ReviewProvider
-  model: string // 当前 provider 的实模型（不混用）
+  model: string // the actual model of the current provider (never mixed)
   effort: string
   codexServiceTier?: string | null
-  lang?: string // AI 产出的工作语言（UI locale），缺省 zh 保持旧行为
-  guided?: boolean // true=带反馈针对性复审；false/undefined=全新首审
+  lang?: string // working language of the AI output (UI locale); defaults to zh to preserve the old behavior
+  guided?: boolean // true = targeted re-review with feedback; false/undefined = fresh first review
 }
 
 export function enqueueReview(ctx: ReviewJobCtx) {
@@ -75,14 +76,14 @@ async function runReviewJob(ctx: ReviewJobCtx) {
     try {
       db.insert(schema.events).values({ id: nanoid(), reviewId, ts, kind, message: message ?? null }).run()
     } catch {
-      /* 事件落库失败不影响主流程 */
+      /* failing to persist the event doesn't affect the main flow */
     }
   }
   const setStatus = (status: string, extra: Record<string, unknown> = {}) => {
     db.update(schema.reviews).set({ status, updatedAt: now(), ...extra }).where(eq(schema.reviews.id, reviewId)).run()
     cockpitBus.emit({ reviewId, ts: now(), kind: 'status', message: status })
   }
-  // 一致性闸：task 已被删除则丢弃结果，不要回写（防止网络波动期间删了又被 resurrect）
+  // Consistency gate: if the task was deleted, drop the result instead of writing it back (stops a task deleted during a network hiccup from being resurrected)
   const taskGone = () => !db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()
 
   let wt: { path: string; headSha: string; cleanup: () => Promise<void> } | null = null
@@ -109,7 +110,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
     let costUsd = 0
 
     if (guided) {
-      // ── 带反馈的针对性复审：保留 notes/勾选，AI 逐条回应 ──
+      // ── Targeted re-review with feedback: keep notes/checkmarks, the AI responds item by item ──
       emit('stage', 'AI 针对你的反馈复审中…')
       const g = await selectReviewRunner(ctx.provider).runGuidedReview({
         cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
@@ -131,7 +132,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       for (const f of result.findings) {
         const cur = f.fid && byFid.get(f.fid)
         if (cur) {
-          // 更新内容，保留 notes/checked
+          // update the content, keep notes/checked
           db.update(schema.findings).set({
             severity: f.severity, title: f.title, location: f.location || null,
             problem: f.problem || null, detail: f.detail || null, fix: f.fix || null, introducedByPr: f.introducedByPr,
@@ -143,7 +144,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           }
           byFid.delete(f.fid)
         } else {
-          // 新发现
+          // new finding
           const id = nanoid()
           db.insert(schema.findings).values({
             id, reviewId, fid: `F${++maxN}`, severity: f.severity, title: f.title, location: f.location || null,
@@ -157,7 +158,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       }
       db.insert(schema.events).values({ id: nanoid(), reviewId, ts: now(), kind: 'review-round', message: `round ${round}` }).run()
     } else {
-      // ── 全新首审：清空重写 ──
+      // ── Fresh first review: wipe and rewrite ──
       emit('stage', 'AI 审核中…')
       const reviewRunner = selectReviewRunner(ctx.provider)
       const r = await reviewRunner.runReview({
@@ -168,7 +169,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       result = r.result
       costUsd = r.costUsd
       if (taskGone()) { emit('error', '任务已被删除，丢弃审核结果'); return }
-      // 清空+写入放进一个事务：要么全写要么全不写，避免崩在中间留下空 findings
+      // Wipe + insert in one transaction: all or nothing, so a crash halfway doesn't leave findings empty
       db.transaction((tx: any) => {
         tx.delete(schema.findings).where(eq(schema.findings.reviewId, reviewId)).run()
         result.findings.forEach((f: any, i: number) => {
@@ -180,8 +181,8 @@ async function runReviewJob(ctx: ReviewJobCtx) {
         })
       })
 
-      // 合并冲突检测：PR 与目标分支冲突 → 追加一条 High「解决合并冲突」（自动修复会尝试解冲突）。
-      // GitHub mergeable 取数失败 / UNKNOWN 不误报。
+      // Merge conflict detection: the PR conflicts with its base branch → append a High "resolve merge conflicts" finding (auto-fix will try to resolve them).
+      // A failed / UNKNOWN GitHub mergeable lookup never raises a false alarm.
       try {
         if ((await fetchPrMergeable(ctx.repo, ctx.prNumber)) === 'conflicting' && !taskGone()) {
           const c = pickByLang(ctx.lang, CONFLICT_FINDING)
@@ -197,7 +198,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           }).run()
           emit('stage', c.stage)
         }
-      } catch { /* mergeable 取数失败不影响审核 */ }
+      } catch { /* a failed mergeable lookup doesn't affect the review */ }
     }
 
     setStatus('draft', {
@@ -217,7 +218,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
   }
 }
 
-// 复审：基于作者评论后的新 commit，逐条判断 fixed/partial/unaddressed，追加 finding_rechecks。
+// Recheck: based on the new commits the author pushed after our comment, judge each finding fixed/partial/unaddressed and append finding_rechecks.
 async function runRecheckJob(ctx: ReviewJobCtx) {
   const { db, schema, reviewId } = ctx
   const now = () => new Date().toISOString()
@@ -264,14 +265,14 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     let applied = 0
     for (const r of result.rechecks) {
       const findingId = fidToId.get(r.fid)
-      if (!findingId) continue // 找不到对应旧 finding 的判定丢弃（新问题走 newFindings）
+      if (!findingId) continue // drop verdicts with no matching old finding (new issues go through newFindings)
       db.insert(schema.findingRechecks).values({
         id: nanoid(), findingId, round, status: r.status, text: r.text || null, at: now(),
       }).run()
       applied++
     }
 
-    // 作者新 commit 引入的新问题：建成新 finding（未勾选）+ 挂一条「新增」复审记录
+    // New issues introduced by the author's new commits: create a new finding (unchecked) + attach a "new" recheck record
     let maxN = existing.reduce((m: number, f: any) => Math.max(m, parseInt(String(f.fid).replace(/\D/g, '')) || 0), 0)
     let added = 0
     for (const nf of result.newFindings ?? []) {
@@ -287,7 +288,7 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
       added++
     }
 
-    // 复审后的整体结论覆盖 AI 总评；AI 没给（空）就保留原总评，不清空
+    // The post-recheck overall conclusion overwrites the AI summary; if the AI gave none (empty), keep the old summary instead of clearing it
     const newConclusion = result.conclusion?.trim()
     setStatus('draft', { headSha: wt.headSha, authorUpdated: false, ...(newConclusion ? { conclusion: newConclusion } : {}) })
     emit('recheck', `复审 round ${round} 完成 · 更新 ${applied} 条${added ? ` · 新增 ${added} 条` : ''}`)

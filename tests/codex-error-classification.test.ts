@@ -5,7 +5,7 @@ assert.equal(classifyCodexError(new Error('AbortError: The operation was aborted
 assert.equal(classifyCodexError(new Error('Codex Exec exited with signal SIGTERM')), 'interrupted')
 assert.equal(classifyCodexError(new Error('No session found for thread id 123')), 'invalid_thread')
 assert.equal(classifyCodexError(new Error('Conversation 123 not found')), 'invalid_thread')
-// codex resume 失败：本地没有该 thread 的 rollout（会话文件）→ 当作失效线程，开新线程重试
+// codex resume failed: no local rollout (session file) for that thread → treat it as a dead thread and retry on a new one
 assert.equal(classifyCodexError(new Error('thread/resume failed: no rollout found for thread id 019efe44 (code -32600)')), 'invalid_thread')
 assert.equal(classifyCodexError(new Error('401 Unauthorized: invalid api key')), 'auth')
 assert.equal(classifyCodexError(new SyntaxError('Unexpected token n in JSON')), 'json')

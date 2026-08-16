@@ -19,8 +19,8 @@ export type CodexConfigOverrides = {
 
 const CODEX_REASONING_EFFORTS = new Set<CodexReasoningEffort>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
-// 只接受 CLI 模型目录会返回的 effort；空/不认识则交给 Codex 默认。
-// max / ultra 通过 Codex config 传递，因为 SDK 0.144.4 的 ThreadOptions 类型暂时仍只列到 xhigh。
+// Only accept efforts the CLI model catalog can return; empty/unknown falls back to Codex's default.
+// max / ultra are passed through Codex config because the ThreadOptions type in SDK 0.144.4 still only lists up to xhigh.
 export function toCodexEffort(effort?: string): CodexReasoningEffort | undefined {
   return CODEX_REASONING_EFFORTS.has(effort as CodexReasoningEffort) ? effort as CodexReasoningEffort : undefined
 }
@@ -63,7 +63,7 @@ export function codexWorkingDirectoryOptions(cwd?: string): Pick<ThreadOptions, 
     : { workingDirectory: cwd, skipGitRepoCheck: true }
 }
 
-// 平台 → Rust target triple（Codex 二进制放在 vendor/<triple>/bin/codex 下）。
+// Platform → Rust target triple (the Codex binary lives under vendor/<triple>/bin/codex).
 const CODEX_TARGET_TRIPLE: Record<string, string> = {
   'darwin-arm64': 'aarch64-apple-darwin',
   'darwin-x64': 'x86_64-apple-darwin',
@@ -73,35 +73,35 @@ const CODEX_TARGET_TRIPLE: Record<string, string> = {
   'win32-x64': 'x86_64-pc-windows-msvc',
 }
 
-// 从「项目真实 node_modules」(process.cwd()) 按文件查 Codex CLI 二进制路径。
-// 为什么需要：nitro 生产构建只把 @openai/codex-sdk 的 JS 打进 .output，没带平台二进制包
-// （@openai/codex 及 @openai/codex-<platform>-<arch>）。SDK 自带解析基于打包后的 import.meta.url，
-// 在 .output 里找不到二进制 → new Codex() 会抛「Unable to locate Codex CLI binaries」。
-// 这里直接在 node_modules 里按文件找二进制，跟打包方式无关；找到后显式传给 codexPathOverride。
-// 不用 require.resolve：@openai/codex-sdk 是 ESM-only、exports 不暴露 package.json，CJS 解析会失败。
+// Look up the Codex CLI binary path by file inside the "real project node_modules" (process.cwd()).
+// Why this is needed: the nitro production build only bundles @openai/codex-sdk's JS into .output, without the platform binary packages
+// (@openai/codex and @openai/codex-<platform>-<arch>). The SDK's own resolution is based on the bundled import.meta.url,
+// which finds no binary inside .output → new Codex() throws "Unable to locate Codex CLI binaries".
+// Here we look the binary up directly in node_modules by file, independent of how it was bundled; once found we pass it explicitly to codexPathOverride.
+// Not using require.resolve: @openai/codex-sdk is ESM-only and its exports don't expose package.json, so CJS resolution fails.
 function codexBinCandidates(triple: string, binName: string): string[] {
   const cwd = process.cwd()
   const key = `${process.platform}-${process.arch}`
   const out: string[] = []
-  // pnpm store：.pnpm/@openai+codex@<ver>-<platform>-<arch>/node_modules/@openai/codex/vendor/<triple>/bin/codex
+  // pnpm store: .pnpm/@openai+codex@<ver>-<platform>-<arch>/node_modules/@openai/codex/vendor/<triple>/bin/codex
   const pnpmDir = join(cwd, 'node_modules', '.pnpm')
   try {
-    // pnpm 更新中断时可能短暂留下多个版本；优先最新版本，避免重新命中旧模型目录。
+    // An interrupted pnpm update can briefly leave several versions behind; prefer the newest so we don't land on an old model catalog again.
     const entries = readdirSync(pnpmDir)
       .filter((entry) => entry.startsWith('@openai+codex@') && entry.endsWith(`-${key}`))
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
     for (const entry of entries) {
       out.push(join(pnpmDir, entry, 'node_modules', '@openai', 'codex', 'vendor', triple, 'bin', binName))
     }
-  } catch { /* 没有 .pnpm 目录（非 pnpm 布局）→ 走下面的 hoisted 候选 */ }
-  // npm/yarn 扁平布局
+  } catch { /* no .pnpm directory (non-pnpm layout) → fall through to the hoisted candidates below */ }
+  // npm/yarn flat layout
   out.push(join(cwd, 'node_modules', '@openai', `codex-${key}`, 'vendor', triple, 'bin', binName))
   out.push(join(cwd, 'node_modules', '@openai', 'codex', 'vendor', triple, 'bin', binName))
   return out
 }
 
-// production 兜底：node_modules 里没 vendor 二进制时（打包后 cwd 不在项目根），
-// 用 PATH / 常见安装目录里用户全局装的 codex CLI。和 claude-bin 的 fromPath 对称。
+// production backstop: when node_modules has no vendor binary (after bundling, cwd isn't the project root),
+// use the codex CLI the user installed globally, from PATH / the usual install directories. Symmetric with claude-bin's fromPath.
 function codexFromPath(binName: string): string | undefined {
   const dirs = (process.env.PATH || '').split(delimiter)
   dirs.push(join(os.homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin')
@@ -131,8 +131,8 @@ export function resolveCodexExecutable(): string | undefined {
   return undefined
 }
 
-// 有本地 OpenAI key 就用 key；否则交给 Codex CLI 的本地登录（不覆盖 env，让它继承 gh/codex 凭据）。
-// codexPathOverride：显式指向解析到的二进制，绕开 nitro 打包后找不到二进制的问题。
+// Use a local OpenAI key if there is one; otherwise leave it to the Codex CLI's local login (don't override env, let it inherit gh/codex credentials).
+// codexPathOverride: point explicitly at the resolved binary, working around nitro bundling losing track of it.
 export function newCodex(overrides?: CodexConfigOverrides): Codex {
   const executablePath = resolveCodexExecutable()
   return new Codex({
@@ -142,11 +142,11 @@ export function newCodex(overrides?: CodexConfigOverrides): Codex {
   })
 }
 
-// 只读 agent 阶段（首审 / 反馈复审 / 复审 / Skill 生成）的事件处理：
-// - turn.failed / error / error item → 抛错
-// - command_execution → 出日志 + 拦截写操作
-// - file_change（理论上 read-only 不会有）/ mcp / web_search → 出日志
-// - agent_message（item.completed）→ 返回最终文本（JSON 或 markdown 正文）
+// Event handling for the read-only agent stages (first review / feedback re-review / recheck / skill generation):
+// - turn.failed / error / error item → throw
+// - command_execution → log + block write operations
+// - file_change (shouldn't happen in read-only, in theory) / mcp / web_search → log
+// - agent_message (item.completed) → return the final text (JSON or markdown body)
 function emitReadonlyEvent(event: ThreadEvent, label: string, onTool?: (name: string, info: string) => void): string | null {
   if (event.type === 'turn.failed') throw new Error(`Codex ${label} turn failed: ${extractCodexErrorMessage(event.error.message)}`)
   if (event.type === 'error') throw new Error(`Codex ${label} stream failed: ${extractCodexErrorMessage(event.message)}`)
@@ -167,15 +167,15 @@ function emitReadonlyEvent(event: ThreadEvent, label: string, onTool?: (name: st
   } else if (item.type === 'agent_message') {
     return item.text
   } else if (item.type === 'error') {
-    // ErrorItem 在 SDK 里是「非致命」错误（如 codex 插件 hooks 解析告警）。出日志、不中断。
-    // 致命情况由 turn.failed / 顶层 error 事件（上面已抛）或「无最终输出」（调用方抛）兜底。
+    // In the SDK, ErrorItem is a "non-fatal" error (e.g. a codex plugin hooks parse warning). Log it, don't interrupt.
+    // Fatal cases are backstopped by turn.failed / the top-level error event (thrown above) or by "no final output" (thrown by the caller).
     onTool?.('CodexWarning', item.message.slice(0, 140))
   }
   return null
 }
 
-// 跑一个「只读」Codex agent：read-only 沙箱、approval=never、可选放开网络（让 gh 能读 PR 评论）。
-// 带 outputSchema 时强制结构化 JSON。返回最终 agent_message 文本（由调用方解析）。
+// Run a "read-only" Codex agent: read-only sandbox, approval=never, optional network access (so gh can read PR comments).
+// With outputSchema it forces structured JSON. Returns the final agent_message text (parsed by the caller).
 export async function runCodexReadonly(opts: {
   prompt: string
   cwd?: string
@@ -183,10 +183,10 @@ export async function runCodexReadonly(opts: {
   effort?: string
   serviceTier?: CodexServiceTier | string | null
   outputSchema?: unknown
-  allowNetwork?: boolean // 复审/反馈复审要用 gh 读评论 → 放开网络（写操作仍被命令守卫拦截）
+  allowNetwork?: boolean // recheck / feedback re-review need gh to read comments → allow network (writes are still blocked by the command guard)
   label: string
   onTool?: (name: string, info: string) => void
-  onStop?: (stop: () => void) => void // 暴露中断回调：停止时打标记，事件循环检测到就中断消费（feature 分析阶段的停止按钮用）
+  onStop?: (stop: () => void) => void // expose an abort callback: it sets a flag on stop, and the event loop aborts consumption once it notices (used by the stop button in the feature analysis stage)
 }): Promise<string> {
   const effort = toCodexEffort(opts.effort)
   const codex = newCodex({
@@ -203,8 +203,8 @@ export async function runCodexReadonly(opts: {
     webSearchEnabled: false,
   })
 
-  // 停止：codex SDK 没有显式 abort，靠标记 + 下个事件到达时抛错中断 for-await（会触发 events.return() 清理）。
-  // codex 调研会频繁出 command/reasoning 事件，所以中断很快生效。
+  // Stopping: the codex SDK has no explicit abort, so we rely on a flag + throwing when the next event arrives to break the for-await (which triggers events.return() cleanup).
+  // Codex research emits command/reasoning events frequently, so the abort takes effect quickly.
   let aborted = false
   opts.onStop?.(() => { aborted = true })
 
@@ -220,7 +220,7 @@ export async function runCodexReadonly(opts: {
   return raw
 }
 
-// 一次性文本生成（发评论翻译）：read-only、无网络、不需要流式工具进度。返回最终文本。
+// One-shot text generation (translating comments before posting): read-only, no network, no need for streamed tool progress. Returns the final text.
 export async function runCodexText(opts: {
   prompt: string
   cwd?: string

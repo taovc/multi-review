@@ -1,9 +1,11 @@
 import { pickByLang } from '../agent/lang'
 import { reviewFindingStats } from './findings'
 
-// 自动修复给 agent 的默认指令：把这条审核里「还需处理」的 finding（口径统一在 findings.ts）列清楚，
-// 让它在 worktree 里改（不提交，沿用 fix 管线）。语言跟这次审核的工作语言走 —— 这段会直接进 agent 的
-// 对话，也会在 UI 上作为用户消息展示，所以三种语言各写一份，不要用「不是英文就中文」的二分。
+// The default instruction auto-fix hands the agent: list this review's findings that still need action
+// (the definition lives in findings.ts) and have it edit them inside the worktree (no commit — the fix
+// pipeline handles that). The language follows this review's working language — this text goes straight
+// into the agent's conversation and is also shown in the UI as a user message, so all three languages get
+// their own copy; do not use an "English or else Chinese" binary.
 const FIX_MESSAGE = {
   zh: {
     header: '请逐条处理下面这些代码审核发现的问题，直接修改 worktree 里的文件（不要 commit，由上传流程统一提交）。修完后简述每条怎么改的。',

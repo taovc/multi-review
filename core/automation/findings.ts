@@ -1,21 +1,23 @@
 import { eq, asc, inArray } from 'drizzle-orm'
 
-// 「待处理 finding」单一口径：severity 是 High/Medium（不追 Low/nit），且尚未解决。
-// 用「已解决」白名单反向判定：只有 fixed/retracted/replied 算解决，其余一律当未解决=待修——
-// 这样 kept（AI 维持该 finding，仍有效）、adjusted（调了 severity，仍有效）、discuss、new、unaddressed、partial
-// 都会被正确当成待修，不会被误判已解决而放弃 High / 误报 converged（防止用允许名单时漏掉新状态）。
-// 自动修复的「该不该再修 / 收敛没」(engine 用 actionable) 和「喂给 agent 的指令」(buildAutoFixMessage 用 actionableFindings)
-// 都依赖这一口径，所以统一在这里 reviewFindingStats，避免两处定义漂移。db/schema 由调用方注入（core 不直接依赖运行时 db）。
+// Single definition of an "outstanding finding": severity is High/Medium (we don't chase Low/nit) and it is not yet resolved.
+// Decided in reverse, via a "resolved" allowlist: only fixed/retracted/replied count as resolved, everything else counts as
+// unresolved = still to fix — so kept (AI stands by the finding, still valid), adjusted (severity changed, still valid), discuss,
+// new, unaddressed and partial are all correctly treated as still to fix, never mistaken for resolved, so a High is never dropped
+// and convergence is never falsely reported (allowlisting the unresolved statuses instead would miss any newly added status).
+// Auto-fix's "should we fix again / have we converged" (engine uses actionable) and "the instructions fed to the agent"
+// (buildAutoFixMessage uses actionableFindings) both rely on this definition, so it lives here in reviewFindingStats to keep the
+// two from drifting apart. db/schema are injected by the caller (core does not depend on the runtime db directly).
 const ACTIONABLE_SEVERITY = new Set(['High', 'Medium'])
 const RESOLVED_RECHECK = new Set(['fixed', 'retracted', 'replied'])
 
 export type ReviewFindingStats = {
-  total: number // 审核出的 finding 总数（0=干净 PR）
-  actionable: number // 还需处理的条数
-  actionableFindings: any[] // 还需处理的 finding 行（按 sortOrder，给 buildAutoFixMessage 用）
+  total: number // total findings from the review (0 = clean PR)
+  actionable: number // how many still need handling
+  actionableFindings: any[] // the finding rows still needing handling (by sortOrder, for buildAutoFixMessage)
 }
 
-// 一次扫描算出总数 + 待处理条数 + 待处理行（engine 一次拿全，不重复读库）。
+// One scan yields total + outstanding count + outstanding rows (the engine gets everything at once, no repeated db reads).
 export function reviewFindingStats(db: any, schema: any, reviewId: string): ReviewFindingStats {
   const findings = db
     .select()
@@ -27,7 +29,7 @@ export function reviewFindingStats(db: any, schema: any, reviewId: string): Revi
 
   const ids = findings.map((f) => f.id)
   const rechecks = db.select().from(schema.findingRechecks).where(inArray(schema.findingRechecks.findingId, ids)).all() as any[]
-  // 每条 finding 取最新一轮（round 最大）的复查状态
+  // For each finding, take the recheck status from the latest round (highest round)
   const latest = new Map<string, { round: number; status: string }>()
   for (const rc of rechecks) {
     const cur = latest.get(rc.findingId)
@@ -37,7 +39,7 @@ export function reviewFindingStats(db: any, schema: any, reviewId: string): Revi
   const actionableFindings = findings.filter((f) => {
     if (!ACTIONABLE_SEVERITY.has(f.severity)) return false
     const rc = latest.get(f.id)
-    return !rc || !RESOLVED_RECHECK.has(rc.status) // 没复查过、或最新复查不是「已解决」→ 待修
+    return !rc || !RESOLVED_RECHECK.has(rc.status) // never rechecked, or the latest recheck is not "resolved" → still to fix
   })
   return { total: findings.length, actionable: actionableFindings.length, actionableFindings }
 }

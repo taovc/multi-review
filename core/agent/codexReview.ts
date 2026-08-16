@@ -14,7 +14,7 @@ import {
 import { buildRecheckPrompt, RecheckSchema, type RecheckAgentOptions, type RecheckResult } from './recheck'
 import type { ReviewRunner } from './runners'
 
-// ── 结构化输出 JSON Schema（与各自的 zod schema 对齐，让 Codex 强制产出可解析 JSON）──
+// ── Structured-output JSON Schemas (aligned with their zod schemas, forcing Codex to emit parseable JSON) ──
 const REVIEW_RESULT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -56,7 +56,7 @@ const GUIDED_RESULT_JSON_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          fid: { type: 'string' }, // 命中已有 finding 才有 fid；新发现给空串（解析时转成缺省）
+          fid: { type: 'string' }, // only set when it matches an existing finding; new findings send an empty string (turned into absent at parse time)
           severity: { type: 'string', enum: ['High', 'Medium', 'Low'] },
           title: { type: 'string' },
           location: { type: 'string' },
@@ -166,7 +166,7 @@ export function parseCodexReviewJson(raw: string): ReviewResult {
 
 export function parseCodexGuidedJson(raw: string): GuidedResult {
   const parsed = parseJsonOrThrow(raw, 'guided review') as { findings?: Array<{ fid?: string | null }> }
-  // 新发现的 fid 是空串/null；zod 的 optional 不接受 null、也不该把空串当已有 finding → 转成缺省。
+  // A new finding's fid is an empty string/null; zod's optional rejects null, and an empty string must not be taken for an existing finding → make it absent.
   if (parsed && Array.isArray(parsed.findings)) {
     for (const f of parsed.findings) if (f && !f.fid) delete f.fid
   }
@@ -196,7 +196,7 @@ function buildCodexReviewPrompt(opts: ReviewAgentOptions): string {
 ${buildReviewPrompt({ ...opts, lang: opts.lang || 'zh' })}`
 }
 
-// ── 首审（codex）──
+// ── First review (codex) ──
 export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string }> {
   try {
     const raw = await runCodexReadonly({
@@ -206,7 +206,7 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
       effort: opts.effort,
       serviceTier: opts.codexServiceTier,
       outputSchema: REVIEW_RESULT_JSON_SCHEMA,
-      allowNetwork: true, // 让 gh 能读 PR 元数据；写操作由命令守卫拦截
+      allowNetwork: true, // lets gh read PR metadata; write operations are blocked by the command guard
       label: 'review',
       onTool: opts.onTool,
     })
@@ -216,11 +216,11 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
   }
 }
 
-// ── 带反馈的针对性复审（codex）──
+// ── Targeted re-review with feedback (codex) ──
 export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number }> {
   try {
     const raw = await runCodexReadonly({
-      prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildGuidedReviewPrompt(opts)}\n\n（结构化输出要求每条 finding 都带 fid 字段：命中已有 finding 用其 fid，新发现请把 fid 设为空字符串 ""。）`,
+      prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildGuidedReviewPrompt(opts)}\n\n(The structured output requires an fid field on every finding: use the existing finding's fid when it matches one, and set fid to the empty string "" for a new finding.)`,
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
@@ -236,7 +236,7 @@ export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions):
   }
 }
 
-// ── 作者更新后复审（codex）── 需要 gh 读 PR 评论 → 放开网络
+// ── Recheck after the author's update (codex) ── needs gh to read PR comments → allow network
 export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number }> {
   try {
     const raw = await runCodexReadonly({

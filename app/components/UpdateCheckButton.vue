@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 顶栏「检查更新」按钮。只在 Electron 桌面窗口(preload 注入了 window.mrUpdates)显示;
-// 点击触发主进程的手动检查,结果由主进程用原生对话框呈现(有更新→下载引导,无更新→回执)。
+// The top-bar "check for updates" button. Only shown in the Electron desktop window (where preload injected window.mrUpdates);
+// clicking triggers the main process's manual check, and the main process presents the result in a native dialog (update available → download prompt, none → acknowledgement).
 const { t, locale } = useI18n()
 
 type MrUpdates = { check: (locale?: string) => Promise<void>; setLocale?: (locale: string) => void }
@@ -12,12 +12,12 @@ onMounted(() => {
   const w = window as unknown as { mrUpdates?: MrUpdates }
   if (w.mrUpdates) {
     api.value = w.mrUpdates
-    // 挂载即把当前 app 语言推给主进程,启动时的静默检查弹窗也就用对的语言
+    // Push the current app language to the main process on mount, so the silent check dialog at startup uses the right language too
     api.value.setLocale?.(locale.value)
   }
 })
 
-// app 内切换语言时同步给主进程
+// Sync to the main process whenever the language changes inside the app
 watch(locale, (l) => api.value?.setLocale?.(l))
 
 async function check() {

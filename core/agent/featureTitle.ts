@@ -2,12 +2,12 @@ import { runClaude } from './claudeCli'
 import { runCodexText } from './codexAgent'
 import type { ReviewProvider } from './runners'
 
-// 从需求原文（可能含 issue 链接 + 后端抓到的 issue 正文）生成一句「读懂需求后」的短标题，用作 feature 列表/抽屉标题。
-// 便宜/快模型跑一句话，跟随项目 provider（不混用，同 assembleReview 的 translate）：
-//   - claude → `claude --print`，model = rc.translateModel（默认 TRANSLATE_MODEL 快模型）
-//   - codex  → runCodexText（read-only 沙箱、断网），model = codex 主模型
-// model 由 resolveReviewConfig.translateModel 传入（配置驱动，不写死模型名）→ 换模型/改名只动 env/配置。
-// 失败/超时返回空串（调用方回退到截断的原始描述）。标题用工作语言（给用户看的 UI 标签，不是对外 PR 标题）。
+// Generate a short "having understood the requirement" title from the raw requirement (which may contain an issue link + the issue body fetched by the backend); used as the feature list/drawer title.
+// One sentence from a cheap/fast model, following the project's provider (never mixed, same as assembleReview's translate):
+//   - claude → `claude --print`, model = rc.translateModel (defaults to the fast TRANSLATE_MODEL)
+//   - codex  → runCodexText (read-only sandbox, no network), model = the codex main model
+// model is passed in from resolveReviewConfig.translateModel (config-driven, no hardcoded model name) → swapping/renaming a model only touches env/config.
+// Returns an empty string on failure/timeout (the caller falls back to the truncated raw description). The title uses the working language (a UI label for the user, not the public PR title).
 export async function genFeatureTitle(opts: {
   provider: ReviewProvider
   model: string

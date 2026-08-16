@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// Feature 开发（单段式原生）：右上角「开始开发」→ 打开抽屉、输入首条消息才建任务；列表点开看进度/继续/开 PR。
-// 列表样式与「全部 PR」对齐（表头 + 换行标题 + 翻页），列按 feature 开发语义：标题 / 状态 / PR / 更新时间。
+// Feature development (single-phase, native): "start development" in the top right → opens the drawer;
+// the task is only created once the first message is sent. Open a row to see progress / continue / open a PR.
+// The list matches the "all PRs" style (header row + wrapping title + pagination), with columns for
+// feature development: title / status / PR / updated at.
 const props = defineProps<{ projectId: string }>()
 const { t, locale } = useI18n()
 
@@ -13,12 +15,12 @@ const { data: tasks, refresh } = await useFetch<FeatureTask[]>(() => `/api/proje
 const drawerOpen = ref(false)
 const activeId = ref<string | null>(null)
 
-// 进行中（working/awaiting）时轮询刷新列表（也让后台生成的标题及时冒出来）
+// Poll-refresh the list while tasks are in progress (working/awaiting) — this also surfaces titles generated in the background
 let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { pollTimer = setInterval(() => { if (document.visibilityState !== 'hidden') refresh() }, 8000) })
 onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
-// 翻页（客户端切片；feature 任务量小、列表来自本地 DB）——和「全部 PR」同款翻页 UI。
+// Pagination (client-side slicing; there are few feature tasks and the list comes from the local DB) — same pagination UI as "all PRs".
 const PER_PAGE = 15
 const page = ref(0)
 const pageCount = computed(() => Math.max(1, Math.ceil((tasks.value?.length ?? 0) / PER_PAGE)))
@@ -36,10 +38,10 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 function badge(s: string) { return STATUS[s] ?? { label: s, cls: 'text-dimmed border-default' } }
 function fmt(iso: string) { return new Date(iso).toLocaleString(locale.value, { hour12: false }) }
 
-// 新任务：只开抽屉（activeId=null），输入首条消息才真正创建（见 FeatureDrawer）。不输入随时可关，不落库。
+// New task: just open the drawer (activeId=null); it is only really created once the first message is sent (see FeatureDrawer). Close it anytime without typing and nothing is persisted.
 function startNew() { activeId.value = null; drawerOpen.value = true }
 function openTask(id: string) { activeId.value = id; drawerOpen.value = true }
-// 抽屉里首条消息创建了任务 → 切到它 + 刷新列表。
+// The drawer's first message created a task → switch to it + refresh the list.
 function refreshList() { void refresh() }
 function onCreated(id: string) { activeId.value = id; refreshList() }
 function onDeleted(id: string) {
@@ -52,7 +54,7 @@ function onDeleted(id: string) {
 
 <template>
   <div class="mt-8">
-    <!-- 顶部：说明 + 右上角「开始开发」 -->
+    <!-- Top: hint + "start development" in the top right -->
     <div class="flex items-center gap-3">
       <p class="text-xs text-dimmed">{{ $t('feature.composerHint') }}</p>
       <button
@@ -61,18 +63,19 @@ function onDeleted(id: string) {
       >{{ $t('feature.start') }}</button>
     </div>
 
-    <!-- 列表：标题(固定宽·换行) | 状态 | PR | 更新时间 -->
+    <!-- List: title (fixed width, wrapping) | status | PR | updated at -->
     <div class="mt-6 overflow-x-auto">
       <div class="md:min-w-[38rem]">
-        <!-- 列头：仅桌面显示（手机是卡片，不需要列名）-->
+        <!-- Column header: desktop only (mobile renders cards, which need no column names) -->
         <div class="hidden md:grid grid-cols-[minmax(16rem,1fr)_7rem_5rem_9rem] gap-x-4 px-1 pb-3 text-[10px] uppercase tracking-[0.15em] text-dimmed border-b border-inverted">
           <span>{{ $t('feature.col.title') }}</span>
           <span class="text-center">{{ $t('feature.col.status') }}</span>
           <span class="text-center">{{ $t('feature.col.pr') }}</span>
           <span class="text-right">{{ $t('feature.col.updated') }}</span>
         </div>
-        <!-- 手机=卡片(flex-col)，桌面=4 列网格。状态/PR/更新时间在桌面用 md:contents
-             「消融」进网格各占一列；手机上成组 flex-wrap 成一行小标签。 -->
+        <!-- Mobile = card (flex-col), desktop = 4-column grid. On desktop, status/PR/updated at use
+             md:contents to dissolve into the grid and take one column each; on mobile they group and
+             flex-wrap into a row of small tags. -->
         <div
           v-for="taskItem in pagedTasks" :key="taskItem.id"
           class="flex flex-col gap-2 py-3 px-1 border-b border-default text-sm cursor-pointer hover:bg-elevated/40 transition-colors md:grid md:grid-cols-[minmax(16rem,1fr)_7rem_5rem_9rem] md:gap-x-4 md:items-center md:min-h-16"
@@ -93,7 +96,7 @@ function onDeleted(id: string) {
 
         <p v-if="!tasks?.length" class="py-16 text-center text-xs text-dimmed">{{ $t('feature.empty') }}</p>
 
-        <!-- 分页：和「全部 PR」同款 -->
+        <!-- Pagination: same as "all PRs" -->
         <div v-if="tasks?.length" class="flex items-center justify-between mt-5 text-xs text-dimmed">
           <span>{{ $t('project.pagination.summaryPages', { total: tasks.length, page: page + 1, pages: pageCount }) }}</span>
           <div v-if="pageCount > 1" class="flex gap-4">

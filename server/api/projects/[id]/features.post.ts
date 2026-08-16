@@ -5,8 +5,8 @@ import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runFeatureDevelopJob, type FeatureDevelopJobCtx } from '~core/feature/pipeline'
 
-// 新建 feature 任务并立即开跑（单段式：agent 直接在隔离 worktree 里开发）。
-// description = 抽屉里的首条消息 / 需求原文（可含 issue 链接）。
+// Create a feature task and start it immediately (single stage: the agent develops directly in an isolated worktree).
+// description = the first message in the drawer / the raw requirement (may contain an issue link).
 const Body = z.object({
   description: z.string().min(1).max(20000),
   allowDanger: z.boolean().optional(),
@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
 
   const rc = resolveReviewConfig(d, project)
   const cfg = useRuntimeConfig()
-  // issue/PR 配图落到 data 目录下（dbPath 同级），绝对路径，agent 的 Read 工具才找得到。
+  // Images from issues/PRs land in the data directory (next to dbPath) as an absolute path, so the agent's Read tool can find them.
   const assetsDir = resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets')
   const lang = getCookie(event, 'mr-locale') || 'zh'
   const now = new Date().toISOString()

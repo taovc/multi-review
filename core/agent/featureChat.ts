@@ -3,9 +3,10 @@ import { runCodexChat } from './codexChat'
 import type { ReviewProvider } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
 
-// Feature 开发 · 单段式（原生 agent）：claude 走共享运行器（chat.ts）——统一 bypassPermissions + 危险命令守卫
-// + ultracode + 决策卡（同 fix/global）。agent 直接在隔离 worktree（新功能分支）动手；用户让「开 PR」时自己
-// commit/push/gh pr create（英文）。默认别 push（守卫会拦，除非 allowDanger）。
+// Feature development, single-stage (native agent): claude goes through the shared runner (chat.ts) — same
+// bypassPermissions + dangerous-command guard + ultracode + decision cards as fix/global. The agent works directly
+// in an isolated worktree (new feature branch); when the user asks to open a PR it does the commit/push/gh pr create
+// itself (in English). Don't push by default (the guard blocks it unless allowDanger).
 
 export type FeatureChatOptions = FixChatOptions & { baseBranch?: string }
 
@@ -41,7 +42,8 @@ async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatRe
   })
 }
 
-// codex 路径：复用 runCodexChat + feature prompt；联网跟 allowDanger 走（断网 = codex 唯一可靠的「不自动推」屏障）。
+// codex path: reuse runCodexChat + the feature prompt; network access follows allowDanger (cutting the network is the
+// only reliable "don't auto-push" barrier for codex).
 function runFeatureCodexChat(opts: FeatureChatOptions): Promise<FixChatResult> {
   return runCodexChat({ ...opts, promptKind: 'feature', fullAccess: !!opts.allowDanger, networkAccess: !!opts.allowDanger })
 }

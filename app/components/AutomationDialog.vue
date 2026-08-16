@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// 自动化配置弹窗。
-// 自动审核系统：模式「PR创建后一次 / 每次push」可多选（选了就开，啥都没选=不开，所以不再有单独的开启开关）+ 作者/PR状态过滤。
-// 灰线。自动修复系统：左边 switch + 作者/PR状态过滤。底部不再有「是否开启系统」总闸（冗余）。
-// 作者/PR状态是内联下拉（不传送到 body，避免被模态框盖住点不开）。
+// Automation config dialog.
+// Auto-review system: the mode "once after the PR is created / on every push" is multi-select (picking any turns it on, picking none = off, hence no separate enable switch any more) + author/PR-status filters.
+// Divider line. Auto-fix system: a switch on the left + author/PR-status filters. There is no "enable the system" master switch at the bottom any more (redundant).
+// Author/PR status are inline dropdowns (not teleported to body, so the modal can't cover them and make them unclickable).
 const props = defineProps<{ projectId: string; authors: string[] }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ saved: [] }>()
@@ -12,7 +12,7 @@ const STATUS_OPTS = ['open', 'draft', 'merged', 'closed']
 const MODE_OPTS = ['once', 'every_push']
 function modeLabel(m: string) { return m === 'every_push' ? t('automation.modeEveryPush') : t('automation.modeOnce') }
 
-// 审核模式多选：['once','every_push'] 子集。空=自动审核不开。每次push 含首审，所以选了 every_push 回显会自动带上 once。
+// Review mode multi-select: a subset of ['once','every_push']. Empty = auto-review off. every_push includes the first review, so picking every_push automatically brings once along when re-displayed.
 const reviewModes = ref<string[]>([])
 const reviewAuthors = ref<string[]>([])
 const reviewStatuses = ref<string[]>(['open'])
@@ -44,14 +44,14 @@ async function load() {
 }
 watch(open, (v) => { if (v) { openDd.value = null; load() } })
 
-// 按 key 切换多选项（模板里 ref 会被自动解包，所以不直接传 ref，改用 key 查表）
+// Toggle a multi-select entry by key (refs are auto-unwrapped in the template, so instead of passing a ref directly we look it up by key)
 const lists: Record<string, Ref<string[]>> = { reviewModes, reviewAuthors, reviewStatuses, fixAuthors, fixStatuses }
 function toggle(key: string, v: string) {
   const r = lists[key]!
   r.value = r.value.includes(v) ? r.value.filter((x) => x !== v) : [...r.value, v]
 }
 
-// 内联下拉：同一时刻只开一个，点外面关掉
+// Inline dropdowns: only one open at a time, click outside to close
 const openDd = ref<string | null>(null)
 function toggleDd(id: string) { openDd.value = openDd.value === id ? null : id }
 function onDocClick(e: MouseEvent) {
@@ -66,7 +66,7 @@ async function save() {
     await $fetch(`/api/projects/${props.projectId}/automation`, {
       method: 'PUT',
       body: {
-        masterEnabled: true, // 总闸已并入各系统自身开关
+        masterEnabled: true, // the master switch is folded into each system's own toggle
         reviewEnabled: reviewModes.value.length > 0,
         reviewMode: reviewModes.value.includes('every_push') ? 'every_push' : 'once',
         reviewAuthors: reviewAuthors.value,
@@ -90,11 +90,11 @@ async function save() {
   <BaseModal v-model:open="open" :title="$t('automation.title')">
     <div v-if="loading" class="py-10 text-center text-sm text-dimmed">{{ $t('common.loading') }}</div>
     <div v-else class="space-y-5">
-      <!-- ── 自动审核系统 ── -->
+      <!-- ── auto-review system ── -->
       <section>
         <div class="text-sm font-medium text-highlighted mb-3">{{ $t('automation.reviewSystem') }}</div>
         <div class="flex items-start gap-2">
-          <!-- 审核模式：多选下拉（一次 / 每次push，可单选可都选；空=不开） -->
+          <!-- review mode: multi-select dropdown (once / every push — pick one or both; empty = off) -->
           <div class="dd-root relative flex-1 min-w-0">
             <button class="flex items-center gap-1 px-3 py-1.5 text-sm border border-default rounded hover:bg-muted w-full justify-between" @click="toggleDd('rev-mode')">
               <span class="truncate">{{ $t('automation.modeLabel') }}<span v-if="reviewModes.length" class="ml-1 text-dimmed">({{ reviewModes.length }})</span></span>
@@ -107,7 +107,7 @@ async function save() {
               </label>
             </div>
           </div>
-          <!-- 作者多选（内联下拉） -->
+          <!-- author multi-select (inline dropdown) -->
           <div class="dd-root relative flex-1 min-w-0">
             <button class="flex items-center gap-1 px-3 py-1.5 text-sm border border-default rounded hover:bg-muted w-full justify-between" @click="toggleDd('rev-author')">
               <span class="truncate">{{ $t('project.col.author') }}<span v-if="reviewAuthors.length" class="ml-1 text-dimmed">({{ reviewAuthors.length }})</span></span>
@@ -121,7 +121,7 @@ async function save() {
               </label>
             </div>
           </div>
-          <!-- PR 状态多选（内联下拉） -->
+          <!-- PR status multi-select (inline dropdown) -->
           <div class="dd-root relative flex-1 min-w-0">
             <button class="flex items-center gap-1 px-3 py-1.5 text-sm border border-default rounded hover:bg-muted w-full justify-between" @click="toggleDd('rev-status')">
               <span class="truncate">{{ $t('project.col.prStatus') }}<span v-if="reviewStatuses.length" class="ml-1 text-dimmed">({{ reviewStatuses.length }})</span></span>
@@ -139,7 +139,7 @@ async function save() {
 
       <div class="border-t border-default" />
 
-      <!-- ── 自动修复系统 ── -->
+      <!-- ── auto-fix system ── -->
       <section>
         <div class="flex items-center justify-between gap-3 mb-3">
           <div class="text-sm font-medium text-highlighted">{{ $t('automation.fixSystem') }}</div>

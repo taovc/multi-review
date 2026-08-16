@@ -75,7 +75,8 @@ Reply briefly: answer their question, or describe what you changed. ${outputLang
 ${askUserClause(opts.lang)}`
 }
 
-// Feature 开发：在「从默认分支拉的新功能分支」worktree 里自由开发（不是修 PR）。
+// Feature development: free-form development inside the worktree of a new feature branch cut from the
+// default branch (not a PR fix).
 export function buildCodexFeaturePrompt(opts: FixChatOptions): string {
   const opening = opts.sessionId
     ? 'You are continuing the same Codex thread, building a feature inside its isolated git worktree.'
@@ -108,7 +109,8 @@ Reply briefly: answer their question, or describe what you changed / propose nex
 ${askUserClause(opts.lang)}`
 }
 
-// 全局「啥都能干」助手（codex）：自由聊 + 直接动手。git 写/push 类会被「执行后」守卫拦（codex 的固有限制）。
+// Global "can do anything" assistant (codex): free chat + direct action. git write/push commands are
+// caught by the guard *after* execution (an inherent codex limitation).
 export function buildCodexGlobalPrompt(opts: FixChatOptions): string {
   const opening = opts.sessionId
     ? 'You are continuing the same Codex thread as a general-purpose coding assistant.'
@@ -161,8 +163,9 @@ function emitCodexChatEvent(
   } else if (item.type === 'web_search') {
     onTool?.('CodexWebSearch', item.query.slice(0, 100))
   } else if (item.type === 'error') {
-    // ErrorItem 在 SDK 里是「非致命」错误（如 codex 插件 hooks 解析告警）。出日志、不中断本轮。
-    // 真正致命的是 turn.failed / 顶层 error 事件（上面已抛）/ 本轮无最终输出（调用方兜底）。
+    // In the SDK an ErrorItem is a "non-fatal" error (e.g. a codex plugin hook parse warning). Log it,
+    // do not abort the turn. The truly fatal ones are turn.failed / a top-level error event (thrown above)
+    // / the turn producing no final output (handled by the caller).
     onTool?.('CodexWarning', item.message.slice(0, 140))
   }
   return null
@@ -171,8 +174,9 @@ function emitCodexChatEvent(
 export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult> {
   const runTurn = async (sessionId: string | null): Promise<FixChatResult> => {
     const runOpts = { ...opts, sessionId }
-    // 用共享的 newCodex()：它带 codexPathOverride，绕开 nitro 打包后找不到二进制的问题。
-    // 5.6 Sol/Terra 支持 CLI 原生 ultra；其他模型继续使用 xhigh + 项目提示词工作流。
+    // Use the shared newCodex(): it carries codexPathOverride, which works around nitro's bundle not
+    // finding the binary.
+    // 5.6 Sol/Terra support the CLI's native ultra; other models keep using xhigh + the project prompt workflow.
     const requestedEffort = runOpts.ultracode
       ? codexUltracodeEffort(await getCodexModels(), runOpts.model)
       : runOpts.effort

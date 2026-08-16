@@ -5,7 +5,7 @@ import { eq, asc } from 'drizzle-orm'
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
 import { appendTurns } from '../core/db/turns'
 
-// 用一张和真实 *_turns 同形的表，验证 appendTurns 的 seq 递增 + 角色/状态。
+// Use a table shaped like the real *_turns ones to verify appendTurns' seq increments + role/status.
 const turns = sqliteTable('t_turns', {
   id: text('id').primaryKey(),
   fixId: text('fix_id').notNull(),
@@ -22,11 +22,11 @@ const db = drizzle(sqlite, { schema: { turns } })
 let clock = 0
 const now = () => `t${clock++}`
 
-// 第一轮：seq 应为 1(user) / 2(assistant)
+// First round: seq should be 1 (user) / 2 (assistant)
 const r1 = appendTurns({ db, turnTable: turns, fkField: 'fixId', fkValue: 'F1', now, message: 'hello' })
-// 第二轮：seq 接着 3 / 4
+// Second round: seq continues with 3 / 4
 const r2 = appendTurns({ db, turnTable: turns, fkField: 'fixId', fkValue: 'F1', now, message: 'again' })
-// 另一个资源独立计数：seq 从 1 开始
+// A different resource counts independently: seq starts at 1
 appendTurns({ db, turnTable: turns, fkField: 'fixId', fkValue: 'F2', now, message: 'other' })
 
 const f1 = db.select().from(turns).where(eq(turns.fixId, 'F1')).orderBy(asc(turns.seq)).all()
@@ -41,6 +41,6 @@ assert.equal(f1[2].content, 'again')
 assert.equal(f1[3].id, r2.assistantId)
 
 const f2 = db.select().from(turns).where(eq(turns.fixId, 'F2')).orderBy(asc(turns.seq)).all()
-assert.deepEqual(f2.map((t) => t.seq), [1, 2]) // 按资源独立计数
+assert.deepEqual(f2.map((t) => t.seq), [1, 2]) // counted independently per resource
 
 console.log('append-turns: ok')

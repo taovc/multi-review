@@ -12,8 +12,8 @@ const Body = z.object({
   effort: z.string().nullable().optional(),
   codexServiceTier: z.enum(['fast']).nullable().optional(),
   activeSkillId: z.string().nullable().optional(),
-  autoMaxRounds: z.number().int().min(1).max(10).optional(), // 自动化「修复↔复查」回合上限
-  autoCooldownMinutes: z.number().int().min(0).max(120).optional(), // 自动化冷却期（分钟，0=不冷却）
+  autoMaxRounds: z.number().int().min(1).max(10).optional(), // round cap for the automated "fix ↔ recheck" loop
+  autoCooldownMinutes: z.number().int().min(0).max(120).optional(), // automation cooldown (minutes, 0 = no cooldown)
 })
 
 export default defineEventHandler(async (event) => {

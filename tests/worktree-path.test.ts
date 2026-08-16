@@ -46,18 +46,18 @@ try {
   assert.equal(existsSync(migrated!), true)
   assert.equal(git(migrated!, ['status', '--short', '--branch']).startsWith('## task-1'), true)
 
-  // repo 模式：worktree 根被写进 .git/info/exclude → 主仓库 status 保持干净，
-  // agent 在主仓库跑 `git add -A` 不会把整坨 worktree 卷进提交。
+  // repo mode: the worktree root is written into .git/info/exclude → the main repo's status stays clean,
+  // and an agent running `git add -A` in the main repo won't sweep the whole worktree into a commit.
   const excludePath = join(repo, '.git', 'info', 'exclude')
   const excludeBody = readFileSync(excludePath, 'utf8')
   assert.equal(excludeBody.split(/\r?\n/).filter((l) => l.trim() === `/${WT_DIR}/`).length, 1)
   assert.equal(git(repo, ['status', '--short']).trim(), '')
 
-  // 重复调用不重复写入（每次建 worktree 都会走一遍）
+  // Repeated calls don't write twice (this runs every time a worktree is created)
   await ensureWorktreeRoot(repo, legacyRoot, 'repo')
   assert.equal(readFileSync(excludePath, 'utf8'), excludeBody)
 
-  // central 模式：worktree 根在仓库外，不该往人家 .git/info/exclude 里塞东西
+  // central mode: the worktree root lives outside the repo, so nothing should be stuffed into its .git/info/exclude
   const otherRepo = join(root, 'other-repo')
   mkdirSync(otherRepo, { recursive: true })
   git(otherRepo, ['init', '-q'])

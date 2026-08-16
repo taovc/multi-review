@@ -5,22 +5,28 @@ import { isChatting } from '~core/fix/pipeline'
 import { runAutomationTick, type EngineDeps } from '~core/automation/engine'
 import { buildAutoFixMessage } from '~core/automation/fixprompt'
 
-// PR 自动化常驻引擎：唯一的服务端定时循环（和 recover.ts 同为 Nitro 插件，单进程跑一份）。
-// 每隔 automationIntervalMs 跑一轮 runAutomationTick：读 DB + GitHub 状态，复用现有 HTTP 端点派活。
-// 所有副作用都走内部 $fetch（保留各端点既有守卫：去重/并发锁/push 安全检查），引擎本身不直接动 GitHub/git。
+// The resident PR automation engine: the only server-side timed loop (a Nitro plugin like recover.ts,
+// one instance per process). Every automationIntervalMs it runs one runAutomationTick: read DB +
+// GitHub state, then dispatch work through the existing HTTP endpoints.
+// All side effects go through internal $fetch (keeping each endpoint's existing guards: dedup /
+// concurrency lock / push safety checks); the engine never touches GitHub/git directly.
 export default defineNitroPlugin((nitroApp) => {
   const cfg = useRuntimeConfig()
-  // 总开关（关停整个引擎）。runtimeConfig 是构建期求值，生产 .output 部署只认 NUXT_ 前缀；
-  // 这里额外在运行时直接读 process.env.AUTOMATION_ENABLED，让裸环境变量的紧急关停在部署里也生效。
+  // Master switch (shuts the whole engine down). runtimeConfig is evaluated at build time and a
+  // production .output deploy only honours NUXT_-prefixed vars; we additionally read
+  // process.env.AUTOMATION_ENABLED at runtime so a bare env var can still kill it in a deployment.
   if ((cfg.automationEnabled as any) === false || process.env.AUTOMATION_ENABLED === 'false') return
 
   const d = getDb(cfg.dbPath as string)
   const now = () => new Date().toISOString()
   const intervalMs = Math.max(10_000, Number(cfg.automationIntervalMs) || 45_000)
-  // 引擎由定时器驱动、无用户请求上下文，拿不到 cookie 的 mr-locale → 用中心默认决定工作语言（否则各端点一律回落 zh）。
+  // The engine is timer-driven with no user request context, so there is no mr-locale cookie to read
+  // → the central default decides the working language (otherwise every endpoint falls back to zh).
   const lang = (cfg.automationLang as string) || 'zh'
   const cookieHeader = { cookie: `mr-locale=${lang}` }
-  // 当前 gh 登录用户：自动修复作者白名单的默认值（空过滤=只修自己的 PR，不碰别人的）。首个 tick 解析，gh 没就绪先留 null（=不修）。
+  // The currently logged-in gh user: the default for the auto-fix author allowlist (empty filter =
+  // only fix my own PRs, never touch other people's). Resolved on the first tick; stays null while gh
+  // is not ready yet (= fix nothing).
   let currentUser: string | null = null
 
   const deps: EngineDeps = {
@@ -30,17 +36,19 @@ export default defineNitroPlugin((nitroApp) => {
     log: (msg) => console.log(`[automation] ${msg}`),
     listPulls: (repo, state, first) => listPulls(repo, state, first),
 
-    // 建审核任务 + 自动开审（reviews.post 在 localPath 存在时会自动 enqueue）
+    // Create the review task + start reviewing automatically (reviews.post auto-enqueues when localPath exists)
     dispatchReview: async (projectId, prNumber) => {
       await $fetch('/api/reviews', { method: 'POST', headers: cookieHeader, body: { projectId, pulls: [{ number: prNumber }] } })
     },
-    // 复查作者改动
+    // Re-check what the author changed
     dispatchRecheck: async (reviewId) => {
       await $fetch(`/api/reviews/${reviewId}/recheck`, { method: 'POST', headers: cookieHeader })
     },
-    // 自动发评论：全选 finding → 调发布端点（dryRun=false 真发到 GitHub）。
-    // 若发布端点因「没有可发内容」返回 4xx（如复查把 finding 全过滤掉），把 review 推出 draft（→ ready_to_post）止损，
-    // 否则 decide 会每轮重选 post、撞同一个 400 死循环。其它错误（网络/422）照抛，让引擎记日志、下一轮重试。
+    // Auto-post comments: select every finding → call the post endpoint (dryRun=false really posts to GitHub).
+    // If the post endpoint returns 4xx because there is "nothing to post" (e.g. the re-check filtered out every
+    // finding), push the review out of draft (→ ready_to_post) to stop the bleeding; otherwise decide would pick
+    // post again every round and loop forever on the same 400. Other errors (network/422) are propagated as before,
+    // so the engine logs them and retries next round.
     dispatchPost: async (reviewId) => {
       d.update(schema.findings).set({ checked: true }).where(eq(schema.findings.reviewId, reviewId)).run()
       try {
@@ -49,26 +57,29 @@ export default defineNitroPlugin((nitroApp) => {
       } catch (e: any) {
         const code = e?.statusCode ?? e?.response?.status
         const msg = e?.data?.statusMessage || e?.statusMessage || e?.message || '发评论失败'
-        // 409 = 该 review 正被别的发布者/任务占用（posting / 审核在跑）→ 别碰状态（会踩掉持有者的 'posting' 认领）、
-        // 别止损、别停自动化，让持有者收尾即可；下一轮再看。
+        // 409 = another poster/task currently holds this review (posting / a review is running) → do not touch the
+        // status (that would stomp the holder's 'posting' claim), do not stop the bleeding, do not stop automation;
+        // let the holder finish and look again next round.
         if (code === 409) return { posted: false }
-        // 其余失败把 review 推出 draft 止损，避免每轮重撞同一个错（post 端点失败时已把状态恢复到 draft，这里抬到 ready_to_post）。
+        // Any other failure: push the review out of draft to stop the bleeding, so we do not hit the same error every
+        // round (the post endpoint already reset the status to draft on failure; here we lift it to ready_to_post).
         d.update(schema.reviews).set({ status: 'ready_to_post', updatedAt: now() }).where(eq(schema.reviews.id, reviewId)).run()
-        // 400 = 没有可发内容（复查把 finding 全过滤）→ 正常，不算错误，静默；其它（翻译失败/网络/422）→ 当错误上报时间线。
+        // 400 = nothing to post (the re-check filtered out every finding) → normal, not an error, stay silent; anything
+        // else (translation failure/network/422) → report it to the timeline as an error.
         if (code === 400) return { posted: false }
         console.log(`[automation] review ${reviewId} 发评论失败: ${msg}`)
         return { posted: false, error: msg }
       }
     },
-    // 自动修复：建/复用 fix 任务 → 用审核 findings 拼默认指令 → 起对话改代码（不提交）
+    // Auto-fix: create/reuse the fix task → build the default instruction from the review findings → start a chat that edits the code (no commit)
     dispatchFix: async (projectId, prNumber, reviewId) => {
       const created = await $fetch<{ id: string }>(`/api/projects/${projectId}/pulls/${prNumber}/fix`, { method: 'POST', headers: cookieHeader })
       const fixRow = d.select().from(schema.fixes).where(eq(schema.fixes.id, created.id)).get() as any
       const message = buildAutoFixMessage(d, schema, reviewId, fixRow?.lang || lang)
-      if (!message) return // 没有可修的 finding（理论上 decide 已过滤）→ 不起对话
+      if (!message) return // no finding left to fix (decide should already have filtered this out) → do not start a chat
       await $fetch(`/api/fixes/${created.id}/chat`, { method: 'POST', headers: cookieHeader, body: { message } })
     },
-    // 上传修复（commit + push，复用 push 端点的全部安全检查）
+    // Upload the fix (commit + push, reusing all of the push endpoint's safety checks)
     dispatchPush: async (fixId) => {
       await $fetch(`/api/fixes/${fixId}/push`, { method: 'POST', headers: cookieHeader, body: { dryRun: false } })
     },
@@ -76,10 +87,10 @@ export default defineNitroPlugin((nitroApp) => {
 
   let running = false
   const tick = async () => {
-    if (running) return // 上一轮没跑完就跳过这一轮（better-sqlite3 是同步的，别叠着跑）
+    if (running) return // skip this round if the previous one is still running (better-sqlite3 is synchronous, do not overlap)
     running = true
     try {
-      if (!currentUser) currentUser = await getCurrentUserLogin().catch(() => null) // gh 就绪后解析一次并缓存
+      if (!currentUser) currentUser = await getCurrentUserLogin().catch(() => null) // resolve once and cache it, after gh is ready
       await runAutomationTick(d, schema, deps)
     } catch (e) {
       console.error('[automation] tick failed', e)
@@ -88,10 +99,12 @@ export default defineNitroPlugin((nitroApp) => {
     }
   }
 
-  // 首轮延迟到 intervalMs 之后再跑：给 recover.ts 收尾中断任务留时间，别和它抢。
+  // The first round is delayed by intervalMs: give recover.ts time to wrap up interrupted tasks instead of racing it.
   const timer = setInterval(tick, intervalMs)
-  // 定时器不该把进程吊住（unref）；用 Nitro 的 close 钩子清理——dev 热重载/优雅关停时触发，
-  // 避免每次热重载叠加一个新 setInterval 造成多份引擎并发派重复活（'beforeExit' 在有活动定时器时永不触发，不能用它清）。
+  // The timer must not keep the process alive (unref); clean it up via Nitro's close hook — which fires on dev hot
+  // reload / graceful shutdown — so a hot reload does not stack up another setInterval and end up with several
+  // engines dispatching duplicate work in parallel ('beforeExit' never fires while a timer is active, so it cannot
+  // be used for this).
   if (typeof timer.unref === 'function') timer.unref()
   nitroApp.hooks.hook('close', () => clearInterval(timer))
   console.log(`[automation] 引擎已启动，轮询间隔 ${Math.round(intervalMs / 1000)}s · 语言 ${lang}`)

@@ -2,8 +2,10 @@ import { reactive } from 'vue'
 
 type ConfirmOpts = { title?: string; message: string; okText?: string; cancelText?: string; danger?: boolean }
 
-// 全局单例确认弹窗状态（由 <AppConfirm/> 渲染，useConfirm() 触发）。替代原生 window.confirm。
-// title/okText/cancelText 留空时由 <AppConfirm/> 用 i18n 默认文案兜底（保证随语言切换、且可在 setup 外触发）
+// Global singleton confirm-dialog state (rendered by <AppConfirm/>, triggered by useConfirm()).
+// Replaces the native window.confirm.
+// When title/okText/cancelText are left empty, <AppConfirm/> falls back to the i18n defaults (so the copy
+// follows the language switch, and it can be triggered outside of setup)
 export const confirmState = reactive({
   open: false,
   title: '',

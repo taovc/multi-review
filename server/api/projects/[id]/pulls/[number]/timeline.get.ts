@@ -2,8 +2,8 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { fetchPrDetail, fetchTimeline } from '~core/github/gh'
 
-// 时间线（主视图）：PR 元数据 + 描述 + 改动文件 + 完整时间线（评论/review/commit/部署…）
-// diff 不在这里（重，懒加载，见 diff.get.ts）
+// Timeline (main view): PR metadata + description + changed files + the full timeline (comments/reviews/commits/deployments…)
+// The diff is not here (heavy, lazy-loaded — see diff.get.ts)
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const number = Number(getRouterParam(event, 'number'))

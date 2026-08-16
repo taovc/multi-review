@@ -13,9 +13,9 @@ export class GhError extends Error {
   }
 }
 
-// 统一调用本地已登录的 gh CLI（继承用户的 GitHub 认证）。
-// timeoutMs：可选，给「在 review 'posting' 认领窗口内跑」的调用用（如 fetchPrDiff）——gh 无限挂起会把行永久卡住。
-// 默认不设超时（分页 --paginate/--slurp 的长拉取不该被砍）。
+// Single entry point for the locally logged-in gh CLI (inherits the user's GitHub auth).
+// timeoutMs: optional, for calls that run inside a review's 'posting' claim window (e.g. fetchPrDiff) — a gh call hanging forever would pin the row permanently.
+// No timeout by default (long paginated pulls with --paginate/--slurp shouldn't be cut off).
 async function gh(args: string[], timeoutMs?: number): Promise<string> {
   try {
     const { stdout } = await pexec('gh', args, { maxBuffer: 1024 * 1024 * 32, ...(timeoutMs ? { timeout: timeoutMs } : {}) })
@@ -42,7 +42,7 @@ export type PrMeta = {
   isDraft: boolean
   body: string
   author: string
-  baseBranch: string // PR 的目标分支（base），解冲突时 merge 它
+  baseBranch: string // the PR's target branch (base); merged in when resolving conflicts
 }
 
 const PR_FIELDS = [
@@ -89,7 +89,7 @@ export async function fetchPrMeta(repo: string, prNumber: number): Promise<PrMet
   }
 }
 
-// 仅取状态 + head（刷新按钮用，轻量）
+// State + head only (lightweight, used by the refresh button)
 export async function fetchPrState(
   repo: string,
   prNumber: number,
@@ -107,26 +107,26 @@ export async function fetchPrState(
   return { state: normState(j.state, !!j.isDraft), headSha: j.headRefOid ?? '', reviewDecision: j.reviewDecision ?? '', author: j.author?.login ?? '' }
 }
 
-// 按分支回查该分支已建的 PR。feature 开发里 agent 自己 commit/push/开 PR 后，后端据此
-// 联动状态（status=opened + prUrl/prNumber）——不管 PR 是「开 PR」按钮开的还是聊天里顺手开的都能抓到。
+// Look up the PR already created for a branch. In feature development, once the agent commits/pushes/opens a PR itself,
+// the backend uses this to sync state (status=opened + prUrl/prNumber) — it catches the PR whether it was opened by the "open PR" button or casually from the chat.
 export async function findPrByBranch(repo: string, branch: string): Promise<{ url: string; number: number } | null> {
   try {
     const out = await gh(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'all', '--json', 'url,number', '--limit', '1'])
     const first = (JSON.parse(out.trim() || '[]') as Array<{ url?: string; number?: number }>)[0]
     if (first?.url) return { url: String(first.url), number: Number(first.number) || 0 }
-  } catch { /* 没建 PR / gh 出错 → 当作还没开 */ }
+  } catch { /* no PR created / gh failed → treat as not opened yet */ }
   return null
 }
 
-// 取 issue / PR 的标题 + 正文（feature 开发贴 issue/PR 链接时，把正文喂给只读 agent；
-// agent 自己上不了网、下不了图，所以正文 + 配图都由后端先抓好再交给它）。
+// Fetch an issue's / PR's title + body (when a feature task is given an issue/PR link, the body is fed to the read-only agent;
+// the agent has no network access and can't download images, so the backend fetches both the body and its images first and hands them over).
 export async function fetchIssueBody(repo: string, kind: 'issue' | 'pr', number: number): Promise<{ title: string; body: string }> {
   const out = await gh([kind === 'pr' ? 'pr' : 'issue', 'view', String(number), '--repo', repo, '--json', 'title,body'])
   const j = JSON.parse(out)
   return { title: j.title ?? '', body: j.body ?? '' }
 }
 
-// 当前 gh 登录 token（给后端图片代理用：私有仓库评论的图片需带 token 才能取）
+// The current gh login token (for the backend image proxy: images in private-repo comments need the token to be fetched)
 let _ghToken: string | null = null
 export async function ghToken(): Promise<string> {
   if (_ghToken != null) return _ghToken
@@ -134,8 +134,8 @@ export async function ghToken(): Promise<string> {
   return _ghToken
 }
 
-// PR 与目标分支是否能干净合并（自动审核据此追加「解决合并冲突」项）。
-// GitHub 的 mergeable 是异步计算的：刚 push 完可能短暂为 UNKNOWN → 那种情况当「未知」不误报。
+// Whether the PR merges cleanly into its target branch (auto-review adds a "resolve merge conflicts" item based on this).
+// GitHub computes mergeable asynchronously: right after a push it can briefly be UNKNOWN → report it as "unknown" rather than raising a false alarm.
 export async function fetchPrMergeable(repo: string, prNumber: number): Promise<'mergeable' | 'conflicting' | 'unknown'> {
   try {
     const out = await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'mergeable'])
@@ -148,7 +148,7 @@ export async function fetchPrMergeable(repo: string, prNumber: number): Promise<
   }
 }
 
-// PR 当前已提交的 review 总数（「审核已更新」基线：push 时记一份，之后变多 = reviewer 又审了）
+// Total number of reviews currently submitted on the PR (baseline for "review updated": recorded on push, a higher count later = a reviewer reviewed again)
 export async function fetchReviewsCount(repo: string, prNumber: number): Promise<number> {
   const [owner, name] = repo.split('/')
   const q = `query($owner:String!,$name:String!,$pr:Int!){ repository(owner:$owner,name:$name){ pullRequest(number:$pr){ reviews{ totalCount } } } }`
@@ -217,11 +217,11 @@ export type TimelineNode = {
   state?: string // review: approved/changes_requested/commented/dismissed
   sha?: string
   message?: string
-  verb?: string // event 类型
-  detail?: string // 事件附加信息（label 名 / 改名 / 引用等）
+  verb?: string // event type
+  detail?: string // extra event info (label name / rename / cross-reference, etc.)
 }
 
-// PR 时间线：评论 / review / commit / 标签 / 部署等，按 GitHub 主界面那条线。
+// PR timeline: comments / reviews / commits / labels / deployments, matching the line GitHub shows on the main page.
 export async function fetchTimeline(repo: string, prNumber: number): Promise<TimelineNode[]> {
   const out = await gh([
     'api',
@@ -283,7 +283,7 @@ export async function fetchTimeline(repo: string, prNumber: number): Promise<Tim
         nodes.push({ kind: 'event', actor: actorOf(e), isBot: botOf(e), at: e.created_at, verb: e.event })
         break
       default:
-        // 未知事件也保留一行，避免漏信息
+        // Keep a line for unknown events too, so nothing gets lost
         if (e.event && e.created_at) {
           nodes.push({ kind: 'event', actor: actorOf(e), isBot: botOf(e), at: e.created_at, verb: e.event })
         }
@@ -292,9 +292,9 @@ export async function fetchTimeline(repo: string, prNumber: number): Promise<Tim
   return nodes
 }
 
-const MAX_DIFF = 400_000 // 超大 diff 截断，避免拖垮 drawer
+const MAX_DIFF = 400_000 // truncate huge diffs so they don't bog down the drawer
 export async function fetchPrDiff(repo: string, prNumber: number): Promise<{ diff: string; truncated: boolean }> {
-  // 60s 超时：发评论时在 review 的 'posting' 窗口内跑，gh 挂起不能让行永久卡在 'posting'（超时→抛→端点 restore）。
+  // 60s timeout: when posting comments this runs inside the review's 'posting' window, and a hanging gh must not pin the row at 'posting' forever (timeout → throw → the endpoint restores).
   const out = await gh(['pr', 'diff', String(prNumber), '--repo', repo], 60_000)
   if (out.length > MAX_DIFF) return { diff: out.slice(0, MAX_DIFF), truncated: true }
   return { diff: out, truncated: false }
@@ -311,8 +311,8 @@ export type ReviewComment = {
   createdAt: string
 }
 
-// PR 的行级 review 评论（timeline 不含这些）。「修复」流程拿它做验证与回复锚点。
-// --paginate 多页时输出 "[...][...]"（非法 JSON）→ --slurp 包成页数组再 flat。
+// The PR's inline review comments (the timeline doesn't include these). The "fix" flow uses them as verification and reply anchors.
+// With multiple pages, --paginate outputs "[...][...]" (invalid JSON) → --slurp wraps it into an array of pages, then flat.
 export async function fetchReviewComments(repo: string, prNumber: number): Promise<ReviewComment[]> {
   const out = await gh(['api', `repos/${repo}/pulls/${prNumber}/comments`, '--paginate', '--slurp'])
   const arr = (JSON.parse(out) as any[][]).flat()
@@ -328,8 +328,8 @@ export async function fetchReviewComments(repo: string, prNumber: number): Promi
   }))
 }
 
-// 当前登录用户（/api/me 展示、「审核已更新」排除自己的评论等）。
-// 进程级缓存：gh auth switch 后需重启服务才会刷新（单用户本地工具可接受）。
+// The currently logged-in user (shown by /api/me, used to exclude your own comments from "review updated", etc.).
+// Process-level cache: after `gh auth switch` the service must be restarted to pick up the change (acceptable for a single-user local tool).
 let _login: string | null = null
 export async function getCurrentUserLogin(): Promise<string> {
   if (_login) return _login
@@ -346,7 +346,7 @@ export type PullListItem = {
   state: PrMeta['state']
   isDraft: boolean
   reviewDecision: string // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / ''
-  reviewsCount: number // GitHub 上已提交的 review 数（任何来源）→ 列表「已评审」tag
+  reviewsCount: number // number of reviews submitted on GitHub (from any source) → drives the "reviewed" tag in the list
   updatedAt: string
   additions: number
   deletions: number
@@ -361,7 +361,7 @@ export type PullPage = {
 
 const GQL_STATE: Record<string, string> = { open: 'OPEN', merged: 'MERGED', closed: 'CLOSED' }
 
-// GraphQL cursor 分页拉 PR（states 精确匹配 tab，按更新时间倒序）。
+// Fetch PRs with GraphQL cursor pagination (states match the tab exactly, ordered by update time descending).
 export async function listPulls(
   repo: string,
   state: 'open' | 'closed' | 'merged' | 'all' = 'open',
@@ -404,7 +404,7 @@ export async function listPulls(
   }
 }
 
-// 确认 gh 可用 + 已登录
+// Confirm gh is available and logged in
 export async function ghStatus(): Promise<{ ok: boolean; detail: string }> {
   try {
     const out = await gh(['auth', 'status'])

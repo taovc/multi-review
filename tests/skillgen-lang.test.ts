@@ -2,27 +2,29 @@ import assert from 'node:assert/strict'
 import { buildSkillPrompt } from '../core/agent/skillgen'
 import { langName, resolveLang } from '../core/agent/lang'
 
-// 产出语言跟 UI locale 走（#16 工作语言）：断言锚在 langName() 的结果上，不锚提示词措辞，
-// 这样重写提示词不会打红这条测试。
+// Output language follows the UI locale (#16 working language): the assertion is anchored on the
+// result of langName(), not on the prompt wording, so rewriting the prompt won't break this test.
 const directive = (lang: string) => new RegExp(`Write the entire methodology in ${langName(lang)}\\b`)
 
 for (const lang of ['fr', 'en', 'zh']) {
   assert.match(buildSkillPrompt({ lang }), directive(lang))
 }
 
-// 不再硬编码中文：zh 之外的 locale 里，提示词不得出现「必须用中文」这类固定指令。
+// No more hardcoded Chinese: for locales other than zh, the prompt must not contain a fixed
+// "must use Chinese" style instruction.
 assert.doesNotMatch(buildSkillPrompt({ lang: 'fr' }), /Chinese/)
 assert.doesNotMatch(buildSkillPrompt({ lang: 'en' }), /Chinese/)
 
-// 完整 locale 码（如 fr-FR）也应正确解析。
+// A full locale code (e.g. fr-FR) must resolve correctly too.
 assert.match(buildSkillPrompt({ lang: 'fr-FR' }), directive('fr'))
 
-// 缺省（无 lang）→ 与其它 core agent 及所有端点一致，落到中文，而不是静默变英文。
+// Default (no lang) → falls back to Chinese, consistent with the other core agents and every
+// endpoint, rather than silently switching to English.
 assert.equal(resolveLang(undefined), 'zh')
 assert.equal(resolveLang('de'), 'zh')
 assert.match(buildSkillPrompt({}), directive('zh'))
 
-// 优化路径：base 内容注入 + 语言指令并存。
+// Optimize path: the base content is injected and the language directive is still there.
 const optimize = buildSkillPrompt({ lang: 'fr', baseContent: '# Old skill' })
 assert.match(optimize, directive('fr'))
 assert.match(optimize, /# Old skill/)

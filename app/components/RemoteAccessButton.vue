@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 远程局域网访问：本机 Electron 窗口里的开关 + QR 码，方便 iPad/手机扫码连到同一界面。
-// 计算仍全在本机跑，远端只是浏览器视图。开关状态/鉴权由 server 端 lan-guard 决定。
+// Remote LAN access: the switch + QR code inside the local Electron window, so an iPad/phone can
+// scan and reach the same UI. All the work still runs on this machine, the remote end is just a
+// browser view. Switch state / authentication is decided server-side by lan-guard.
 const { t } = useI18n()
 
 type LanInfo = { enabled: boolean; urls: string[]; link: string | null; qr: string | null }
@@ -13,7 +14,7 @@ const error = ref('')
 const copied = ref(false)
 
 onMounted(() => {
-  // 只有本机桌面窗口才显示这个控件——远端手机(普通浏览器)看不到，也就动不了开关。
+  // Only the local desktop window shows this control — a remote phone (plain browser) can't see it, so it can't touch the switch.
   isElectron.value = typeof navigator !== 'undefined' && /Electron/.test(navigator.userAgent)
 })
 
@@ -53,7 +54,7 @@ async function copyLink() {
     copied.value = true
     setTimeout(() => (copied.value = false), 1500)
   } catch {
-    /* 剪贴板不可用时忽略——用户仍可手动抄地址 */
+    /* ignored when the clipboard isn't available — the user can still copy the address by hand */
   }
 }
 </script>
@@ -72,7 +73,7 @@ async function copyLink() {
 
       <BaseModal v-model:open="open" :title="t('remote.title')">
         <div class="space-y-5">
-          <!-- 开关 -->
+          <!-- switch -->
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
               <div class="text-sm font-medium">{{ t('remote.toggleLabel') }}</div>
@@ -85,15 +86,15 @@ async function copyLink() {
             />
           </div>
 
-          <!-- 安全提示（状态无关：开启前作为风险预告，措辞不引用尚未显示的链接）-->
+          <!-- Security notice (state-independent: acts as a heads-up before enabling, worded so it doesn't reference a link that isn't shown yet)-->
           <p class="text-[11px] leading-relaxed text-warning border border-warning/30 bg-warning/5 rounded px-3 py-2">
             {{ t('remote.warning') }}
           </p>
 
-          <!-- 端口暴露说明（M4）：关闭≠关端口 -->
+          <!-- Port exposure note (M4): switching this off does not close the port -->
           <p class="text-[11px] text-dimmed leading-relaxed">{{ t('remote.portNote') }}</p>
 
-          <!-- 启用后：QR + 地址 -->
+          <!-- Once enabled: QR + addresses -->
           <template v-if="info.enabled">
             <div v-if="info.qr" class="flex flex-col items-center gap-3">
               <img :src="info.qr" :alt="t('remote.scanHint')" class="w-44 h-44 rounded-lg border border-default bg-white p-2" />

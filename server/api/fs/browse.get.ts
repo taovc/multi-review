@@ -6,9 +6,9 @@ import { promisify } from 'node:util'
 
 const pexec = promisify(execFile)
 
-// 本地工具：浏览服务器文件系统的目录，供「选择本地 clone 路径」用。
-// 只返回子目录（不含文件、不含点开头的隐藏目录），并标出哪些是 git 仓库。
-// 当前目录若是 git 仓库，额外解析它的 origin remote → owner/repo（创建项目可直接回填）。
+// Local tool: browse directories on the server's filesystem, used by "pick a local clone path".
+// Only subdirectories are returned (no files, no dot-prefixed hidden directories), flagged with which ones are git repos.
+// If the current directory is a git repo, its origin remote is also resolved → owner/repo (so project creation can prefill it).
 interface Entry {
   name: string
   path: string
@@ -18,7 +18,7 @@ interface Entry {
 async function isGitRepo(dir: string): Promise<boolean> {
   try {
     const st = await fs.stat(path.join(dir, '.git'))
-    return st.isDirectory() || st.isFile() // .git 目录，或 worktree 里的 .git 文件
+    return st.isDirectory() || st.isFile() // a .git directory, or the .git file inside a worktree
   } catch {
     return false
   }
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
   const raw = typeof q.path === 'string' ? q.path.trim() : ''
   const home = os.homedir()
 
-  // 空 → 用户主目录；支持 ~ 前缀；统一成绝对路径。
+  // Empty → the user's home directory; the ~ prefix is supported; everything is normalized to an absolute path.
   let target = raw ? (raw.startsWith('~') ? path.join(home, raw.slice(1)) : raw) : home
   target = path.resolve(target)
 
@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: code, statusMessage: `无法访问：${target}` })
   }
 
-  // 传进来的是文件 → 退到它所在目录。
+  // A file was passed in → fall back to its containing directory.
   if (!st.isDirectory()) target = path.dirname(target)
 
   let names: string[]
@@ -69,26 +69,26 @@ export default defineEventHandler(async (event) => {
 
   const entries: Entry[] = []
   for (const name of names) {
-    if (name.startsWith('.')) continue // 隐藏目录不展示
+    if (name.startsWith('.')) continue // hidden directories are not shown
     const full = path.join(target, name)
     try {
       const s = await fs.stat(full)
       if (!s.isDirectory()) continue
       entries.push({ name, path: full, isGit: await isGitRepo(full) })
     } catch {
-      // 无权限 / 失效链接，跳过
+      // No permission / broken link, skip
     }
   }
   entries.sort((a, b) => a.name.localeCompare(b.name))
 
-  // 当前目录本身是否 git 仓库 + 它的 owner/repo（用于回填 Dépôt 字段）。
+  // Whether the current directory is itself a git repo + its owner/repo (used to prefill the repo field).
   const currentIsGit = await isGitRepo(target)
   const repo = currentIsGit ? await gitRemote(target) : null
 
   const parent = path.dirname(target)
   return {
     path: target,
-    parent: parent === target ? null : parent, // 到根目录时 parent === target
+    parent: parent === target ? null : parent, // at the filesystem root, parent === target
     home,
     currentIsGit,
     repo,

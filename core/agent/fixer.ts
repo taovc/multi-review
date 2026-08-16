@@ -1,9 +1,11 @@
 import { runClaudeAgentChat, askUserClause, type AgentChatResult } from './chat'
 import type { ChildProcess } from 'node:child_process'
 
-// 修复 PR = 和 agent 在 PR worktree 里对话，让它直接改文件。claude 走共享运行器（chat.ts）：
-// 统一 bypassPermissions + 危险命令守卫 + ultracode + 决策卡（同 feature/global）。不自动 commit：
-// 改动留 worktree，用户点「提交并上传」才 commit+push（走 Node 路径 push.post.ts）。
+// Fixing a PR = talking to the agent inside the PR worktree and letting it edit files directly.
+// claude goes through the shared runner (chat.ts): the same bypassPermissions + dangerous-command
+// guard + ultracode + decision cards (as feature/global). No automatic commit: the changes stay in
+// the worktree, and only when the user clicks "Commit and upload" do they get committed and pushed
+// (via the Node path in push.post.ts).
 
 export type FixChatOptions = {
   cwd: string
@@ -11,17 +13,17 @@ export type FixChatOptions = {
   effort?: string
   codexServiceTier?: string | null
   lang: string
-  sessionId: string | null // 有就 --resume；没有就开新会话
+  sessionId: string | null // present → --resume; absent → start a new session
   message: string
   historyAccess?: string
   conflictHint?: string
-  // ── feature 开发 / 危险命令 / ultracode 共用开关 ──
-  promptKind?: 'fix' | 'feature' | 'global' // codex 各自的 prompt：fix=修 PR / feature=新分支开发 / global=自由助手
-  baseBranch?: string // feature：开 PR 时的目标分支
-  fullAccess?: boolean // codex：true → danger-full-access 沙箱（否则 workspace-write）
-  networkAccess?: boolean // codex：true → 放开联网 + web 搜索
-  allowDanger?: boolean // claude：放行危险命令守卫（含 git push / gh pr create），默认拦
-  ultracode?: boolean // 后台激活 ultracode（前缀由共享运行器注入）
+  // ── switches shared with feature development / dangerous commands / ultracode ──
+  promptKind?: 'fix' | 'feature' | 'global' // codex's respective prompts: fix=fix a PR / feature=develop on a new branch / global=free-form assistant
+  baseBranch?: string // feature: the target branch when opening the PR
+  fullAccess?: boolean // codex: true → danger-full-access sandbox (otherwise workspace-write)
+  networkAccess?: boolean // codex: true → allow network + web search
+  allowDanger?: boolean // claude: let the dangerous-command guard through (including git push / gh pr create), blocked by default
+  ultracode?: boolean // activate ultracode in the background (the prefix is injected by the shared runner)
   onSpawn?: (cp: ChildProcess) => void
   onStop?: (stop: () => void) => void
   onSessionId?: (sessionId: string) => void
@@ -31,7 +33,8 @@ export type FixChatOptions = {
 
 export type FixChatResult = AgentChatResult
 
-// fix 方法学：在 PR 分支 worktree 里按 reviewer 要求精修；默认别 commit/push。
+// Fix methodology: make the reviewer's requested touch-ups inside the PR branch worktree; by default
+// don't commit/push.
 function fixSystemPrompt(lang: string, conflictHint?: string): string {
   return `You're working on this pull request inside its git worktree (the current directory is the PR branch checked out). Make the changes the reviewer asks for by editing files directly. You have the full toolset — bash, git, gh, network, tests — so investigate the PR whenever it helps (e.g. \`gh pr view\`, run the tests).
 ${conflictHint ? `\n${conflictHint}\n` : ''}

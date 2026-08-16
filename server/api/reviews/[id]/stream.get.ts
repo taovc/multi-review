@@ -1,3 +1,3 @@
-// SSE：实时推送某 review 的进度事件（stage / tool / status / done / error）。频道=裸 reviewId。
-// createSseHandler 由 Nitro 自动从 server/utils 导入。
+// SSE: pushes a review's progress events live (stage / tool / status / done / error). The channel is the bare reviewId.
+// createSseHandler is auto-imported by Nitro from server/utils.
 export default createSseHandler((id) => id)

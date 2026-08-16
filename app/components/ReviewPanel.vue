@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reviewSectionRe } from '~core/agent/reviewSections'
+
 const props = defineProps<{ projectId: string; prNumber: number; reviewId: string | null }>()
 const emit = defineEmits<{ created: [id: string]; changed: [] }>()
 const { t, locale } = useI18n()
@@ -20,7 +22,7 @@ const rid = ref<string | null>(props.reviewId)
 watch(() => props.reviewId, (v) => { rid.value = v; if (v) load() })
 
 const data = ref<ReviewData | null>(null)
-let adjustedFor: string | null = null // 已按复审状态自动调过勾选的 review（每次打开 / 复审后只调一次）
+let adjustedFor: string | null = null // review whose checkboxes were already auto-adjusted from recheck status (adjusted once per open / per recheck)
 const live = ref('')
 const logLines = ref<string[]>([])
 const showLog = ref(false)
@@ -29,31 +31,31 @@ watch(logLines, () => {
   if (showLog.value) nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
 }, { deep: true })
 const busy = ref('')
-const preview = ref<any>(null) // 发评论的 dry-run 预览（提前定义：卸载守卫 / 切 PR 清理要用）
+const preview = ref<any>(null) // dry-run preview of the comment to post (declared early: needed by the unmount guard / PR-switch cleanup)
 let es: EventSource | null = null
-let alive = true // 组件卸载后忽略 in-flight $fetch 的回写（生成预览时关 drawer，请求还在跑）
+let alive = true // after unmount, ignore write-backs from in-flight $fetch (closing the drawer while a preview is generating leaves the request running)
 
 async function load() {
   if (!rid.value) return
   const d = await $fetch<ReviewData>(`/api/reviews/${rid.value}`)
   if (!alive) return
   data.value = d
-  emit('changed') // 通知页面：这条 review 状态/内容可能变了 → 刷新任务列表
-  // 用历史事件回填日志（这样打开已完成的任务也能看到 agent 当时一行行干了什么）
+  emit('changed') // tell the page this review's status/content may have changed → refresh the task list
+  // backfill the log from historical events (so opening a finished task still shows, line by line, what the agent did back then)
   if (!logLines.value.length && data.value.events?.length) {
     logLines.value = data.value.events
       .filter((e) => e.message)
       .map((e) => `${new Date(e.ts).toLocaleTimeString(locale.value, { hour12: false })}  ${e.message}`)
   }
-  // 打开 drawer（及每次复审后）按复审状态自动调勾选，每个 review 只调一次
+  // on opening the drawer (and after each recheck), auto-adjust the checkboxes from recheck status — once per review
   if (adjustedFor !== rid.value) {
     adjustedFor = rid.value
     await autoAdjustChecks()
   }
 }
 
-// 已修复（最新一轮复审 = fixed）→ 取消勾选；未修复（其它复审状态）→ 勾选。只动复审过的 finding，
-// 没复审过的保持原样；用户随后可手动改。发评论按勾选走，所以这会直接影响要发哪些。
+// Fixed (latest recheck round = fixed) → uncheck; not fixed (any other recheck status) → check. Only touches findings that were rechecked,
+// ones never rechecked stay as they are; the user can still change them by hand afterwards. Posting follows the checkboxes, so this directly decides what gets posted.
 async function autoAdjustChecks() {
   const fs = data.value?.findings ?? []
   const changed: Finding[] = []
@@ -75,11 +77,11 @@ function openSSE() {
       const e = JSON.parse(ev.data)
       if (e.message) {
         live.value = e.message
-        // 滚动日志：像终端一行行
+        // scrolling log: line by line, like a terminal
         logLines.value.push(`${new Date().toLocaleTimeString(locale.value, { hour12: false })}  ${e.message}`)
         if (logLines.value.length > 200) logLines.value.shift()
       }
-      if (e.kind === 'recheck') adjustedFor = null // 复审完重新按新状态调一次勾选
+      if (e.kind === 'recheck') adjustedFor = null // after a recheck, adjust the checkboxes once more from the new status
       if (['done', 'recheck', 'posted', 'error', 'status'].includes(e.kind)) load()
     } catch {}
   }
@@ -87,7 +89,7 @@ function openSSE() {
 watch(rid, (v) => { if (v) { load(); openSSE() } }, { immediate: true })
 onBeforeUnmount(() => { alive = false; es?.close() })
 
-// 审核状态文案：存 i18n 键，缺失回退原始 status 码
+// Review status labels: store i18n keys, fall back to the raw status code when missing
 const STATUS: Record<string, string> = {
   queued: 'review.status.queued', cloning: 'review.status.cloning', reviewing: 'review.status.reviewing', draft: 'review.status.draft',
   ready_to_post: 'review.status.ready_to_post', posting: 'review.status.posting', posted: 'review.status.posted', recheck_requested: 'review.status.recheck_requested', rechecking: 'review.status.rechecking', error: 'review.status.error',
@@ -105,10 +107,10 @@ async function startReview() {
     if (id) { rid.value = id; emit('created', id) }
   } finally { busy.value = '' }
 }
-// 抽屉里弹模态会被 USlideover 的焦点陷阱挡住、点不动 → 改成就地两步确认，且不关抽屉，能边跑边看日志
+// A modal popped inside the drawer gets blocked by USlideover's focus trap and can't be clicked → use in-place two-step confirmation instead, without closing the drawer, so you can watch the log while it runs
 const confirming = ref<'' | 'rerun' | 'recheck' | 'fresh' | 'delete'>('')
-// fresh=true → audit complet à zéro (efface findings/notes, revue non guidée) ;
-// false → re-revue guidée qui conserve findings + notes.
+// fresh=true → full review from scratch (wipes findings/notes, non-guided review);
+// false → guided re-review that keeps findings + notes.
 async function rerun(fresh = false) {
   confirming.value = ''
   busy.value = 'run'; logLines.value = []; showLog.value = true
@@ -124,7 +126,7 @@ async function recheck() {
   finally { busy.value = '' }
 }
 
-// findings 编辑
+// findings editing
 const saving = ref<Record<string, any>>({})
 async function toggleFinding(f: Finding) {
   f.checked = !f.checked
@@ -151,7 +153,7 @@ function saveInstruction() {
   }, 600)
 }
 
-// 发评论：先 dry-run 预览，再确认发布。卸载后（drawer 关了）忽略回写，别串到下一个 PR。
+// Posting: dry-run preview first, then confirm publishing. After unmount (drawer closed) ignore write-backs, so they don't leak into the next PR.
 async function doPreview(force = false) {
   busy.value = 'preview'
   try {
@@ -169,7 +171,7 @@ async function confirmPost() {
   } catch (e: any) { if (alive) live.value = e?.data?.statusMessage || t('review.publishFailed') }
   finally { busy.value = '' }
 }
-// 删除审核任务（仅本地，GitHub 上已发的评论保留）→ 回到「开始审核」，可重新跑。出错时尤其有用。
+// Delete the review task (local only; comments already posted on GitHub are kept) → back to "start review", can be run again. Especially useful after an error.
 async function deleteReview() {
   confirming.value = ''
   busy.value = 'delete'
@@ -183,23 +185,19 @@ async function deleteReview() {
   finally { busy.value = '' }
 }
 
-// 分节标签由 AI 用当前工作语言写出（跟 UI locale 走）→ 三语都要认，否则英/法用户拿到的是一整坨没分节的流水。
-const SECTION_LABELS = [
-  '用户视角[^：:]*', '正向\\s*case', '负向\\s*\\/?\\s*边界', '负向', '边界', '回归点', '受影响的人', '改动前', '改动后',
-  'user\\s+perspective', 'positive\\s+case', 'negative\\s*\\/?\\s*edge(?:\\s+cases?)?', 'edge\\s+cases?', 'regression(?:\\s+points?)?', 'affected(?:\\s+(?:users?|people|parties))?', 'before\\s+the\\s+change', 'after\\s+the\\s+change',
-  'perspective\\s+utilisateur', 'cas\\s+positif', 'cas\\s+n[ée]gatif(?:s)?(?:\\s*\\/?\\s*limites)?', 'limites', 'points?\\s+de\\s+r[ée]gression', 'personnes?\\s+concern[ée]es?', 'avant\\s+(?:le\\s+)?changement', 'apr[èe]s\\s+(?:le\\s+)?changement',
-].join('|')
-const SECTION_RE = new RegExp(`\\s*(${SECTION_LABELS})([：:])`, 'gi')
+// Section labels are written by the AI in the current working language; the matcher lives in
+// ~core/agent/reviewSections next to the prompt that dictates them, so the two cannot drift apart.
+const SECTION_RE = reviewSectionRe()
 
-// AI 常把需求/测试路径写成一大段没换行的流水 → 在枚举/分节标签前补换行，便于阅读
+// The AI often writes the requirement / test path as one long run-on block with no line breaks → insert line breaks before enumerations/section labels for readability
 function fmt(t?: string | null) {
   if (!t) return ''
   return t
-    // 圆圈数字前换行
+    // line break before circled numbers
     .replace(/([^\n])\s*([①②③④⑤⑥⑦⑧⑨⑩⑪⑫])/g, '$1\n$2')
-    // a) b) 之类字母枚举前换行 + 缩进（负向 lookbehind 防止误伤词中字母）
+    // line break + indent before letter enumerations like a) b) (negative lookbehind avoids hitting letters inside a word)
     .replace(/([^A-Za-z\n])\s*([a-h][)）])\s*/g, '$1\n　$2 ')
-    // 已知分节标签前空一行
+    // blank line before known section labels
     .replace(SECTION_RE, '\n\n$1$2')
     .replace(/^\n+/, '')
     .replace(/\n{3,}/g, '\n\n')
@@ -213,7 +211,7 @@ const RC: Record<string, string> = {
   kept: 'review.rc.kept', retracted: 'review.rc.retracted', adjusted: 'review.rc.adjusted', discuss: 'review.rc.discuss',
 }
 function rcLabel(s: string) { const k = RC[s]; return k ? t(k) : s }
-// 发评论时按复审状态被跳过的原因（预览里告知）
+// Reasons a finding is skipped at post time based on its recheck status (surfaced in the preview)
 const SKIP_REASON: Record<string, string> = {
   'replied-no-note': 'review.skipReason.repliedNoNote',
   retracted: 'review.skipReason.retracted',
@@ -223,7 +221,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
 
 <template>
   <div class="flex-1 overflow-y-auto px-6 py-5">
-    <!-- 没任务 -->
+    <!-- no task -->
     <div v-if="!rid" class="text-center py-16">
       <p class="text-sm text-dimmed mb-4">{{ $t('review.noTask') }}</p>
       <button class="text-sm bg-inverted text-inverted px-5 py-2 hover:bg-inverted/90 disabled:opacity-40" :disabled="busy === 'start'" @click="startReview">
@@ -232,7 +230,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
     </div>
 
     <template v-else-if="data">
-      <!-- 状态 + 操作 -->
+      <!-- status + actions -->
       <div class="flex items-center justify-between gap-3 mb-1">
         <div class="text-sm">
           <span class="text-dimmed">{{ $t('review.statusLabel') }}</span>
@@ -261,7 +259,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
             <button class="text-dimmed hover:text-highlighted" @click="confirming = ''">{{ $t('common.cancel') }}</button>
           </template>
           <template v-else>
-            <!-- Relance une revue complète à zéro (efface findings + notes) → confirmation in-place. Dispo en error/draft. -->
+            <!-- Restarts a full review from scratch (wipes findings + notes) → inline confirmation. Available in error/draft. -->
             <button v-if="data.review.status === 'error' || data.review.status === 'draft'" class="bg-inverted text-inverted px-3 py-1 hover:bg-inverted/90 disabled:opacity-40" :disabled="running || !!busy" :title="$t('review.retryTitle')" @click="confirming = 'fresh'">{{ $t('review.retryBtn') }}</button>
             <button class="text-muted hover:text-highlighted disabled:opacity-40" :disabled="running || !!busy" :title="$t('review.rerunTitle')" @click="confirming = 'rerun'">{{ $t('review.rerunBtn') }}</button>
             <button class="hover:text-highlighted disabled:opacity-40" :class="data.review.authorUpdated ? 'text-highlighted font-medium' : 'text-muted'" :disabled="running || !!busy" :title="$t('review.recheckTitle')" @click="confirming = 'recheck'">{{ $t('review.recheckBtn') }}</button>
@@ -278,18 +276,18 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
             {{ showLog ? $t('review.collapseLog') : $t('review.expandLog', { count: logLines.length }) }}
           </button>
         </div>
-        <!-- 滚动日志：agent 一行行的动作（读文件 / grep / git diff …）-->
+        <!-- scrolling log: the agent's actions, line by line (read file / grep / git diff …)-->
         <pre v-if="showLog && logLines.length" ref="logBox" class="mt-2 max-h-56 overflow-auto bg-neutral-900 text-neutral-300 rounded p-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
       </div>
       <p v-if="data.review.error" class="text-xs text-highlighted border border-default rounded p-2 mb-4 whitespace-pre-wrap">{{ data.review.error }}</p>
 
-      <!-- AI 总评（置顶） -->
+      <!-- AI summary (pinned to the top) -->
       <section v-if="data.review.conclusion" class="mb-5 border border-default rounded p-3">
         <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.aiSummary') }}</div>
         <p class="text-sm text-default whitespace-pre-wrap leading-relaxed">{{ fmt(data.review.conclusion) }}</p>
       </section>
 
-      <!-- 给 AI 的审核指令（“按我反馈复审”时参考） -->
+      <!-- review instruction for the AI (consulted on "recheck against my feedback") -->
       <section class="mb-6">
         <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.instructionLabel') }}</div>
         <textarea
@@ -300,7 +298,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
         />
       </section>
 
-      <!-- 需求 / 测试路径 -->
+      <!-- requirement / test path -->
       <template v-if="data.review.requirement || data.review.testPath">
         <section v-if="data.review.requirement" class="mb-4">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.requirement') }}</div>
@@ -342,7 +340,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
       </div>
       <p v-if="!data.findings.length && !running" class="text-sm text-dimmed py-4">{{ $t('review.noFindings') }}</p>
 
-      <!-- 整体注释 + 发布 -->
+      <!-- global notes + publish -->
       <section v-if="data.findings.length" class="mt-5 border-t border-default pt-4">
         <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.globalNotesLabel') }}</div>
         <textarea
@@ -360,7 +358,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
           </div>
         </div>
 
-        <!-- dry-run 预览 -->
+        <!-- dry-run preview -->
         <div v-if="preview" class="mt-3 border border-default rounded p-3">
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs text-dimmed">{{ $t('review.previewMeta', { count: preview.comments.length, mode: preview.mode }) }}<span v-if="preview.skipped?.length"> · {{ $t('review.previewSkipped', { count: preview.skipped.length }) }}</span></span>
