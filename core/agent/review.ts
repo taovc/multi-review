@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { withContract, reviewCanUseTool, ISOLATED } from './guard'
 import { salvageJson } from './jsonSalvage'
-import { outputLangClause } from './lang'
+import { outputLangClause, resolveLang } from './lang'
 import { REVIEW_SECTIONS } from './reviewSections'
 
 export const FindingSchema = z.object({
@@ -81,7 +81,7 @@ export type ReviewAgentOptions = {
 // Run one review: the Agent SDK works inside the worktree with git tools and returns a structured result.
 export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string }> {
   const stream = query({
-    prompt: buildReviewPrompt({ ...opts, lang: opts.lang || 'zh' }),
+    prompt: buildReviewPrompt({ ...opts, lang: resolveLang(opts.lang) }),
     options: {
       model: opts.model,
       ...(opts.effort ? { effort: opts.effort as any } : {}),
@@ -198,7 +198,7 @@ At the end, output **JSON only** (no code fences):
   "logic": "...", "quality": "...", "risk": "...", "conclusion": "overall conclusion of this re-review round",
   "requirement": "...", "testPath": "..." }
 
-${outputLangClause(opts.lang || 'zh')}
+${outputLangClause(resolveLang(opts.lang))}
 ⚠️ Strictly valid JSON: **never leave an unescaped ASCII double quote \`"\`** inside a string; always quote with 「」 or backticks \`.`
 }
 

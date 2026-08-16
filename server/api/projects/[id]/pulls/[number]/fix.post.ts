@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid'
 import { and, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { fetchPrMeta } from '~core/github/gh'
+import { resolveLang } from '~core/agent/lang'
 
 // Create a "fix PR" chat task (lazily): insert one fixes row (status=open), no validation run, no queueing.
 // The worktree is created lazily by ensureWorktree on the first chat message.
@@ -51,7 +52,7 @@ export default defineEventHandler(async (event) => {
     baseRef: meta.baseBranch || project.defaultBranch || null, // PR target branch, used for three-dot diff
     prAuthor: meta.author || null,
     title: meta.title || null,
-    lang: getCookie(event, 'mr-locale') || 'zh',
+    lang: resolveLang(getCookie(event, 'mr-locale')),
     status: 'open',
     createdAt: now,
     updatedAt: now,

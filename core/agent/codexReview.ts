@@ -193,7 +193,7 @@ function buildCodexReviewPrompt(opts: ReviewAgentOptions): string {
 
 ---
 
-${buildReviewPrompt({ ...opts, lang: opts.lang || 'zh' })}`
+${buildReviewPrompt({ ...opts, lang: resolveLang(opts.lang) })}`
 }
 
 // ── First review (codex) ──

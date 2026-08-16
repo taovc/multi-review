@@ -4,6 +4,7 @@ import { listPulls, getCurrentUserLogin } from '~core/github/gh'
 import { isChatting } from '~core/fix/pipeline'
 import { runAutomationTick, type EngineDeps } from '~core/automation/engine'
 import { buildAutoFixMessage } from '~core/automation/fixprompt'
+import { resolveLang } from '~core/agent/lang'
 
 // The resident PR automation engine: the only server-side timed loop (a Nitro plugin like recover.ts,
 // one instance per process). Every automationIntervalMs it runs one runAutomationTick: read DB +
@@ -22,7 +23,7 @@ export default defineNitroPlugin((nitroApp) => {
   const intervalMs = Math.max(10_000, Number(cfg.automationIntervalMs) || 45_000)
   // The engine is timer-driven with no user request context, so there is no mr-locale cookie to read
   // → the central default decides the working language (otherwise every endpoint falls back to zh).
-  const lang = (cfg.automationLang as string) || 'zh'
+  const lang = resolveLang(cfg.automationLang as string)
   const cookieHeader = { cookie: `mr-locale=${lang}` }
   // The currently logged-in gh user: the default for the auto-fix author allowlist (empty filter =
   // only fix my own PRs, never touch other people's). Resolved on the first tick; stays null while gh

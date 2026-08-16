@@ -13,7 +13,7 @@ export default defineNuxtConfig({
   // Three languages: Chinese (the original) + French + English. No URL prefix (internal tool); picked automatically from the browser language and persisted
   i18n: {
     strategy: 'no_prefix',
-    defaultLocale: 'fr',
+    defaultLocale: 'en',
     langDir: 'locales',
     lazy: true,
     locales: [
@@ -25,7 +25,7 @@ export default defineNuxtConfig({
       useCookie: true,
       cookieKey: 'mr-locale',
       redirectOn: 'root',
-      fallbackLocale: 'fr',
+      fallbackLocale: 'en',
     },
     bundle: { optimizeTranslationDirective: false },
     // Some hint strings contain inline tags like <b>/<br> (static copy we maintain, rendered with v-html in templates)
@@ -56,7 +56,7 @@ export default defineNuxtConfig({
     automationEnabled: process.env.AUTOMATION_ENABLED !== 'false',
     automationIntervalMs: Number(process.env.AUTOMATION_INTERVAL_MS || 45000),
     // The engine is timer-driven with no requesting-user context, so it can't read the locale from a cookie; this central default decides the working language for auto review/fix.
-    automationLang: process.env.AUTOMATION_LANG || 'zh',
+    automationLang: process.env.AUTOMATION_LANG || 'en',
     public: {
       appName: 'PR Cockpit',
     },

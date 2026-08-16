@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { withContract, reviewCanUseTool, ISOLATED } from './guard'
 import { salvageJson } from './jsonSalvage'
-import { outputLangClause } from './lang'
+import { outputLangClause, resolveLang } from './lang'
 
 export const RecheckSchema = z.object({
   rechecks: z
@@ -92,7 +92,7 @@ Finally, **output JSON only** (no code fences):
   "conclusion": "overall verdict after the recheck: which blockers remain, whether it can be merged"
 }
 
-${outputLangClause(opts.lang || 'zh')}
+${outputLangClause(resolveLang(opts.lang))}
 ⚠️ Strictly valid JSON: **never use an unescaped ASCII double quote \`"\`** inside text/problem and similar fields; always quote with 「」 or backticks \`, never ASCII double quotes.`
 }
 

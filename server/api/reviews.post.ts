@@ -5,6 +5,7 @@ import { schema } from '~core/db/client'
 import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
+import { resolveLang } from '~core/agent/lang'
 
 // Create review tasks straight from the entries ticked in "all PRs" (the metadata comes with the list, no extra gh call needed).
 const Pull = z.object({
@@ -116,7 +117,7 @@ export default defineEventHandler(async (event) => {
         model: rc.model,
         effort: rc.effort,
         codexServiceTier: rc.codexServiceTier,
-        lang: getCookie(event, 'mr-locale') || 'zh',
+        lang: resolveLang(getCookie(event, 'mr-locale')),
       })
     }
   }

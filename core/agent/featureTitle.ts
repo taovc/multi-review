@@ -1,5 +1,6 @@
 import { runClaude } from './claudeCli'
 import { runCodexText } from './codexAgent'
+import { langName } from './lang'
 import type { ReviewProvider } from './runners'
 
 // Generate a short "having understood the requirement" title from the raw requirement (which may contain an issue link + the issue body fetched by the backend); used as the feature list/drawer title.
@@ -17,8 +18,7 @@ export async function genFeatureTitle(opts: {
 }): Promise<string> {
   const clipped = (opts.requirement || '').trim().slice(0, 4000)
   if (!clipped) return ''
-  const langName = opts.lang === 'en' ? 'English' : opts.lang === 'fr' ? 'French' : 'Chinese'
-  const prompt = `Read this feature request and write ONE short title (max ~10 words) capturing WHAT is being built, in ${langName}. If it's just an issue link or vague, infer the actual intent. Output ONLY the title on a single line — no quotes, no "Title:" prefix, no trailing punctuation.
+  const prompt = `Read this feature request and write ONE short title (max ~10 words) capturing WHAT is being built, in ${langName(opts.lang)}. If it's just an issue link or vague, infer the actual intent. Output ONLY the title on a single line — no quotes, no "Title:" prefix, no trailing punctuation.
 
 Feature request:
 ${clipped}`

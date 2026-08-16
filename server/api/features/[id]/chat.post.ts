@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runFeatureDevelopJob, isFeatureBusy, type FeatureDevelopJobCtx } from '~core/feature/pipeline'
+import { resolveLang } from '~core/agent/lang'
 
 // Single-phase development conversation: full-permission development in an isolated worktree via
 // bypassPermissions.
@@ -32,7 +33,7 @@ export default defineEventHandler(async (event) => {
   const ctx: FeatureDevelopJobCtx = {
     db: d, schema, taskId: id,
     localPath: project.localPath, reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, defaultBranch: project.defaultBranch, repo: project.repo,
-    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: task.lang || 'zh',
+    provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: resolveLang(task.lang),
     allowDanger, ultracode, assetsDir,
   }
   void runFeatureDevelopJob(ctx, message).catch((e) => console.error('[feature-develop] job failed', e))

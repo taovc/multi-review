@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runFixChatJob, isChatting, type FixJobCtx } from '~core/fix/pipeline'
+import { resolveLang } from '~core/agent/lang'
 
 // Chat workspace: once a fix task exists you can chat with it and let the AI edit code right away,
 // without first running a batch fix pass. A single session can carry the follow-up polishing.
@@ -40,7 +41,7 @@ export default defineEventHandler(async (event) => {
     model: rc.model,
     effort: rc.effort,
     codexServiceTier: rc.codexServiceTier,
-    lang: fix.lang || 'zh',
+    lang: resolveLang(fix.lang),
     allowDanger: !!allowDanger,
     ultracode: !!ultracode,
     assetsDir: resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets'),
