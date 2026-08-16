@@ -2,6 +2,8 @@
 // 「修复 PR」面板（纯对话版）：点进来就是一个常驻对话框，和 Claude 在 PR 的 worktree 里聊、让它直接改代码。
 // 不自动 commit；点「提交并上传」跳到预览 view（待上传 diff + 生成的 commit message，可改）→ 确认才 commit+push。
 // 布局：自身 flex 撑满抽屉 fix tab 高度——对话流区域内部滚动，输入条固定钉在最底。
+import { stripRecommendedMarker } from '~core/agent/decisionCard'
+
 const props = defineProps<{ projectId: string; prNumber: number; fixId: string | null; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const { t, te, locale } = useI18n()
@@ -64,7 +66,8 @@ function askQuestionText(inner: string): string {
 function displayText(content: string, stripAsk: boolean): string {
   return content.replace(/```ask-user\s*\n([\s\S]*?)```/gi, (_m, inner) => (stripAsk ? '' : askQuestionText(inner))).trim()
 }
-function optionLabel(o: string): string { return o.replace(/\s*[（(]\s*推荐\s*[)）]\s*$/i, '') }
+// 选项按钮上的推荐标记只用于展示；发送时去掉（标记本身定义在 ~core/agent/decisionCard）
+function optionLabel(o: string): string { return stripRecommendedMarker(o) }
 
 function hhmmss(iso?: string) {
   return new Date(iso ?? new Date().toISOString()).toLocaleTimeString(locale.value, { hour12: false })

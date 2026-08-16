@@ -183,6 +183,14 @@ async function deleteReview() {
   finally { busy.value = '' }
 }
 
+// 分节标签由 AI 用当前工作语言写出（跟 UI locale 走）→ 三语都要认，否则英/法用户拿到的是一整坨没分节的流水。
+const SECTION_LABELS = [
+  '用户视角[^：:]*', '正向\\s*case', '负向\\s*\\/?\\s*边界', '负向', '边界', '回归点', '受影响的人', '改动前', '改动后',
+  'user\\s+perspective', 'positive\\s+case', 'negative\\s*\\/?\\s*edge(?:\\s+cases?)?', 'edge\\s+cases?', 'regression(?:\\s+points?)?', 'affected(?:\\s+(?:users?|people|parties))?', 'before\\s+the\\s+change', 'after\\s+the\\s+change',
+  'perspective\\s+utilisateur', 'cas\\s+positif', 'cas\\s+n[ée]gatif(?:s)?(?:\\s*\\/?\\s*limites)?', 'limites', 'points?\\s+de\\s+r[ée]gression', 'personnes?\\s+concern[ée]es?', 'avant\\s+(?:le\\s+)?changement', 'apr[èe]s\\s+(?:le\\s+)?changement',
+].join('|')
+const SECTION_RE = new RegExp(`\\s*(${SECTION_LABELS})([：:])`, 'gi')
+
 // AI 常把需求/测试路径写成一大段没换行的流水 → 在枚举/分节标签前补换行，便于阅读
 function fmt(t?: string | null) {
   if (!t) return ''
@@ -192,7 +200,7 @@ function fmt(t?: string | null) {
     // a) b) 之类字母枚举前换行 + 缩进（负向 lookbehind 防止误伤词中字母）
     .replace(/([^A-Za-z\n])\s*([a-h][)）])\s*/g, '$1\n　$2 ')
     // 已知分节标签前空一行
-    .replace(/\s*(用户视角[^：:]*|正向\s*case|负向\s*\/?\s*边界|负向|边界|回归点|受影响的人|改动前|改动后)([：:])/g, '\n\n$1$2')
+    .replace(SECTION_RE, '\n\n$1$2')
     .replace(/^\n+/, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()

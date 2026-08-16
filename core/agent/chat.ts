@@ -1,6 +1,7 @@
 import { runClaudeStream } from './claudeCli'
 import { dangerSettingsJson, dangerEnv } from './dangerGuard'
 import { langName } from './lang'
+import { RECOMMENDED_MARKER } from './decisionCard'
 import type { ChildProcess } from 'node:child_process'
 
 // 三个 chat（feature 开发 / 主助手 Global / fix 修复 PR）共用的 claude 运行器 + 共用能力片段。
@@ -36,9 +37,9 @@ export function askUserClause(lang: string): string {
 \`\`\`ask-user
 <your question in one or two lines>
 - <option A>
-- <option B (推荐)>
+- <option B ${RECOMMENDED_MARKER}>
 \`\`\`
-Mark your recommended option with (推荐). Ask sparingly, batch related questions, and never ask about details you can decide yourself. Respond in ${langName(lang)}.`
+Mark your recommended option by appending the literal marker ${RECOMMENDED_MARKER} — keep it verbatim in English even when the rest of your reply is in another language. Ask sparingly, batch related questions, and never ask about details you can decide yourself. Respond in ${langName(lang)}.`
 }
 
 // 统一的 claude chat 运行器：headless `claude -p --permission-mode bypassPermissions`（原生全权限体验）

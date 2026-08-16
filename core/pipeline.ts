@@ -6,10 +6,34 @@ import { prepareWorktree } from './git/worktree'
 import { fetchPrMergeable } from './github/gh'
 import { claudeReviewRunner } from './agent/claudeRunners'
 import { codexReviewRunner } from './agent/codexReview'
+import { pickByLang } from './agent/lang'
 import type { ReviewProvider, ReviewRunner } from './agent/runners'
 
 export function selectReviewRunner(provider?: ReviewProvider): ReviewRunner {
   return provider === 'codex' ? codexReviewRunner : claudeReviewRunner
+}
+
+// 合并冲突那条合成 finding 会入库、在 UI 上显示、之后又被当 prompt 喂回给发评论和自动修复，
+// 所以它必须跟这次审核的工作语言一致。冲突标记 <<<<<<< / ======= / >>>>>>> 三语都保持原样。
+const CONFLICT_FINDING = {
+  zh: {
+    title: '解决与目标分支的合并冲突',
+    problem: '该 PR 与目标分支存在合并冲突，当前无法干净合并。',
+    fix: '把目标分支 merge/rebase 进来并解决所有冲突标记（<<<<<<< / ======= / >>>>>>>）。',
+    stage: '检测到合并冲突，已加入需解决项',
+  },
+  en: {
+    title: 'Resolve merge conflicts with the base branch',
+    problem: 'This PR has merge conflicts with its base branch and cannot be merged as-is.',
+    fix: 'Merge/rebase the base branch in and resolve all conflict markers (<<<<<<< / ======= / >>>>>>>).',
+    stage: 'Merge conflicts detected, added as a finding',
+  },
+  fr: {
+    title: 'Résoudre les conflits de fusion avec la branche cible',
+    problem: 'Cette PR est en conflit avec sa branche cible et ne peut pas être fusionnée telle quelle.',
+    fix: 'Fusionner/rebaser la branche cible puis résoudre tous les marqueurs de conflit (<<<<<<< / ======= / >>>>>>>).',
+    stage: 'Conflits de fusion détectés, ajoutés comme point à traiter',
+  },
 }
 
 // 这里不直接 import db client，避免 core 依赖运行时；由调用方注入 db + 表 + 配置。
@@ -160,18 +184,18 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       // GitHub mergeable 取数失败 / UNKNOWN 不误报。
       try {
         if ((await fetchPrMergeable(ctx.repo, ctx.prNumber)) === 'conflicting' && !taskGone()) {
-          const zh = ctx.lang !== 'en'
+          const c = pickByLang(ctx.lang, CONFLICT_FINDING)
           const n = result.findings.length
           db.insert(schema.findings).values({
             id: nanoid(), reviewId, fid: `F${n + 1}`, severity: 'High',
-            title: zh ? '解决与目标分支的合并冲突' : 'Resolve merge conflicts with the base branch',
+            title: c.title,
             location: null,
-            problem: zh ? '该 PR 与目标分支存在合并冲突，当前无法干净合并。' : 'This PR has merge conflicts with its base branch and cannot be merged as-is.',
+            problem: c.problem,
             detail: null,
-            fix: zh ? '把目标分支 merge/rebase 进来并解决所有冲突标记（<<<<<<< / ======= / >>>>>>>）。' : 'Merge/rebase the base branch in and resolve all conflict markers (<<<<<<< / ======= / >>>>>>>).',
+            fix: c.fix,
             introducedByPr: true, checked: false, notes: null, sortOrder: n, createdAt: now(),
           }).run()
-          emit('stage', zh ? '检测到合并冲突，已加入需解决项' : 'Merge conflicts detected, added as a finding')
+          emit('stage', c.stage)
         }
       } catch { /* mergeable 取数失败不影响审核 */ }
     }

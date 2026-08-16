@@ -4,6 +4,7 @@ import { codexWorkingDirectoryOptions, newCodex, toCodexEffort } from './codexAg
 import { codexUltracodeEffort, getCodexModels } from './codexModels'
 import { shouldBlockCodexCommand, type CodexCommandGuardScope } from './commandGuard'
 import { outputLangClause } from './lang'
+import { RECOMMENDED_MARKER } from './decisionCard'
 import { askUserClause } from './chat'
 import type { ChatRunner } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
@@ -33,9 +34,9 @@ function codexUltracodePrompt(kind: 'fix' | 'feature' | 'global'): string {
 \`\`\`ask-user
 <your question in one or two lines>
 - <option A>
-- <option B (推荐)>
+- <option B ${RECOMMENDED_MARKER}>
 \`\`\`
-  Mark the recommended option with (推荐).`
+  Mark the recommended option by appending the literal marker ${RECOMMENDED_MARKER} — keep it verbatim in English even when the rest of your reply is in another language.`
     : '- If you hit a real blocker or need a product decision, stop and state the exact question clearly; do not invent requirements.'
 
   return `Ultracode mode is enabled for this Codex turn.
@@ -92,9 +93,9 @@ Working principles:
 \`\`\`ask-user
 <your question in one or two lines>
 - <option A>
-- <option B (推荐)>
+- <option B ${RECOMMENDED_MARKER}>
 \`\`\`
-  Mark your recommended option with (推荐). Batch related questions; never ask about implementation details you can decide yourself; keep the number of questions minimal.
+  Mark your recommended option by appending the literal marker ${RECOMMENDED_MARKER} — keep it verbatim in English even when the rest of your reply is in another language. Batch related questions; never ask about implementation details you can decide yourself; keep the number of questions minimal.
 - Do NOT commit or push by default — leave your edits uncommitted in the worktree. EXCEPTION: when the user explicitly asks you to open a PR (e.g. "开 PR" / "open a PR"), then: commit with an English conventional-commit message; push the current branch with \`git push -u origin HEAD\` (NEVER a bare \`git push\` — its upstream is intentionally unset, and never push to ${base}); then run \`gh pr create --base ${base} --title <English> --body <English>\` and report the resulting PR URL.
 ${opts.historyAccess ? `\n${opts.historyAccess}` : ''}
 ${opts.ultracode ? `\n${codexUltracodePrompt('feature')}` : ''}

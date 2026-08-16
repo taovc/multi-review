@@ -1,12 +1,29 @@
-// 工作语言：AI 产出（findings/verdict/修复反馈/总评）默认跟当前实例的 UI locale 走（#16）。
-// 对外发到 GitHub 的内容不走这里——那条路永远翻成专业英文。
-const LANG_NAME: Record<string, string> = { zh: 'Chinese', en: 'English', fr: 'French' }
+// Working language: AI output (findings / verdicts / fix replies / summaries) follows the
+// UI locale of the current instance (#16). Content posted out to GitHub does NOT go through
+// here — that path is always translated into professional English.
+export type LangCode = 'zh' | 'en' | 'fr'
 
-export function langName(code: string | null | undefined): string {
-  return LANG_NAME[(code || '').slice(0, 2)] ?? 'English'
+const LANG_NAME: Record<LangCode, string> = { zh: 'Chinese', en: 'English', fr: 'French' }
+
+// Single normalisation entry point. Accepts full locale codes ('fr-FR') and unknown values.
+// Unknown / missing falls back to 'zh', matching the `getCookie(event, 'mr-locale') || 'zh'`
+// default used by every endpoint, so prompt language and server-side copy never disagree.
+export function resolveLang(code: string | null | undefined): LangCode {
+  const two = (code || '').slice(0, 2).toLowerCase()
+  return two in LANG_NAME ? (two as LangCode) : 'zh'
 }
 
-// 拼进 agent prompt 的输出语言指令
+export function langName(code: string | null | undefined): string {
+  return LANG_NAME[resolveLang(code)]
+}
+
+// Picks the entry matching the working language out of a per-locale table. Use this instead
+// of ad-hoc `lang !== 'en'` ternaries, which silently hand French users Chinese text.
+export function pickByLang<T>(code: string | null | undefined, table: Record<LangCode, T>): T {
+  return table[resolveLang(code)]
+}
+
+// Output-language directive appended to agent prompts.
 export function outputLangClause(code: string | null | undefined): string {
   return `Write ALL human-readable string values in ${langName(code)}.`
 }

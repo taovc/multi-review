@@ -193,7 +193,7 @@ ${JSON.stringify(opts.existing, null, 2)}
 最后**只输出 JSON**（无代码围栏）：
 { "findings": [ { "fid": "F1"(已有则带), "severity": "...", "title": "...", "location": "path:line",
    "problem": "...", "detail": "...", "fix": "...", "introducedByPr": true,
-   "response": { "status": "kept|retracted|adjusted|discuss|new", "text": "中文回应" } } ],
+   "response": { "status": "kept|retracted|adjusted|discuss|new", "text": "<你对审核员的回应>" } } ],
   "logic": "...", "quality": "...", "risk": "...", "conclusion": "本轮复审整体结论",
   "requirement": "...", "testPath": "..." }
 
