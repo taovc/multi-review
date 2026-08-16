@@ -3,6 +3,7 @@ import { schema } from '~core/db/client'
 import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
+import { resolveLang } from '~core/agent/lang'
 
 // Trigger (or re-run) a review task: set it to queued and enqueue it.
 export default defineEventHandler(async (event) => {
@@ -60,7 +61,7 @@ export default defineEventHandler(async (event) => {
     model: rc.model,
     effort: rc.effort,
     codexServiceTier: rc.codexServiceTier,
-    lang: getCookie(event, 'mr-locale') || 'zh',
+    lang: resolveLang(getCookie(event, 'mr-locale')),
     guided: !fresh,
   })
 

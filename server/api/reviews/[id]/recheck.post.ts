@@ -3,6 +3,7 @@ import { schema } from '~core/db/client'
 import { enqueueRecheck } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
+import { resolveLang } from '~core/agent/lang'
 
 // Trigger a re-review (the author pushed again after our comment and we want the AI to check whether it was fixed)
 export default defineEventHandler(async (event) => {
@@ -41,7 +42,7 @@ export default defineEventHandler(async (event) => {
     repo: project.repo, prNumber: review.prNumber, branch,
     defaultBranch: project.defaultBranch, localPath: project.localPath,
     methodology: rc.methodology,
-    reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, provider: rc.provider, model: rc.model, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: getCookie(event, 'mr-locale') || 'zh',
+    reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, provider: rc.provider, model: rc.model, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: resolveLang(getCookie(event, 'mr-locale')),
   })
   return { ok: true, status: 'recheck_requested' }
 })

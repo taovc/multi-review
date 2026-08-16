@@ -7,6 +7,7 @@ import { schema } from '~core/db/client'
 import { runGlobalChatJob, isGlobalChatting, type GlobalChatJobCtx } from '~core/global/pipeline'
 import type { ReviewProvider } from '~core/agent/runners'
 import { resolveGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../../../../utils/globalAgentConfig'
+import { resolveLang } from '~core/agent/lang'
 
 // Send one global session message (fire-and-forget; progress goes over SSE). May carry a cwd (/cd): validated to exist, then persisted on the session.
 const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), projectId: z.string().optional() })
@@ -68,7 +69,7 @@ export default defineEventHandler(async (event) => {
     model: (canReuseSessionConfig ? session.model : null) || providerDefaults.model || '',
     effort: (canReuseSessionConfig ? session.effort : null) || providerDefaults.effort,
     codexServiceTier: provider === defaults.provider ? defaults.codexServiceTier : null,
-    lang: getCookie(event, 'mr-locale') || 'zh',
+    lang: resolveLang(getCookie(event, 'mr-locale')),
     allowDanger: !!allowDanger,
     ultracode: !!ultracode,
     assetsDir: resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets'),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { buildSkillPrompt } from '../core/agent/skillgen'
-import { langName, resolveLang } from '../core/agent/lang'
+import { DEFAULT_LANG, langName, resolveLang } from '../core/agent/lang'
 
 // Output language follows the UI locale (#16 working language): the assertion is anchored on the
 // result of langName(), not on the prompt wording, so rewriting the prompt won't break this test.
@@ -18,11 +18,10 @@ assert.doesNotMatch(buildSkillPrompt({ lang: 'en' }), /Chinese/)
 // A full locale code (e.g. fr-FR) must resolve correctly too.
 assert.match(buildSkillPrompt({ lang: 'fr-FR' }), directive('fr'))
 
-// Default (no lang) → falls back to Chinese, consistent with the other core agents and every
-// endpoint, rather than silently switching to English.
-assert.equal(resolveLang(undefined), 'zh')
-assert.equal(resolveLang('de'), 'zh')
-assert.match(buildSkillPrompt({}), directive('zh'))
+// No lang / an unsupported locale → the repo-wide DEFAULT_LANG, never a per-call-site guess.
+assert.equal(resolveLang(undefined), DEFAULT_LANG)
+assert.equal(resolveLang('de'), DEFAULT_LANG)
+assert.match(buildSkillPrompt({}), directive(DEFAULT_LANG))
 
 // Optimize path: the base content is injected and the language directive is still there.
 const optimize = buildSkillPrompt({ lang: 'fr', baseContent: '# Old skill' })

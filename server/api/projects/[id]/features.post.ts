@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
 import { runFeatureDevelopJob, type FeatureDevelopJobCtx } from '~core/feature/pipeline'
+import { resolveLang } from '~core/agent/lang'
 
 // Create a feature task and start it immediately (single stage: the agent develops directly in an isolated worktree).
 // description = the first message in the drawer / the raw requirement (may contain an issue link).
@@ -25,7 +26,7 @@ export default defineEventHandler(async (event) => {
   const cfg = useRuntimeConfig()
   // Images from issues/PRs land in the data directory (next to dbPath) as an absolute path, so the agent's Read tool can find them.
   const assetsDir = resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets')
-  const lang = getCookie(event, 'mr-locale') || 'zh'
+  const lang = resolveLang(getCookie(event, 'mr-locale'))
   const now = new Date().toISOString()
   const id = nanoid()
   d.insert(schema.featureTasks)
