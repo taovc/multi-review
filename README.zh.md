@@ -1,8 +1,19 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
   <h1>PR Cockpit</h1>
-  <p>本地 AI PR 工作台 · 批量审核、修复对话、Feature 开发与全局助手，Claude/Codex 双 provider</p>
+  <p><b>用 Claude 或 Codex 批量审一个仓库的 PR，全程在本地。</b><br />
+  代码不出本机，跑的是你自己的 Claude/Codex 订阅，<br />
+  你不勾选，就不会有任何东西发到 GitHub。</p>
 </div>
+
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="平台：macOS、Windows、Linux" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Provider：Claude 与 Codex" /></a>
+  <a href="https://nuxt.com"><img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4" /></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5" /></a>
+  <a href="https://github.com/taovc/pr-cockpit/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/taovc/pr-cockpit/desktop-release.yml?branch=main&label=desktop%20build" alt="桌面版构建状态" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="许可证：MIT" /></a>
+</p>
 
 <div align="center">
 
@@ -10,7 +21,35 @@
 
 </div>
 
----
+<div align="center">
+  <img src="docs/media/demo.gif" width="900" alt="拉取仓库 PR 列表，AI 在隔离 worktree 里审核，人工勾选后发成 GitHub inline comment" />
+</div>
+
+## 下载
+
+想快速试一下，用桌面版最省事——不用 clone，不用装工具链。
+
+**[⬇ 下载最新版本](https://github.com/taovc/pr-cockpit/releases/latest)**
+
+| 平台 | 文件 |
+|---|---|
+| macOS（Apple 芯片） | `pr-cockpit-<版本>-arm64.dmg` |
+| Windows（x64） | `pr-cockpit-<版本>-x64.exe` |
+| Linux（x86_64） | `pr-cockpit-<版本>-x86_64.AppImage` |
+
+Intel 芯片的 Mac 目前没有预编译包，请改用[从源码构建](#从源码构建)。
+
+**macOS：安装包没有签名。** 首次打开会被 Gatekeeper 拦下，提示「已损坏」或「来自身份不明的开发者」。绕过方法：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
+```
+
+或者在访达里右键点应用 → **打开** → 在弹窗里再点一次**打开**。只需要做一次。
+
+无论哪种装法，都还需要 `gh auth login` 以及 Claude 或 Codex 的登录，应用才能干活——见[前置](#前置)。
+
+## 它是怎么工作的
 
 不再逐个在终端审 PR，也不把修复和新功能开发散落在多个窗口里：把仓库 PR 拉进来 → AI 在隔离 worktree 里审核、复查或修复 → 你在 Web 里把关 findings、对话、diff、push/PR → 对外内容通过 GitHub 落地。每个项目可以选择 Claude 或 Codex，配置自己的模型、力度和审核方法学。
 
@@ -54,14 +93,19 @@ Nuxt 4 + @nuxt/ui（Tailwind v4）· better-sqlite3 + drizzle · `@anthropic-ai/
 
 ## 前置
 
-- Node ≥ 22、pnpm 9
-- `gh auth login` 已登录（GitHub 读写全走它）
+两种装法都需要：
+
+- `gh auth login` 已登录——GitHub 的每一次读写都走 GitHub CLI
 - Claude provider：本地已登录 `claude`（走订阅）或填 `ANTHROPIC_API_KEY`
 - Codex provider：本地 Codex 已登录，或提供 `OPENAI_API_KEY`
 
-## 安装
+只有从源码构建才需要：
 
-首次运行的分步指南。精简版见下方「起步」。
+- Node ≥ 22、pnpm 9
+
+## 从源码构建
+
+首次从源码运行的分步指南。只是想用的话，直接[下载桌面版](#下载)，不需要任何工具链。精简版见下方「起步」。
 
 **1. 检查前置条件**
 

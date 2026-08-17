@@ -1,8 +1,19 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
   <h1>PR Cockpit</h1>
-  <p>Atelier IA local pour les PR · revue en batch, chat de correction, développement de feature et assistant global avec Claude/Codex</p>
+  <p><b>Passez en revue toute la file de PR d'un dépôt avec Claude ou Codex — en local.</b><br />
+  Votre code ne quitte jamais votre machine, tout tourne sur votre propre abonnement Claude/Codex,<br />
+  et rien n'est publié sur GitHub tant que vous n'avez pas coché la case.</p>
 </div>
+
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Plateformes : macOS, Windows, Linux" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Providers : Claude et Codex" /></a>
+  <a href="https://nuxt.com"><img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4" /></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5" /></a>
+  <a href="https://github.com/taovc/pr-cockpit/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/taovc/pr-cockpit/desktop-release.yml?branch=main&label=desktop%20build" alt="Statut du build desktop" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="Licence : MIT" /></a>
+</p>
 
 <div align="center">
 
@@ -10,9 +21,37 @@
 
 </div>
 
----
+<div align="center">
+  <img src="docs/media/demo.gif" width="900" alt="Importer la file de PR d'un dépôt, la faire auditer par l'IA dans un worktree isolé, valider les findings, les publier sur GitHub en inline comments" />
+</div>
 
-Fini la revue des PR une par une dans le terminal, et fini les corrections dispersées entre plusieurs shells. On importe les PR d'un dépôt → l'IA audite, recheck, corrige ou développe dans des worktrees isolés → tu valides les findings, conversations, diffs, pushs et créations de PR dans le web → GitHub reste la couche externe partagée. Chaque projet peut choisir Claude ou Codex avec son modèle, son effort et sa méthodologie.
+## Téléchargement
+
+Le plus rapide pour essayer : une version desktop — pas de clone, pas de chaîne d'outils.
+
+**[⬇ Télécharger la dernière version](https://github.com/taovc/pr-cockpit/releases/latest)**
+
+| Plateforme | Fichier |
+|---|---|
+| macOS (Apple Silicon) | `pr-cockpit-<version>-arm64.dmg` |
+| Windows (x64) | `pr-cockpit-<version>-x64.exe` |
+| Linux (x86_64) | `pr-cockpit-<version>-x86_64.AppImage` |
+
+Les Mac Intel n'ont pas encore de paquet précompilé — passez par la [compilation depuis les sources](#compilation-depuis-les-sources).
+
+**macOS : l'application n'est pas signée.** Gatekeeper bloquera le premier lancement en signalant une application endommagée ou d'un développeur non identifié. Pour l'ouvrir quand même :
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
+```
+
+Ou clic droit sur l'application dans le Finder → **Ouvrir** → **Ouvrir** dans la boîte de dialogue. Une seule fois suffit.
+
+Dans les deux cas, il faut encore `gh auth login` et une connexion Claude ou Codex pour que l'application serve à quelque chose — voir [Prérequis](#prérequis).
+
+## Comment ça marche
+
+Fini la revue des PR une par une dans le terminal, et fini les corrections dispersées entre plusieurs shells. On importe les PR d'un dépôt → l'IA audite, recheck, corrige ou développe dans des worktrees isolés → vous validez les findings, conversations, diffs, pushs et créations de PR dans le web → GitHub reste la couche externe partagée. Chaque projet peut choisir Claude ou Codex avec son modèle, son effort et sa méthodologie.
 
 ## Fonctionnalités
 
@@ -20,7 +59,7 @@ Fini la revue des PR une par une dans le terminal, et fini les corrections dispe
 - Import direct de la liste des PR via `gh` / GraphQL, avec filtres par auteur, état PR, état de revue, état de correction et état de worktree.
 - Le drawer de droite affiche revue IA, correction, timeline et diff ; descriptions et commentaires sont rendus en markdown.
 - L'IA audite en lecture seule dans un git worktree isolé et produit des findings structurés — sévérité, `path:line`, problème, détail et piste de correction — ainsi qu'un résumé en langage clair de ce que vise la PR et le chemin de test manuel le plus court.
-- La re-revue guidée conserve tes coches/notes ; le recheck après push de l'auteur relit les derniers commits et juge chaque finding.
+- La re-revue guidée conserve vos coches/notes ; le recheck après push de l'auteur relit les derniers commits et juge chaque finding.
 
 **Contrôle humain + publication**
 - Coche par finding « publier en commentaire de PR » + ajout d'une note (la note sert d'instruction d'édition intégrée au commentaire, elle n'est pas divulguée telle quelle).
@@ -55,14 +94,19 @@ Nuxt 4 + @nuxt/ui (Tailwind v4) · better-sqlite3 + drizzle · `@anthropic-ai/cl
 
 ## Prérequis
 
-- Node ≥ 22, pnpm 9
-- `gh auth login` effectué (toutes les lectures/écritures GitHub passent par là)
+Nécessaires quelle que soit la méthode d'installation :
+
+- `gh auth login` effectué — toutes les lectures et écritures GitHub passent par la CLI GitHub
 - Provider Claude : `claude` connecté localement ou `ANTHROPIC_API_KEY`
 - Provider Codex : connexion Codex locale ou `OPENAI_API_KEY`
 
-## Installation
+Nécessaires uniquement pour compiler depuis les sources :
 
-Guide pas-à-pas pour une première mise en route. Voir « Démarrage » plus bas pour la version condensée.
+- Node ≥ 22, pnpm 9
+
+## Compilation depuis les sources
+
+Guide pas-à-pas pour une première mise en route depuis les sources. Si vous voulez simplement utiliser l'application, [téléchargez une version desktop](#téléchargement) : aucune chaîne d'outils requise. Voir « Démarrage » plus bas pour la version condensée.
 
 **1. Vérifier les prérequis**
 

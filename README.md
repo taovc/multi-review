@@ -1,8 +1,19 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
   <h1>PR Cockpit</h1>
-  <p>Local AI PR workbench · batch review, fix chat, feature development and a global assistant with Claude/Codex providers</p>
+  <p><b>Review a repo's whole PR queue with Claude or Codex — locally.</b><br />
+  Your code never leaves your machine, it runs on your own Claude/Codex subscription,<br />
+  and nothing gets posted to GitHub until you check the box.</p>
 </div>
+
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Platform: macOS, Windows, Linux" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Providers: Claude and Codex" /></a>
+  <a href="https://nuxt.com"><img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4" /></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5" /></a>
+  <a href="https://github.com/taovc/pr-cockpit/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/taovc/pr-cockpit/desktop-release.yml?branch=main&label=desktop%20build" alt="Desktop build status" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="License: MIT" /></a>
+</p>
 
 <div align="center">
 
@@ -10,7 +21,35 @@
 
 </div>
 
----
+<div align="center">
+  <img src="docs/media/demo.gif" width="900" alt="Pull a repo's PR queue, review it with AI in an isolated worktree, gate the findings, post them to GitHub as inline comments" />
+</div>
+
+## Download
+
+A desktop build is the fastest way to try it — no clone, no toolchain.
+
+**[⬇ Download the latest release](https://github.com/taovc/pr-cockpit/releases/latest)**
+
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `pr-cockpit-<version>-arm64.dmg` |
+| Windows (x64) | `pr-cockpit-<version>-x64.exe` |
+| Linux (x86_64) | `pr-cockpit-<version>-x86_64.AppImage` |
+
+Intel Macs are not covered by a prebuilt package yet — [build from source](#build-from-source) instead.
+
+**macOS: the app is not code-signed.** Gatekeeper will refuse the first launch and report the app as damaged or from an unidentified developer. To open it anyway:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
+```
+
+Or right-click the app in Finder → **Open** → **Open** in the dialog. You only need to do this once.
+
+You still need `gh auth login` and a Claude or Codex login before the app can do anything — see [Prerequisites](#prerequisites).
+
+## How it works
 
 No more reviewing PRs one at a time in the terminal, and no more scattering fixes and feature work across separate shells. Pull a repo's PRs into the cockpit → the AI reviews, rechecks, fixes, or develops inside isolated worktrees → you gate findings, conversations, diffs, pushes and PR creation in the web UI → GitHub remains the external system of record. Each project can choose Claude or Codex with its own model, effort and review methodology.
 
@@ -55,14 +94,19 @@ Nuxt 4 + @nuxt/ui (Tailwind v4) · better-sqlite3 + drizzle · `@anthropic-ai/cl
 
 ## Prerequisites
 
-- Node ≥ 22, pnpm 9
-- `gh auth login` completed (all GitHub reads/writes go through it)
+Needed whichever way you run it:
+
+- `gh auth login` completed — every GitHub read and write goes through the GitHub CLI
 - Claude provider: local `claude` login or `ANTHROPIC_API_KEY`
 - Codex provider: local Codex login or `OPENAI_API_KEY`
 
-## Installation
+Needed only when building from source:
 
-Step-by-step guide for a first run. See "Getting started" below for the condensed version.
+- Node ≥ 22, pnpm 9
+
+## Build from source
+
+Step-by-step guide for a first run from source. If you only want to use the app, [download a desktop build](#download) instead — it needs no toolchain. See "Getting started" below for the condensed version.
 
 **1. Check the prerequisites**
 
