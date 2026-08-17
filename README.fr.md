@@ -7,8 +7,8 @@
 </div>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Plateformes : macOS, Windows, Linux" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Providers : Claude et Codex" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Plateformes : macOS, Windows, Linux" />
+  <img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Providers : Claude et Codex" />
   <a href="https://nuxt.com"><img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4" /></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5" /></a>
   <a href="https://github.com/taovc/pr-cockpit/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/taovc/pr-cockpit/desktop-release.yml?branch=main&label=desktop%20build" alt="Statut du build desktop" /></a>
@@ -29,7 +29,7 @@
 
 Le plus rapide pour essayer : une version desktop — pas de clone, pas de chaîne d'outils.
 
-**[⬇ Télécharger la dernière version](https://github.com/taovc/pr-cockpit/releases/latest)**
+**[⬇ Télécharger un build](https://github.com/taovc/pr-cockpit/releases)** — les builds sont pour l'instant publiés sous forme de pré-version `nightly` glissante, reconstruite à chaque push sur `main`.
 
 | Plateforme | Fichier |
 |---|---|
@@ -39,15 +39,20 @@ Le plus rapide pour essayer : une version desktop — pas de clone, pas de chaî
 
 Les Mac Intel n'ont pas encore de paquet précompilé — passez par la [compilation depuis les sources](#compilation-depuis-les-sources).
 
-**macOS : l'application n'est pas signée.** Gatekeeper bloquera le premier lancement en signalant une application endommagée ou d'un développeur non identifié. Pour l'ouvrir quand même :
+**Aucun des paquets n'est signé** : les trois plateformes affichent un avertissement au premier lancement.
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
-```
+- **macOS** signale une application endommagée ou d'un développeur non identifié. Retirez l'attribut de quarantaine une fois :
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
+  ```
+  Ou clic droit sur l'application dans le Finder → **Ouvrir** → **Ouvrir** dans la boîte de dialogue.
+- **Windows** affiche la boîte SmartScreen « Windows a protégé votre ordinateur ». Cliquez sur **Informations complémentaires** → **Exécuter quand même**.
+- **Linux** exige que l'AppImage soit exécutable avant de démarrer :
+  ```bash
+  chmod +x pr-cockpit-*-x86_64.AppImage
+  ```
 
-Ou clic droit sur l'application dans le Finder → **Ouvrir** → **Ouvrir** dans la boîte de dialogue. Une seule fois suffit.
-
-Dans les deux cas, il faut encore `gh auth login` et une connexion Claude ou Codex pour que l'application serve à quelque chose — voir [Prérequis](#prérequis).
+Dans tous les cas, il faut encore `gh auth login` et une connexion Claude ou Codex pour que l'application serve à quelque chose — voir [Prérequis](#prérequis).
 
 ## Comment ça marche
 
