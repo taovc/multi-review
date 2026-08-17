@@ -70,7 +70,7 @@ async function createProject() {
       >
         <NuxtLink to="/" class="flex items-center gap-2.5" style="-webkit-app-region: no-drag">
           <img src="/logo.svg" alt="" class="w-6 h-6 rounded-md" />
-          <span class="text-sm font-medium tracking-[0.18em] uppercase">Multi&nbsp;<span class="text-dimmed">Review</span></span>
+          <span class="text-sm font-medium tracking-[0.18em] uppercase">PR&nbsp;<span class="text-dimmed">Cockpit</span></span>
         </NuxtLink>
         <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
           <UpdateCheckButton />

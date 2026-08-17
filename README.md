@@ -1,8 +1,19 @@
 <div align="center">
   <img src="public/logo.svg" width="64" height="64" alt="PR Cockpit" />
   <h1>PR Cockpit</h1>
-  <p>Local AI PR workbench · batch review, fix chat, feature development and a global assistant with Claude/Codex providers</p>
+  <p><b>Review a repo's whole PR queue with Claude or Codex — locally.</b><br />
+  Your code never leaves your machine, it runs on your own Claude/Codex subscription,<br />
+  and nothing gets posted to GitHub until you check the box.</p>
 </div>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Platform: macOS, Windows, Linux" />
+  <img src="https://img.shields.io/badge/providers-Claude%20%C2%B7%20Codex-D97757?logo=anthropic&logoColor=white" alt="Providers: Claude and Codex" />
+  <a href="https://nuxt.com"><img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4" /></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5" /></a>
+  <a href="https://github.com/taovc/pr-cockpit/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/taovc/pr-cockpit/desktop-release.yml?branch=main&label=desktop%20build" alt="Desktop build status" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="License: MIT" /></a>
+</p>
 
 <div align="center">
 
@@ -10,14 +21,47 @@
 
 </div>
 
----
+<div align="center">
+  <img src="docs/media/demo.gif" width="900" alt="Pull a repo's PR queue, review it with AI in an isolated worktree, gate the findings, post them to GitHub as inline comments" />
+</div>
+
+## Download
+
+A desktop build is the fastest way to try it — no clone, no toolchain.
+
+**[⬇ Download a build](https://github.com/taovc/pr-cockpit/releases)** — builds are currently published as a rolling `nightly` pre-release, rebuilt on every push to `main`.
+
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `pr-cockpit-<version>-arm64.dmg` |
+| Windows (x64) | `pr-cockpit-<version>-x64.exe` |
+| Linux (x86_64) | `pr-cockpit-<version>-x86_64.AppImage` |
+
+Intel Macs are not covered by a prebuilt package yet — [build from source](#build-from-source) instead.
+
+**None of the packages are code-signed**, so every platform shows a warning on first launch:
+
+- **macOS** reports the app as damaged or from an unidentified developer. Clear the quarantine flag once:
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/PR Cockpit.app"
+  ```
+  Or right-click the app in Finder → **Open** → **Open** in the dialog.
+- **Windows** shows a SmartScreen "Windows protected your PC" dialog. Click **More info** → **Run anyway**.
+- **Linux** needs the AppImage marked executable before it will start:
+  ```bash
+  chmod +x pr-cockpit-*-x86_64.AppImage
+  ```
+
+You still need `gh auth login` and a Claude or Codex login before the app can do anything — see [Prerequisites](#prerequisites).
+
+## How it works
 
 No more reviewing PRs one at a time in the terminal, and no more scattering fixes and feature work across separate shells. Pull a repo's PRs into the cockpit → the AI reviews, rechecks, fixes, or develops inside isolated worktrees → you gate findings, conversations, diffs, pushes and PR creation in the web UI → GitHub remains the external system of record. Each project can choose Claude or Codex with its own model, effort and review methodology.
 
 ## Features
 
 **PR workbench and review**
-- Pull a repo's PR list through `gh` / GraphQL, then filter by author, PR state, review state, fix state and worktree state.
+- Pull a repo's PR list through `gh` / GraphQL, then filter by author, PR state, review state, fix state and worktree state; the list auto-refreshes on a poll while the page is visible.
 - The right-side drawer shows AI review, fix chat, timeline and diff, with descriptions and comments rendered as markdown.
 - The AI reviews in an isolated read-only git worktree and produces structured findings — severity, `path:line`, problem, detail and fix guidance — plus a plain-language summary of what the PR is trying to do and the shortest manual test path for it.
 - Feedback-guided re-review keeps your checkboxes/notes; author-change recheck reads the latest commits and judges each finding.
@@ -26,7 +70,7 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 - Per-finding checkbox to "post as a PR comment" + a note (the note is woven into the comment as an edit instruction, not leaked verbatim).
 - Pre-publish preview (dry-run, cacheable / regenerable); findings in any working language are rewritten as professional English GitHub comments.
 - Findings whose `path:line` lands on a line the PR actually changed are posted as inline review comments; the rest are collected into a summary section instead of being dropped.
-- Publishing goes through `gh api .../reviews`, with a posting claim and self-healing cleanup of leftover pending reviews.
+- Publishing goes through `gh api .../reviews`, with a posting claim and self-healing cleanup of leftover pending reviews, which prevents duplicate concurrent posts.
 
 **Fix PRs**
 - The fix tab is a persistent chat: the agent edits the PR worktree, but does not commit or push by default.
@@ -35,13 +79,13 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 
 **Feature development and global assistant**
 - The "Feature development" tab creates an isolated feature worktree from a requirement and lets the agent develop in a single native chat loop.
-- Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn.
+- Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn; commit messages and PR title/body are always written in English.
 - The bottom-right global assistant inherits project provider/cwd when available and supports commands such as `/cd`, `/resume` and `/clear`, for ad-hoc troubleshooting and one-off operations.
 
 **Per-project config**
 - Each project chooses Claude or Codex. Review, fix chat, recheck, skill generation and publish-time rewriting follow that provider without mixing sessions or models.
 - Claude models come from the local `claude`; Codex uses preset/default models. Effort, Codex Fast/service tier and methodology are configurable per project.
-- Multiple review skills, one active at a time; AI generation reads the local repo docs and architecture, saves a candidate and lets you diff before activation.
+- Multiple review skills, one active at a time; AI generation reads the local repo docs and architecture, saves a candidate and lets you diff before activation — activation never overwrites the current skill.
 
 **Safety & consistency**
 - Review agents are read-only: tool-level blocking for git writes, file edits, network access and dangerous commands, plus an operating contract and skill linting.
@@ -55,14 +99,19 @@ Nuxt 4 + @nuxt/ui (Tailwind v4) · better-sqlite3 + drizzle · `@anthropic-ai/cl
 
 ## Prerequisites
 
-- Node ≥ 22, pnpm 9
-- `gh auth login` completed (all GitHub reads/writes go through it)
+Needed whichever way you run it:
+
+- `gh auth login` completed — every GitHub read and write goes through the GitHub CLI
 - Claude provider: local `claude` login or `ANTHROPIC_API_KEY`
 - Codex provider: local Codex login or `OPENAI_API_KEY`
 
-## Installation
+Needed only when building from source:
 
-Step-by-step guide for a first run. See "Getting started" below for the condensed version.
+- Node ≥ 22, pnpm 9
+
+## Build from source
+
+Step-by-step guide for a first run from source. If you only want to use the app, [download a desktop build](#download) instead — it needs no toolchain. See "Getting started" below for the condensed version.
 
 **1. Check the prerequisites**
 
