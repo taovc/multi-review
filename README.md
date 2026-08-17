@@ -61,7 +61,7 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 ## Features
 
 **PR workbench and review**
-- Pull a repo's PR list through `gh` / GraphQL, then filter by author, PR state, review state, fix state and worktree state.
+- Pull a repo's PR list through `gh` / GraphQL, then filter by author, PR state, review state, fix state and worktree state; the list auto-refreshes on a poll while the page is visible.
 - The right-side drawer shows AI review, fix chat, timeline and diff, with descriptions and comments rendered as markdown.
 - The AI reviews in an isolated read-only git worktree and produces structured findings — severity, `path:line`, problem, detail and fix guidance — plus a plain-language summary of what the PR is trying to do and the shortest manual test path for it.
 - Feedback-guided re-review keeps your checkboxes/notes; author-change recheck reads the latest commits and judges each finding.
@@ -70,7 +70,7 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 - Per-finding checkbox to "post as a PR comment" + a note (the note is woven into the comment as an edit instruction, not leaked verbatim).
 - Pre-publish preview (dry-run, cacheable / regenerable); findings in any working language are rewritten as professional English GitHub comments.
 - Findings whose `path:line` lands on a line the PR actually changed are posted as inline review comments; the rest are collected into a summary section instead of being dropped.
-- Publishing goes through `gh api .../reviews`, with a posting claim and self-healing cleanup of leftover pending reviews.
+- Publishing goes through `gh api .../reviews`, with a posting claim and self-healing cleanup of leftover pending reviews, which prevents duplicate concurrent posts.
 
 **Fix PRs**
 - The fix tab is a persistent chat: the agent edits the PR worktree, but does not commit or push by default.
@@ -79,13 +79,13 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 
 **Feature development and global assistant**
 - The "Feature development" tab creates an isolated feature worktree from a requirement and lets the agent develop in a single native chat loop.
-- Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn.
+- Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn; commit messages and PR title/body are always written in English.
 - The bottom-right global assistant inherits project provider/cwd when available and supports commands such as `/cd`, `/resume` and `/clear`, for ad-hoc troubleshooting and one-off operations.
 
 **Per-project config**
 - Each project chooses Claude or Codex. Review, fix chat, recheck, skill generation and publish-time rewriting follow that provider without mixing sessions or models.
 - Claude models come from the local `claude`; Codex uses preset/default models. Effort, Codex Fast/service tier and methodology are configurable per project.
-- Multiple review skills, one active at a time; AI generation reads the local repo docs and architecture, saves a candidate and lets you diff before activation.
+- Multiple review skills, one active at a time; AI generation reads the local repo docs and architecture, saves a candidate and lets you diff before activation — activation never overwrites the current skill.
 
 **Safety & consistency**
 - Review agents are read-only: tool-level blocking for git writes, file edits, network access and dangerous commands, plus an operating contract and skill linting.

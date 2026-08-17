@@ -61,7 +61,7 @@ Fini la revue des PR une par une dans le terminal, et fini les corrections dispe
 ## Fonctionnalités
 
 **Atelier PR et revue**
-- Import direct de la liste des PR via `gh` / GraphQL, avec filtres par auteur, état PR, état de revue, état de correction et état de worktree.
+- Import direct de la liste des PR via `gh` / GraphQL, avec filtres par auteur, état PR, état de revue, état de correction et état de worktree ; la liste se rafraîchit automatiquement par polling tant que la page est visible.
 - Le drawer de droite affiche revue IA, correction, timeline et diff ; descriptions et commentaires sont rendus en markdown.
 - L'IA audite en lecture seule dans un git worktree isolé et produit des findings structurés — sévérité, `path:line`, problème, détail et piste de correction — ainsi qu'un résumé en langage clair de ce que vise la PR et le chemin de test manuel le plus court.
 - La re-revue guidée conserve vos coches/notes ; le recheck après push de l'auteur relit les derniers commits et juge chaque finding.
@@ -70,22 +70,22 @@ Fini la revue des PR une par une dans le terminal, et fini les corrections dispe
 - Coche par finding « publier en commentaire de PR » + ajout d'une note (la note sert d'instruction d'édition intégrée au commentaire, elle n'est pas divulguée telle quelle).
 - Aperçu avant publication (dry-run, pouvant être mis en cache / régénéré) ; les findings rédigés dans n'importe quelle langue de travail sont réécrits en anglais professionnel pour GitHub.
 - Les findings dont le `path:line` tombe sur une ligne réellement modifiée par la PR sont publiés en commentaires inline ; les autres sont regroupés dans une section de synthèse au lieu d'être perdus.
-- La publication passe par `gh api .../reviews`, avec claim `posting` et auto-réparation des pending reviews résiduels.
+- La publication passe par `gh api .../reviews`, avec claim `posting` et auto-réparation des pending reviews résiduels, ce qui évite les publications concurrentes en double.
 
 **Correction de PR**
 - Le tab de correction est un chat persistant : l'agent modifie le worktree de la PR, mais ne commit/push pas par défaut.
 - « Commit and upload » affiche d'abord le diff et un message de commit conventionnel éditable ; la confirmation seule lance `git add/commit/push`.
-- Stop/reprise, logs d'exécution, cartes de décision, un interrupteur ultracode qui pousse le tour vers un effort de raisonnement supérieur, et un interrupteur de commandes dangereuses sont pris en charge.
+- Stop/reprise, logs d'exécution dépliables, cartes de décision, un interrupteur ultracode qui pousse le tour vers un effort de raisonnement supérieur, et un interrupteur de commandes dangereuses sont pris en charge.
 
 **Développement de feature et assistant global**
 - Le tab « Feature development » crée un worktree de feature isolé depuis un besoin et laisse l'agent développer dans une boucle de chat native.
-- Les vrais points de décision sont rendus en cartes `ask-user`. L'ouverture de PR est une action explicite qui autorise commit, push et `gh pr create` pour ce tour.
+- Les vrais points de décision sont rendus en cartes `ask-user`. L'ouverture de PR est une action explicite qui autorise commit, push et `gh pr create` pour ce tour ; les messages de commit et le titre/corps de la PR sont toujours rédigés en anglais.
 - L'assistant global en bas à droite hérite du provider/cwd du projet quand c'est possible et prend en charge `/cd`, `/resume`, `/clear`, pour le diagnostic ponctuel et les opérations one-off.
 
 **Configuration par projet**
 - Chaque projet choisit Claude ou Codex. Revue, correction, recheck, génération de skill et réécriture de publication suivent ce provider sans mélanger sessions ni modèles.
 - Les modèles Claude viennent du `claude` local ; Codex utilise des modèles prédéfinis/par défaut. Effort, Codex Fast/service tier et méthodologie sont configurables par projet.
-- Plusieurs skills de revue, une seule active à la fois ; la génération IA lit les docs et l'architecture du dépôt local, crée un candidat et permet une comparaison diff avant activation.
+- Plusieurs skills de revue, une seule active à la fois ; la génération IA lit les docs et l'architecture du dépôt local, crée un candidat et permet une comparaison diff avant activation — l'activation n'écrase jamais la skill courante.
 
 **Sécurité & cohérence**
 - Les agents de revue restent en lecture seule : blocage outil des écritures git, edits de fichiers, accès réseau et commandes dangereuses, avec contrat d'opération et lint de skill.

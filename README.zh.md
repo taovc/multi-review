@@ -56,7 +56,7 @@ Intel 芯片的 Mac 目前没有预编译包，请改用[从源码构建](#从�
 
 ## 它是怎么工作的
 
-不再逐个在终端审 PR，也不把修复和新功能开发散落在多个窗口里：把仓库 PR 拉进来 → AI 在隔离 worktree 里审核、复查或修复 → 你在 Web 里把关 findings、对话、diff、push/PR → 对外内容通过 GitHub 落地。每个项目可以选择 Claude 或 Codex，配置自己的模型、力度和审核方法学。
+不再逐个在终端审 PR，也不把修复和新功能开发散落在多个窗口里：把仓库 PR 拉进来 → AI 在隔离 worktree 里审核、复查、修复或开发新功能 → 你在 Web 里把关 findings、对话、diff、push/PR → 对外内容通过 GitHub 落地。每个项目可以选择 Claude 或 Codex，配置自己的模型、力度和审核方法学。
 
 ## 功能支持
 
@@ -68,13 +68,14 @@ Intel 芯片的 Mac 目前没有预编译包，请改用[从源码构建](#从�
 
 **人工把关 + 发布**
 - 逐条 finding 勾选「发到 PR comment」+ 写 note（note 作为编辑指令融进评论，不原样泄漏）
-- 发布前预览（dry-run，可缓存/重新生成）；任意工作语言的 findings 都会转成专业英文 GitHub 评论；行级评论挂到代码行，挂不上的进汇总
+- 发布前预览（dry-run，可缓存/重新生成）；任意工作语言的 findings 都会转成专业英文 GitHub 评论
+- `path:line` 落在 PR 实际改动行上的 finding 发成行级 inline 评论，挂不上的收进汇总段落，不会被丢掉
 - 发布走 `gh api .../reviews`，带 posting 认领和 pending review 自愈，避免并发重复发
 
 **修复 PR**
 - 修复 tab 是常驻对话：agent 在 PR worktree 里改代码，但默认不 commit/push
 - 「提交并上传」先生成 diff + conventional commit message 预览，用户确认后才 `git add/commit/push`
-- 支持停止、继续对话、可展开运行日志、决策卡、ultracode 后台开关和危险命令开关
+- 支持停止、继续对话、可展开运行日志、决策卡、ultracode 开关（后台注入，把该轮拉到更高推理力度）和危险命令开关
 
 **Feature 开发与全局助手**
 - 项目页有「Feature 开发」tab：输入需求后创建隔离 feature worktree，agent 单段式开发，遇到关键决策用 `ask-user` 卡片让你拍板
