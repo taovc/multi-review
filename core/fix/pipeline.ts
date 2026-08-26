@@ -15,6 +15,11 @@ import { makeEmit } from '../streaming/emit'
 import { sessionFields } from '../agent/session'
 import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchReviewsCount } from '../github/gh'
+import { ensureSessionRun, finishRun, recordRunUsage } from '../runs/store'
+import { claudeHost } from '../host/claudeHost'
+import { runChannel } from '../host/recorder'
+import { fixSystemPrompt } from '../agent/fixer'
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { ChildProcess } from 'node:child_process'
 import type { ChatRunner, ReviewProvider } from '../agent/runners'
 
@@ -37,9 +42,12 @@ const activeChats = new Map<string, ChildProcess>()
 const activeChatStops = new Map<string, () => void>()
 const stopRequested = new Set<string>() // stopped by the user → the job marks that turn stopped (not error)
 export function isChatting(fixId: string): boolean {
-  return chatLocks.has(fixId)
+  return chatLocks.has(fixId) || claudeHost.isBusy(fixId)
 }
 export function stopFixChat(fixId: string): boolean {
+  // Host-backed (claude) turn: interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
+  if (claudeHost.isBusy(fixId)) { stopRequested.add(fixId); void claudeHost.interrupt(fixId); return true }
+  if (chatLocks.has(fixId) && !activeChatStops.has(fixId) && !activeChats.has(fixId)) { stopRequested.add(fixId); return true }
   const stop = activeChatStops.get(fixId)
   if (stop) {
     stopRequested.add(fixId)
@@ -83,6 +91,7 @@ export type FixJobCtx = {
   codexServiceTier?: string | null
   lang: string
   allowDanger?: boolean // let commands past the dangerous-command guard (including git push / gh pr create); blocked by default
+  permissionMode?: PermissionMode // claude host: default / acceptEdits / plan / bypassPermissions (fix defaults to bypassPermissions + danger guard)
   ultracode?: boolean // activate ultracode in the background (the prefix is injected by the runner)
   assetsDir: string // root directory for downloaded issue/PR images (unified image reading)
 }
@@ -92,7 +101,7 @@ function helpers(ctx: FixJobCtx) {
   const { db, schema, fixId } = ctx
   const now = () => new Date().toISOString()
   // Events go on the realtime bus + into fix_events (to backfill the history log when the task is opened, same as the review drawer). Channel = the bare fixId.
-  const emit = makeEmit({ channel: fixId, now, db, eventTable: schema.fixEvents, fkField: 'fixId', fkValue: fixId })
+  const emit = makeEmit({ channel: runChannel(fixId), now, db, eventTable: schema.fixEvents, fkField: 'fixId', fkValue: fixId })
   const row = () => db.select().from(schema.fixes).where(eq(schema.fixes.id, fixId)).get()
   return { now, emit, row }
 }
@@ -164,6 +173,12 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       const wt = await ensureWorktree(ctx, h)
       const fix = h.row()
       let stopped = false
+      // Run record (id = fix id): one row per conversation, usage appended per turn.
+      ensureSessionRun(db, schema, {
+        id: fixId, kind: 'session', subkind: 'session', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+        projectId: fix?.projectId ?? null, workspaceType: 'pr_worktree', workspacePath: wt.path, prNumber: ctx.prNumber, branch: ctx.branch,
+        model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, title: fix?.title ?? null,
+      })
       // Image reading (unified): a GitHub issue/PR referenced in the reviewer's message → fetch the body + download the images (including private attachments, using the gh token) → feed in the paths.
       let agentMessage = message
       try {
@@ -191,6 +206,39 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
         return undefined
       })
       try {
+        if (ctx.provider === 'claude') {
+          // Session host: one live query per fix; permission prompts / AskUserQuestion / plan approval surface as RunEvents.
+          const needsHandoff = !!fix?.codexSessionId && !resumeId
+          const text = `${ctx.ultracode ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
+          await claudeHost.ensure({
+            runId: fixId, kind: 'session', cwd: wt.path, model: ctx.model, effort: ctx.effort, resume: resumeId,
+            permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: fixSystemPrompt(ctx.lang, await conflictHint(wt.path)),
+            db, schema,
+          })
+          if (stopRequested.has(fixId)) throw new Error('stopped before the turn started')
+          const r = await claudeHost.send(fixId, text, {
+            turnId: asstId,
+            onSessionId: (sessionId) => {
+              newSessionId = sessionId
+              db.update(schema.fixes).set({ ...saveSession(sessionId), updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
+            },
+            onText: (t) => {
+              acc += t
+              const n = new Date().getTime()
+              if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') }
+              h.emit('text', t)
+            },
+          })
+          acc = r.text || acc
+          newSessionId = r.sessionId ?? newSessionId
+          recordRunUsage(db, schema, fixId, r.usage, asstId)
+          if (r.usage?.costUsd != null) {
+            const prev = h.row()?.costUsd ?? 0
+            db.update(schema.fixes).set({ costUsd: prev + r.usage.costUsd }).where(eq(schema.fixes.id, fixId)).run()
+          }
+          if (r.interrupted || stopRequested.has(fixId)) stopped = true
+          else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
+        } else {
         const chatRunner = selectChatRunner(ctx.provider)
         const r = await chatRunner.runChat({
           cwd: wt.path,
@@ -220,11 +268,17 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
         })
         acc = r.text || acc
         newSessionId = r.sessionId ?? newSessionId
+        recordRunUsage(db, schema, fixId, r.usage, asstId)
+        if (r.usage?.costUsd != null) {
+          const prev = h.row()?.costUsd ?? 0
+          db.update(schema.fixes).set({ costUsd: prev + r.usage.costUsd }).where(eq(schema.fixes.id, fixId)).run()
+        }
         if (ctx.provider === 'codex' && headBeforeCodex) {
           const headAfterCodex = await currentHead(wt.path)
           if (headAfterCodex && headAfterCodex !== headBeforeCodex) {
             throw new Error('Codex chat changed git HEAD. Codex must leave commits to the existing upload path; inspect the worktree before retrying.')
           }
+        }
         }
       } catch (e) {
         if (stopRequested.has(fixId)) stopped = true // stopped by the user, not an error
@@ -244,6 +298,7 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       const cur = h.row()
       const nextStatus = computeFixNextStatus({ dirty: up.dirty, ahead: up.ahead, currentStatus: cur?.status })
       db.update(schema.fixes).set({ status: nextStatus, error: null, ...saveSession(newSessionId), updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
+      finishRun(db, schema, fixId, { status: stopped ? 'stopped' : 'idle' })
       h.emit('chat', stopped ? 'stopped' : 'done')
     } catch (e) {
       activeChats.delete(fixId)
@@ -254,6 +309,7 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       // Both providers behave the same on error: the fix is marked error and the message is persisted so it is visible (the turn is error too).
       // Changes already written to disk stay in the worktree, and the error state still allows uploading (UPLOADABLE includes error).
       db.update(schema.fixes).set({ status: 'error', error: errMsg, updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
+      finishRun(db, schema, fixId, { status: 'error', error: errMsg })
       h.emit('error', errMsg)
     }
   } finally {

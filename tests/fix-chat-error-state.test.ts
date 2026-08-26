@@ -2,11 +2,10 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { claudeChatRunner } from '../core/agent/claudeRunners'
+import { claudeHost } from '../core/host/claudeHost'
 import { runFixChatJob } from '../core/fix/pipeline'
 import * as schema from '../core/db/schema'
 import type { FixJobCtx } from '../core/fix/pipeline'
-import type { FixChatOptions } from '../core/agent/fixer'
 
 const wt = mkdtempSync(path.join(tmpdir(), 'pr-cockpit-chat-error-'))
 
@@ -71,15 +70,16 @@ const ctx: FixJobCtx = {
   lang: 'zh',
 }
 
-const originalRunChat = claudeChatRunner.runChat
-claudeChatRunner.runChat = async (_opts: FixChatOptions) => {
-  throw new Error('claude runtime failed')
-}
+const originalEnsure = claudeHost.ensure
+const originalSend = claudeHost.send
+claudeHost.ensure = (async () => ({})) as any
+claudeHost.send = (async () => { throw new Error('claude runtime failed') }) as any
 
 try {
   await runFixChatJob(ctx, 'please fix it')
 } finally {
-  claudeChatRunner.runChat = originalRunChat
+  claudeHost.ensure = originalEnsure
+  claudeHost.send = originalSend
   rmSync(wt, { recursive: true, force: true })
 }
 

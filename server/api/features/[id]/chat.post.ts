@@ -14,12 +14,13 @@ import { resolveLang } from '~core/agent/lang'
 const Body = z.object({
   message: z.string().min(1).max(20000),
   allowDanger: z.boolean().default(false),
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).optional(),
   ultracode: z.boolean().default(false),
 })
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const { message, allowDanger, ultracode } = Body.parse((await readBody(event)) || {})
+  const { message, allowDanger, ultracode, permissionMode } = Body.parse((await readBody(event)) || {})
   const cfg = useRuntimeConfig()
   const d = db()
   const task = d.select().from(schema.featureTasks).where(eq(schema.featureTasks.id, id)).get()
@@ -34,7 +35,7 @@ export default defineEventHandler(async (event) => {
     db: d, schema, taskId: id,
     localPath: project.localPath, reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, defaultBranch: project.defaultBranch, repo: project.repo,
     provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: resolveLang(task.lang),
-    allowDanger, ultracode, assetsDir,
+    allowDanger, ultracode, permissionMode, assetsDir,
   }
   void runFeatureDevelopJob(ctx, message).catch((e) => console.error('[feature-develop] job failed', e))
   return { ok: true }

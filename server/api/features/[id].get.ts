@@ -1,6 +1,8 @@
 import { asc, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { isFeatureBusy } from '~core/feature/pipeline'
+import { claudeHost } from '~core/host/claudeHost'
+import { pendingPromptsFor } from '~core/host/pending'
 
 // feature task detail: task + chat turns + run events. Self-heals orphaned streaming turns (so a restart/kill doesn't leave it stuck "in progress").
 export default defineEventHandler((event) => {
@@ -28,12 +30,24 @@ export default defineEventHandler((event) => {
     }
   }
 
-  const events = d
+  const legacyEvents = d
     .select({ ts: schema.featureEvents.ts, kind: schema.featureEvents.kind, message: schema.featureEvents.message })
     .from(schema.featureEvents)
     .where(eq(schema.featureEvents.taskId, id))
     .orderBy(asc(schema.featureEvents.ts))
     .all()
 
-  return { task, turns, events, busy: isFeatureBusy(id) }
+  // Host state: pending permission / question / plan prompts + the live session's mode and slash-command palette.
+  const pending = pendingPromptsFor(d, schema, id)
+  const info = claudeHost.info(id)
+  const run = d.select().from(schema.runs).where(eq(schema.runs.id, id)).get()
+  // Host-backed turns log their tool calls / prompts in run_events (RunEvents), not in the legacy event table.
+  const hostEvents = d.select({ ts: schema.runEvents.ts, kind: schema.runEvents.kind, message: schema.runEvents.message }).from(schema.runEvents).where(eq(schema.runEvents.runId, id)).all().filter((e) => !!e.message)
+  const events = [...legacyEvents, ...hostEvents].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+  return {
+    task, turns, events, busy: isFeatureBusy(id),
+    host: { live: claudeHost.status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
+    pending,
+    run: run ? { costUsd: run.costUsd, costSource: run.costSource, inputTokens: run.inputTokens, outputTokens: run.outputTokens, numTurns: run.numTurns } : null,
+  }
 })

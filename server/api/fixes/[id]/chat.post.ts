@@ -8,11 +8,11 @@ import { resolveLang } from '~core/agent/lang'
 // Chat workspace: once a fix task exists you can chat with it and let the AI edit code right away,
 // without first running a batch fix pass. A single session can carry the follow-up polishing.
 // Allowed in open/ready/error/pushed; only one chat at a time per fix.
-const Body = z.object({ message: z.string().min(1).max(8000), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional() })
+const Body = z.object({ message: z.string().min(1).max(8000), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).optional() })
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const { message, allowDanger, ultracode } = Body.parse((await readBody(event)) || {})
+  const { message, allowDanger, ultracode, permissionMode } = Body.parse((await readBody(event)) || {})
   const cfg = useRuntimeConfig()
   const d = db()
 
@@ -44,6 +44,7 @@ export default defineEventHandler(async (event) => {
     lang: resolveLang(fix.lang),
     allowDanger: !!allowDanger,
     ultracode: !!ultracode,
+    permissionMode,
     assetsDir: resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets'),
   }
   // fire-and-forget: long-running job, progress goes over SSE; errors are already caught and persisted inside the job.

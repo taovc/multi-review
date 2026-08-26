@@ -12,11 +12,12 @@ const Body = z.object({
   description: z.string().min(1).max(20000),
   allowDanger: z.boolean().optional(),
   ultracode: z.boolean().optional(),
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).optional(),
 })
 
 export default defineEventHandler(async (event) => {
   const projectId = getRouterParam(event, 'id')!
-  const { description, allowDanger, ultracode } = Body.parse((await readBody(event)) || {})
+  const { description, allowDanger, ultracode, permissionMode } = Body.parse((await readBody(event)) || {})
   const d = db()
   const project = d.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get()
   if (!project) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
@@ -59,7 +60,7 @@ export default defineEventHandler(async (event) => {
     db: d, schema, taskId: id,
     localPath: project.localPath, reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, defaultBranch: project.defaultBranch, repo: project.repo,
     provider: rc.provider, model: rc.model, translateModel: rc.translateModel, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang,
-    allowDanger: !!allowDanger, ultracode: !!ultracode, assetsDir,
+    allowDanger: !!allowDanger, ultracode: !!ultracode, permissionMode, assetsDir,
   }
   void runFeatureDevelopJob(ctx, description).catch((e) => console.error('[feature-develop] job failed', e))
   return { id }

@@ -66,7 +66,7 @@ export default defineEventHandler(async (event) => {
     ])
     // Merge commit: use git's merge message and skip the AI generation; ordinary changes: AI summary of the diff
     const { merging, msg: mergeMsg } = await mergeState()
-    const genMsg = !dirty ? '' : merging ? (mergeMsg || `Merge into ${fix.branch}`) : await genCommitMessage(cfg.translateModel as string, diff)
+    const genMsg = !dirty ? '' : merging ? (mergeMsg || `Merge into ${fix.branch}`) : await genCommitMessage(cfg.translateModel as string, diff, wt)
     // needsCommit=false: no uncommitted changes, the local HEAD is merely ahead of the remote (e.g. the last push failed) → just re-push, no commit message needed
     return { dryRun: true, diff, truncated, message: genMsg, needsCommit: dirty, isMerge: merging, ...stat }
   }
@@ -112,7 +112,7 @@ export default defineEventHandler(async (event) => {
           await git(['commit', '--no-edit']) // use the MERGE_MSG git prepared (Merge ... into HEAD)
         } else {
           const { diff } = await fixChangesDiff(wt).catch(() => ({ diff: '' }))
-          await git(['commit', '-m', await genCommitMessage(cfg.translateModel as string, diff)])
+          await git(['commit', '-m', await genCommitMessage(cfg.translateModel as string, diff, wt)])
         }
       }
     }

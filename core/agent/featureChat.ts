@@ -10,7 +10,7 @@ import type { FixChatOptions, FixChatResult } from './fixer'
 
 export type FeatureChatOptions = FixChatOptions & { baseBranch?: string }
 
-function featureSystemPrompt(lang: string, baseBranch?: string): string {
+export function featureSystemPrompt(lang: string, baseBranch?: string): string {
   const base = baseBranch || 'the default branch'
   return `You are a senior engineer implementing a feature directly inside an isolated git worktree on a NEW feature branch (created from ${base}). The current directory IS that worktree — implement what the user asks by editing files directly. You have the full toolset and full permissions (bash, git, gh, network, tests).
 

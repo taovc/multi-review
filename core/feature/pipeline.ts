@@ -10,6 +10,11 @@ import { sessionFields } from '../agent/session'
 import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchIssueContext } from '../github/issueAssets'
 import { findPrByBranch } from '../github/gh'
+import { ensureSessionRun, finishRun, recordRunUsage } from '../runs/store'
+import { claudeHost } from '../host/claudeHost'
+import { runChannel } from '../host/recorder'
+import { featureSystemPrompt } from '../agent/featureChat'
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
 
@@ -18,7 +23,8 @@ import type { ReviewProvider } from '../agent/runners'
 // works directly and asks the user with an ```ask-user block at real decision points (→ awaiting).
 // When the user clicks "open a PR", the agent commits/pushes/opens the PR itself. After each turn we query gh
 // by branch to sync the PR status. SSE channel f:<taskId>.
-export const featureChan = (id: string) => `f:${id}`
+// Pipeline events and the session host's RunEvents share one channel per task.
+export const featureChan = (id: string) => runChannel(id)
 
 // Marker that the agent is waiting on the user: the output contains an ```ask-user fenced block → this turn
 // ends in "waiting for your confirmation".
@@ -71,6 +77,9 @@ async function ensureFeatureWorktree(p: {
 }
 
 export function stopFeatureImpl(taskId: string): boolean {
+  // Host-backed (claude) turn: interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
+  if (claudeHost.isBusy(taskId)) { featureStopRequested.add(taskId); void claudeHost.interrupt(taskId); return true }
+  if (jobLocks.has(taskId) && !featureStops.has(taskId) && !activeFeatureChats.has(taskId)) { featureStopRequested.add(taskId); return true }
   const stop = featureStops.get(taskId)
   if (stop) { featureStopRequested.add(taskId); stop(); return true }
   const cp = activeFeatureChats.get(taskId)
@@ -105,6 +114,7 @@ export type FeatureDevelopJobCtx = {
   codexServiceTier?: string | null
   lang: string
   allowDanger?: boolean // the user enabled "allow dangerous commands" / clicked "open a PR" → let dangerous commands past the guard (incl. git push / gh pr create)
+  permissionMode?: PermissionMode // claude host: default / acceptEdits / plan / bypassPermissions (feature defaults to bypassPermissions + danger guard)
   ultracode?: boolean // activate ultracode in the background; the stored message stays clean, the provider runner decides how to apply it
   assetsDir: string // root dir for downloaded issue/PR images (used when fetching the issue on the first turn)
 }
@@ -167,6 +177,12 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
 
     let stopped = false
     let newSessionId: string | null = (ctx.provider === 'codex' ? t0?.codexSessionId : t0?.sessionId) ?? null
+    // Run record (id = task id): one row per feature conversation, usage appended per turn.
+    ensureSessionRun(db, schema, {
+      id: taskId, kind: 'session', subkind: 'session', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+      projectId: t0?.projectId ?? null, workspaceType: 'branch_worktree', workspacePath: wtPath, branch: task()?.branch ?? null,
+      model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, title: t0?.title ?? null,
+    })
     const historyAccess = await prepareAgentHistoryAccess({
       db, schema, scope: 'feature', id: taskId, cwd: wtPath, limit: 80,
     }).catch((e) => {
@@ -175,6 +191,36 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     })
     try {
       const cur = task()
+      if (ctx.provider === 'claude') {
+        // Session host: one live query per task; permission prompts / AskUserQuestion / plan approval surface as RunEvents.
+        const resumeId = cur?.sessionId ?? null
+        const needsHandoff = !!cur?.codexSessionId && !resumeId
+        const text = `${ctx.ultracode ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
+        await claudeHost.ensure({
+          runId: taskId, kind: 'session', cwd: wtPath, model: ctx.model, effort: ctx.effort, resume: resumeId,
+          permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: featureSystemPrompt(ctx.lang, cur?.baseBranch || ctx.defaultBranch),
+          db, schema,
+        })
+        if (featureStopRequested.has(taskId)) throw new Error('stopped before the turn started')
+        const r = await claudeHost.send(taskId, text, {
+          turnId: asstId,
+          onSessionId: (sid) => {
+            newSessionId = sid
+            db.update(schema.featureTasks).set({ ...saveSession(sid), updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
+          },
+          onText: (t2) => {
+            acc += t2
+            const n = new Date().getTime()
+            if (n - lastWrite > 400) { lastWrite = n; flush('streaming') }
+            emit('text', t2)
+          },
+        })
+        acc = r.text || acc
+        newSessionId = r.sessionId ?? newSessionId
+        recordRunUsage(db, schema, taskId, r.usage, asstId)
+        if (r.interrupted || featureStopRequested.has(taskId)) stopped = true
+        else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
+      } else {
       const r = await runFeatureChat(ctx.provider, {
         cwd: wtPath,
         model: ctx.model,
@@ -204,6 +250,8 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
       })
       acc = r.text || acc
       newSessionId = r.sessionId ?? newSessionId
+      recordRunUsage(db, schema, taskId, r.usage, asstId)
+      }
     } catch (e) {
       if (featureStopRequested.has(taskId)) stopped = true
       else throw e
@@ -231,6 +279,7 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
       .set({ status: nextStatus, error: null, ...prPatch, ...saveSession(newSessionId), updatedAt: now() })
       .where(eq(schema.featureTasks.id, taskId))
       .run()
+    finishRun(db, schema, taskId, { status: stopped ? 'stopped' : nextStatus === 'awaiting' ? 'awaiting_input' : 'idle' })
     emit('chat', stopped ? 'stopped' : 'done')
   } catch (e) {
     activeFeatureChats.delete(taskId)
@@ -239,6 +288,7 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     flush('error')
     const errMsg = (e as Error).message
     db.update(schema.featureTasks).set({ status: 'error', error: errMsg, updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
+    finishRun(db, schema, taskId, { status: 'error', error: errMsg })
     emit('error', errMsg)
   } finally {
     jobLocks.delete(taskId)
