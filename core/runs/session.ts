@@ -19,6 +19,7 @@ import { hasUploadable } from '../fix/changes'
 import { computeFixNextStatus } from '../fix/status'
 import { cockpitBus } from '../events'
 import { finishRun, recordRunUsage, setRunSession } from './store'
+import { projectDirNameFor } from '../host/options'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { ReviewProvider } from '../agent/runners'
 
@@ -224,6 +225,7 @@ export async function runSessionTurn(ctx: SessionTurnCtx): Promise<void> {
       permissionMode: ctx.permissionMode ?? (run.permissionMode as PermissionMode | null) ?? defaultMode, allowDanger: ctx.allowDanger,
       systemAppend: systemPromptFor(run, ctx, { conflict: run.workspaceType === 'pr_worktree' ? await conflictHint(cwd) : undefined }),
       chrome: run.workspaceType === 'cwd' ? ctx.chrome : undefined, codexServiceTier, ultracode: ctx.ultracode, guardScope,
+      projectDirName: run.workspaceType !== 'cwd' ? projectDirNameFor(ctx.project?.localPath) : undefined, // one memory dir per project, not per worktree
       db, schema,
     })
     if (stopRequested.has(runId)) throw new Error('stopped before the turn started')

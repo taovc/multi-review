@@ -732,6 +732,7 @@
     "terminal": "Terminal",
     "fork": "Fork",
     "forkHint": "Start a new session that continues from this one",
+    "automationPaused": "Turn stopped — automation for this PR is paused (you took over)",
     "forked": "Forked into a new session"
   },
   "dashboard": {

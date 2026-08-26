@@ -9,8 +9,9 @@ export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id')!
   const run = getRunOr404(id)
   const ok = stopRun(id)
-  if (run.workspaceType === 'pr_worktree' && run.projectId && run.prNumber) {
-    try { pausePr(db(), schema, run.projectId, run.prNumber, new Date().toISOString()) } catch { /* a failed pause never blocks the stop */ }
+  let automationPaused = false
+  if (ok && run.workspaceType === 'pr_worktree' && run.projectId && run.prNumber) {
+    try { pausePr(db(), schema, run.projectId, run.prNumber, new Date().toISOString()); automationPaused = true } catch { /* a failed pause never blocks the stop */ }
   }
-  return { ok, stopped: ok }
+  return { ok, stopped: ok, automationPaused }
 })

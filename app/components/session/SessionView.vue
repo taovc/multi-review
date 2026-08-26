@@ -6,6 +6,7 @@
 // The run is created lazily on the first message (POST /api/runs); the parent learns the id through `created`.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 import { useRunHost, PERMISSION_MODES, type Pending, type HostInfo, type PermissionMode, type RunSummary } from '../../composables/useRunHost'
+import RunEventCard, { type StreamEvent } from './RunEventCard.vue' // explicit: the auto-import name of a nested component is prefixed (SessionRunEventCard)
 
 type WorkspaceType = 'pr_worktree' | 'branch_worktree' | 'cwd'
 const props = withDefaults(defineProps<{
@@ -15,7 +16,7 @@ const props = withDefaults(defineProps<{
   prNumber?: number | null
   active?: boolean
 }>(), { projectId: null, prNumber: null, active: true })
-const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string]; clear: []; history: [] }>()
+const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string]; clear: []; history: []; fork: [] }>()
 const { t, te, locale } = useI18n()
 const toast = useToast()
 
@@ -24,7 +25,7 @@ type Detail = {
   run: any
   project: { id: string; name: string; repo: string; defaultBranch: string } | null
   turns: Turn[]
-  events: { ts: string; kind: string; message: string | null }[]
+  events: { seq: number; ts: string; turnId: string | null; kind: string; message: string | null; data: any }[]
   busy: boolean
   host?: HostInfo
   pending?: Pending[]
@@ -39,6 +40,21 @@ const view = ref<'chat' | 'preview'>('chat')
 const input = ref('')
 const liveAssistant = ref('')
 const logLines = ref<string[]>([])
+// Host events rendered as cards under the assistant turn they belong to (persisted ones from the detail, live ones from SSE).
+const CARD_KINDS = new Set(['tool_use', 'thinking', 'task', 'compaction', 'permission_denied', 'note', 'error'])
+const cards = ref<StreamEvent[]>([])
+let cardSeq = 0
+function addCard(kind: string, data: any, turnId: string | null, ts = new Date().toISOString()) {
+  if (kind === 'tool_result') {
+    const c = cards.value.find((x) => x.kind === 'tool_use' && x.data?.id === data?.id)
+    if (c) c.result = data
+    return
+  }
+  if (!CARD_KINDS.has(kind)) return
+  cards.value.push({ key: `${turnId ?? '-'}:${++cardSeq}`, kind, data, ts, parent: data?.parent ?? null, turnId } as StreamEvent & { turnId: string | null })
+}
+function cardsFor(turnId: string): StreamEvent[] { return cards.value.filter((c) => (c as any).turnId === turnId) }
+const streamingTurnId = computed(() => { const ts = data.value?.turns ?? []; const last = ts[ts.length - 1]; return last && last.role === 'assistant' && last.status === 'streaming' ? last.id : null })
 const busy = ref('') // '' | 'delete' | 'rmwt' | 'upload' | 'send'
 const pendingCwd = ref<string | null>(null)
 const { confirming } = useInlineConfirm() // '' | 'delete' | 'rmwt'
@@ -137,6 +153,11 @@ async function load() {
   data.value = detail
   host.applyDetail({ host: detail.host, pending: detail.pending, run: detail.summary ?? null })
   if (!logLines.value.length && detail.events?.length) logLines.value = detail.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
+  // Rebuild the cards from the persisted log on first load (live cards keep accumulating afterwards); live cards that
+  // arrived before the streaming turn was known attach to it now.
+  if (!cards.value.length && detail.events?.length) for (const e of detail.events) if (e.data) addCard(e.kind, e.data, e.turnId, e.ts)
+  const tid = streamingTurnId.value ?? [...detail.turns].reverse().find((t) => t.role === 'assistant')?.id ?? null
+  if (tid) for (const c of cards.value as Array<StreamEvent & { turnId: string | null }>) if (!c.turnId) c.turnId = tid
   emit('changed')
 }
 function openSSE() {
@@ -148,7 +169,7 @@ function openSSE() {
     if (id !== currentRunId.value) return
     try {
       const e = JSON.parse(ev.data)
-      if (e.kind === 'run') { host.onRunEvent(e.data); return }
+      if (e.kind === 'run') { host.onRunEvent(e.data); addCard(e.data?.t, e.data, streamingTurnId.value ?? liveTurnId); return }
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
       if (e.message && e.kind !== 'chat' && e.kind !== 'status') pushLog(e.message)
       if (['done', 'status', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
@@ -157,7 +178,8 @@ function openSSE() {
   es.onopen = () => { if (data.value) load() }
 }
 function closeSSE() { es?.close(); es = null }
-function resetLocal() { data.value = null; liveAssistant.value = ''; logLines.value = []; otherAnswer.value = ''; confirming.value = ''; view.value = 'chat'; host.reset() }
+let liveTurnId: string | null = null // the assistant turn a live event belongs to before the detail refresh catches up
+function resetLocal() { data.value = null; liveAssistant.value = ''; logLines.value = []; cards.value = []; liveTurnId = null; otherAnswer.value = ''; confirming.value = ''; view.value = 'chat'; host.reset() }
 
 // A PR tab opened without a known run id (deep link, filtered list): the PR's existing session is looked up so the
 // conversation continues instead of showing an empty panel.
@@ -199,6 +221,7 @@ const LOCAL_COMMANDS = [
   { cmd: '/clear', desc: () => t('global.cmd.clear'), only: 'cwd' },
   { cmd: '/resume', desc: () => t('global.cmd.resume'), only: 'cwd' },
   { cmd: '/copy', desc: () => t('global.cmd.copy'), only: null },
+  { cmd: '/fork', desc: () => t('session.forkHint'), only: 'cwd' },
   { cmd: '/cd', desc: () => t('global.cmd.cd'), only: 'cwd' },
 ] as const
 const slashOpen = computed(() => input.value.startsWith('/') && !input.value.includes('\n'))
@@ -221,6 +244,7 @@ async function handleSlash(raw: string): Promise<boolean> {
   switch (cmd) {
     case '/clear': if (!isCwd.value) return false; input.value = ''; emit('clear'); return true
     case '/resume': if (!isCwd.value) return false; input.value = ''; emit('history'); return true
+    case '/fork': if (!isCwd.value) return false; input.value = ''; emit('fork'); return true
     case '/copy': {
       input.value = ''
       const txt = lastAssistantText()
@@ -262,6 +286,7 @@ async function send(overrideMsg?: string, opts: { allowDanger?: boolean } = {}):
     await $fetch(`/api/runs/${id}/messages`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: opts.allowDanger ?? allowDanger.value, ultracode: ultracodeOn.value, permissionMode: mode.value, projectId: props.projectId ?? undefined } })
     pendingCwd.value = null
     await load()
+    liveTurnId = streamingTurnId.value
     return true
   } catch (e: any) {
     if (overrideMsg == null) input.value = msg
@@ -274,8 +299,11 @@ function onComposerKey(e: KeyboardEvent) {
 }
 async function stop() {
   if (!currentRunId.value) return
-  try { await $fetch(`/api/runs/${currentRunId.value}/stop`, { method: 'POST' }); await load() }
-  catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+  try {
+    const r = await $fetch<{ automationPaused?: boolean }>(`/api/runs/${currentRunId.value}/stop`, { method: 'POST' })
+    if (r.automationPaused) notify(t('session.automationPaused'), true) // stopping = taking over the PR; say so instead of silently pausing
+    await load()
+  } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
 }
 // Feature: ask the agent to open / update the PR itself (commit, push -u, gh pr create); the danger switch is forced on for that turn.
 function openPr() { void send(t('feature.openPrMsg'), { allowDanger: true }) }
@@ -418,6 +446,10 @@ const canOpenIde = computed(() => !!data.value?.workspace.exists)
             <span v-if="turn.status === 'streaming'" class="animate-pulse">▍</span>
             <span v-if="turn.status === 'stopped'" class="text-[10px] text-dimmed ml-1">· {{ $t('fix.stoppedTag') }}</span>
             <span v-else-if="turn.status === 'error'" class="text-[10px] text-dimmed ml-1">· {{ $t('common.failed') }}</span>
+          </div>
+          <!-- What the agent did during this turn: tool calls (with results), thinking, subagents, compaction, denials -->
+          <div v-if="turn.role === 'assistant' && cardsFor(turn.id).length" class="mt-1.5 space-y-1 max-w-[92%]">
+            <RunEventCard v-for="c in cardsFor(turn.id)" :key="c.key" :ev="c" />
           </div>
         </div>
 

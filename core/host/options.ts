@@ -41,6 +41,10 @@ export function projectDirNameFor(localPath: string | null | undefined): string 
   return localPath.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
+// Optional USD cap per review-family execution (REVIEW_MAX_BUDGET_USD, e.g. 5). 0/unset = no cap; the CLI ends the turn with
+// error_max_budget_usd when it is hit, which the pipeline reports as a failed review.
+const REVIEW_MAX_BUDGET_USD = Number(process.env.REVIEW_MAX_BUDGET_USD || 0)
+
 export type ReviewOptionsSpec = {
   cwd: string
   model?: string
@@ -74,6 +78,7 @@ export function buildReviewOptions(spec: ReviewOptionsSpec): Options {
     // list the servers connect and the verdict gates them per call.
     ...(mcpAllow.length ? {} : { mcpServers: {}, strictMcpConfig: true }),
     maxTurns: spec.maxTurns,
+    ...(REVIEW_MAX_BUDGET_USD > 0 ? { maxBudgetUsd: REVIEW_MAX_BUDGET_USD } : {}),
     ...(spec.outputSchema ? { outputFormat: { type: 'json_schema', schema: spec.outputSchema } } : {}),
     env,
     ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),

@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { getDb, schema } from '~core/db/client'
 import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
+import { recoverHostState } from '~core/host/recover'
 
 const pexec = promisify(execFile)
 
@@ -131,16 +132,10 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] 上传启动恢复失败', e)
   }
 
-  // 2.5) Session host: a prompt parked in a dead process can never be answered → expired; runs the dead process left
-  // 'running' / 'awaiting_input' → stopped (the transcript is on disk, the next message resumes the native session).
+  // 2.5) Session host: prompts parked in the dead process expire, runs it left running/awaiting → stopped (core/host/recover.ts).
   try {
-    // Only rows older than this boot: the plugin runs async and a request can create a run/prompt before it gets here.
-    const ts = now()
-    const expired = d.update(schema.permissionRequests).set({ status: 'expired', resolvedAt: ts })
-      .where(and(eq(schema.permissionRequests.status, 'pending'), lt(schema.permissionRequests.createdAt, bootAt))).run()
-    const settled = d.update(schema.runs).set({ status: 'stopped', error: null, updatedAt: ts })
-      .where(and(inArray(schema.runs.status, ['running', 'awaiting_input']), lt(schema.runs.updatedAt, bootAt))).run()
-    if (expired.changes || settled.changes) console.log(`[recover] 会话宿主：${expired.changes} 个待回答的权限请求已过期，${settled.changes} 个运行标记为 stopped`)
+    const r = recoverHostState(d, schema, bootAt, now())
+    if (r.expiredPrompts || r.stoppedRuns) console.log(`[recover] 会话宿主：${r.expiredPrompts} 个待回答的权限请求已过期，${r.stoppedRuns} 个运行标记为 stopped`)
   } catch (e) {
     console.error('[recover] 会话宿主启动恢复失败', e)
   }

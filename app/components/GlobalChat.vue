@@ -122,7 +122,7 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
 
         <SessionView
           v-else :run-id="sessionId" workspace-type="cwd" :project-id="currentProjectId" :active="open"
-          @created="(id) => { sessionId = id; void refreshTitle() }" @changed="refreshTitle" @deleted="newSession" @clear="newSession" @history="showHistory"
+          @created="(id) => { sessionId = id; void refreshTitle() }" @changed="refreshTitle" @deleted="newSession" @clear="newSession" @history="showHistory" @fork="fork"
         />
       </div>
     </template>

@@ -10,6 +10,8 @@ import { getRunOr404 } from '../../utils/runContext'
 
 // Session run detail: the run row, its turns, the event log (host RunEvents with a message), host state and pending
 // prompts, plus workspace facts (worktree on disk, uploadable changes, PR links).
+function safeParse(s: string): unknown { try { return JSON.parse(s) } catch { return null } }
+
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const d = db()
@@ -45,7 +47,13 @@ export default defineEventHandler(async (event) => {
     hasUnpushed = up.dirty || up.ahead
     stat = s
   }
-  const events = d.select({ ts: schema.runEvents.ts, kind: schema.runEvents.kind, message: schema.runEvents.message }).from(schema.runEvents).where(eq(schema.runEvents.runId, id)).all().filter((e) => !!e.message)
+  // Event log for the stream: tool calls/results, thinking, tasks, compaction, denials, notes and errors, with their payload
+  // (bounded at write time) so the UI can render cards; text deltas were never persisted.
+  const CARD_KINDS = new Set(['tool_use', 'tool_result', 'thinking', 'task', 'compaction', 'permission_denied', 'note', 'error'])
+  const events = d.select({ seq: schema.runEvents.seq, ts: schema.runEvents.ts, turnId: schema.runEvents.turnId, kind: schema.runEvents.kind, message: schema.runEvents.message, data: schema.runEvents.data })
+    .from(schema.runEvents).where(eq(schema.runEvents.runId, id)).orderBy(asc(schema.runEvents.seq)).all()
+    .filter((e) => CARD_KINDS.has(e.kind) || !!e.message)
+    .map((e) => ({ seq: e.seq, ts: e.ts, turnId: e.turnId, kind: e.kind, message: e.message, data: e.data ? safeParse(e.data) : null }))
   const pending = pendingPromptsFor(d, schema, id)
   const info = hostOf(id).info(id)
   const prUrl = run.prUrl || (project && run.prNumber ? `https://github.com/${project.repo}/pull/${run.prNumber}` : null)

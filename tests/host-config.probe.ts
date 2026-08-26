@@ -14,11 +14,11 @@ const report = await probeAgent(cwd, true, true)
 const names = (xs: Array<{ name: string }>) => xs.map((x) => x.name)
 
 console.log(`probe ${report.at} in ${report.ms} ms (${Date.now() - t0} ms wall)`)
-console.log('commands:', report.commands.length, '· skills:', report.skills.length, '· agents:', report.agents.length, '· mcp:', names(report.mcp).join(', '))
+console.log('commands:', report.commands.length, '· agents:', report.agents.length, '· chrome:', report.chromeTransport, '· mcp:', names(report.mcp).join(', '))
 if (report.error) console.log('error:', report.error)
 
 assert.ok(report.commands.length > 20, 'the CLI should report its built-in and user commands')
-const pluginCommands = report.commands.filter((c) => c.name.includes(':'))
+const pluginCommands = report.commands.filter((c) => c.origin === 'plugin' || c.name.includes(':'))
 assert.ok(pluginCommands.length > 0, `enabled plugins should contribute namespaced commands (got ${report.commands.length} commands, none namespaced)`)
 const chrome = report.mcp.find((s) => s.name === 'claude-in-chrome')
 assert.ok(chrome, 'claude-in-chrome should be listed when the probe passes --chrome')

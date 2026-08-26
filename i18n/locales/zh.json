@@ -732,6 +732,7 @@
     "terminal": "终端",
     "fork": "Fork",
     "forkHint": "以这个会话为起点开一个新会话",
+    "automationPaused": "已停止——这个 PR 的自动化已暂停（你接管了）",
     "forked": "已 fork 出新会话"
   },
   "dashboard": {

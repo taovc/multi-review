@@ -36,6 +36,7 @@ export type ProbeReport = {
   account: { subscriptionType?: string; apiProvider?: string; organization?: string }
   mcp: { name: string; status: string; version?: string }[]
   context: { name: string; tokens: number; deferred: boolean }[]
+  chromeTransport: 'extraArgs' | 'off' // how Claude in Chrome is attached (the only tier in use; the plugin-path / spawn fallbacks were never needed)
 }
 export type RunKindOverride = { kind: 'session' | 'review' | 'helper'; settingSources: string; systemPrompt: string; permissionMode: string; hooks: string; mcp: string; tools: string; denyRules: string[] }
 export type AgentConfigReport = {
@@ -165,7 +166,7 @@ export async function probeAgent(cwd: string, chrome: boolean, refresh = false):
   const p = (async (): Promise<ProbeReport> => {
     const started = Date.now()
     const abort = new AbortController()
-    const report: ProbeReport = { cwd, at: new Date().toISOString(), ms: 0, error: null, commands: [], agents: [], models: [], account: {}, mcp: [], context: [] }
+    const report: ProbeReport = { cwd, at: new Date().toISOString(), ms: 0, error: null, commands: [], agents: [], models: [], account: {}, mcp: [], context: [], chromeTransport: chrome ? 'extraArgs' : 'off' }
     const never = (async function* () { await new Promise<void>((r) => abort.signal.addEventListener('abort', () => r(), { once: true })) })()
     let q: ReturnType<typeof query> | null = null
     try {
