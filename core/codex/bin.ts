@@ -61,6 +61,9 @@ function codexFromPath(binName: string): string | undefined {
   return undefined
 }
 
+// The @openai/codex version this build was tested against; the app-server handshake warns when a different binary answers.
+export const EXPECTED_CODEX_VERSION = '0.149.1'
+
 let _codexBin: string | null | undefined
 let _codexBinSource: 'env' | 'packaged' | 'vendored' | 'path' | null = null
 

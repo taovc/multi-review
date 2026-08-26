@@ -1,4 +1,4 @@
-import { resolveCodexExecutable } from './bin'
+import { EXPECTED_CODEX_VERSION, codexExecutableSource, resolveCodexExecutable } from './bin'
 import { codexCliConfig } from '../agent/codexAgent'
 import { CodexRpc } from './rpc'
 
@@ -16,6 +16,7 @@ export type ThreadHandler = {
 export type CodexServer = {
   rpc: CodexRpc
   version: string | null // parsed from the initialize userAgent ("client/x.y.z (...)")
+  versionMismatch: string | null // set when the binary is not the pinned @openai/codex version
   codexHome: string | null
   startedAt: number
 }
@@ -84,8 +85,11 @@ async function spawnServer(): Promise<CodexServer> {
     const init = await rpc.request('initialize', { clientInfo: { name: 'pr-cockpit', version: CLIENT_VERSION }, capabilities: { experimentalApi: true } }, INIT_TIMEOUT_MS)
     rpc.notify('initialized', {})
     state.failures = 0
-    const server: CodexServer = { rpc, version: versionFromUserAgent(init?.userAgent), codexHome: typeof init?.codexHome === 'string' ? init.codexHome : null, startedAt: Date.now() }
-    console.log(`[codex] app-server ${server.version ?? '?'} ready (pid ${rpc.pid})`)
+    const version = versionFromUserAgent(init?.userAgent)
+    const versionMismatch = version && version !== EXPECTED_CODEX_VERSION ? `codex ${version} answered, build pinned to ${EXPECTED_CODEX_VERSION} — protocol drift possible (regenerate with pnpm codex:types after bumping @openai/codex)` : null
+    const server: CodexServer = { rpc, version, versionMismatch, codexHome: typeof init?.codexHome === 'string' ? init.codexHome : null, startedAt: Date.now() }
+    console.log(`[codex] app-server ${server.version ?? '?'} ready (pid ${rpc.pid}) · binary ${codexExecutableSource() ?? '?'}: ${bin}`)
+    if (versionMismatch) console.warn(`[codex] ${versionMismatch}`)
     return server
   } catch (e) {
     rpc.close()
@@ -102,9 +106,9 @@ export async function getCodexServer(): Promise<CodexServer> {
   return state.starting
 }
 
-export function codexServerInfo(): { running: boolean; pid: number | undefined; version: string | null; codexHome: string | null; threads: number; failures: number } {
+export function codexServerInfo(): { running: boolean; pid: number | undefined; version: string | null; versionMismatch: string | null; codexHome: string | null; threads: number; failures: number } {
   const s = state.server
-  return { running: !!(s && s.rpc.alive), pid: s?.rpc.pid, version: s?.version ?? null, codexHome: s?.codexHome ?? null, threads: state.threads.size, failures: state.failures }
+  return { running: !!(s && s.rpc.alive), pid: s?.rpc.pid, version: s?.version ?? null, versionMismatch: s?.versionMismatch ?? null, codexHome: s?.codexHome ?? null, threads: state.threads.size, failures: state.failures }
 }
 
 export function registerThread(threadId: string, h: ThreadHandler): () => void {

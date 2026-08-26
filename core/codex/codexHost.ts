@@ -14,6 +14,8 @@ import { answerPending, insertPromptRow, resolvePromptRow, type PendingPrompt } 
 import { makeRunEmitter, setRunStatus } from '../host/recorder'
 import { setRunSession } from '../runs/store'
 import type { PromptAnswer, RunEvent, RunSpec, SessionHost, TurnCallbacks, TurnResult } from '../host/types'
+import type { ThreadStartParams } from './protocol/v2/ThreadStartParams'
+import type { TurnStartParams } from './protocol/v2/TurnStartParams'
 
 // The Codex session host: one app-server thread per live run, multiplexed on the single `codex app-server` process
 // (core/codex/appServer.ts). Same surface as the Claude host — ensure / send / interrupt / prompts / mode — so the
@@ -113,7 +115,7 @@ class CodexHost implements SessionHost {
     const unattended = spec.kind === 'review' || spec.kind === 'helper' // read-only kinds: MCP only through the allow list
     const effort = await effortFor(spec)
     const instructions = developerInstructions(spec)
-    const base = {
+    const base: Partial<ThreadStartParams> = {
       cwd: spec.cwd,
       ...(spec.model ? { model: spec.model } : {}),
       ...(spec.codexServiceTier ? { serviceTier: spec.codexServiceTier } : {}),
@@ -428,7 +430,7 @@ class CodexHost implements SessionHost {
       // Sandbox / approvals follow the CURRENT mode and danger switch (both can change between turns).
       live.policy = policyFor(live.spec)
       const effort = await effortFor(live.spec)
-      const params = {
+      const params: TurnStartParams = {
         threadId: live.threadId,
         input: [{ type: 'text', text, text_elements: [] }],
         sandboxPolicy: live.policy.sandbox,

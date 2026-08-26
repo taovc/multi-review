@@ -26,6 +26,9 @@ export type RpcEvents = {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000
+// -32001 = the server is overloaded / applying backpressure: retry a few times before giving up.
+const OVERLOADED = -32001
+const RETRY_DELAYS_MS = [300, 1000, 3000]
 
 export class CodexRpc extends EventEmitter<RpcEvents> {
   private child: ChildProcess
@@ -97,7 +100,19 @@ export class CodexRpc extends EventEmitter<RpcEvents> {
     this.child.stdin!.write(JSON.stringify(obj) + '\n')
   }
 
-  request<T = any>(method: string, params: unknown = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  async request<T = any>(method: string, params: unknown = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.requestOnce<T>(method, params, timeoutMs)
+      } catch (e) {
+        const delay = RETRY_DELAYS_MS[attempt]
+        if (!(e instanceof RpcError) || e.code !== OVERLOADED || delay === undefined || !this._alive) throw e
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+
+  private requestOnce<T = any>(method: string, params: unknown = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
     if (!this._alive) return Promise.reject(new Error(`${method}: app-server is not running`))
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {

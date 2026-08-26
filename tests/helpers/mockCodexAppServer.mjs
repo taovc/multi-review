@@ -18,6 +18,7 @@ function serverRequest(method, params) {
 let threadN = 0
 let turnN = 0
 let itemN = 0
+let flakyLeft = null
 const threads = new Map()
 let usageTotal = { totalTokens: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -120,6 +121,9 @@ rl.on('line', (line) => {
     }
     case 'turn/interrupt': { const th = threads.get(p.threadId); if (th) th.interrupted = true; return reply({}) }
     case 'thread/compact/start': reply({}); return notify('thread/compacted', { threadId: p.threadId, turnId: null })
+    case 'flaky': { flakyLeft = flakyLeft ?? Number(p.failures ?? 2); if (flakyLeft > 0) { flakyLeft--; return fail(-32001, 'overloaded') } flakyLeft = null; return reply({ ok: true, attempts: Number(p.failures ?? 2) + 1 }) }
+    case 'echo': return reply({ echo: p })
+    case 'bad': return fail(-32000, 'bad request')
     case 'skills/list': return reply({ data: [{ cwd: p.cwds?.[0] ?? '', skills: [{ name: 'mock-skill', description: '', path: '/tmp/mock-skill', scope: 'user', enabled: true }], errors: [] }] })
     case 'config/read': return reply({ config: { model: 'mock-1', approval_policy: 'on-request', sandbox_mode: 'workspace-write' }, origins: { model: { layer: { type: 'user' } } }, layers: null })
     case 'mcpServerStatus/list': return reply({ data: [{ name: 'mock-mcp', authStatus: 'unsupported', tools: { a: {} } }], nextCursor: null })

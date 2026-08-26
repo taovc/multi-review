@@ -73,6 +73,7 @@ async function build(cwd: string): Promise<CodexConfigReport> {
       const win = (w: any) => (w && typeof w.usedPercent === 'number' ? { usedPercent: w.usedPercent, windowMinutes: Number(w.windowDurationMins ?? 0), resetsAt: typeof w.resetsAt === 'number' ? new Date(w.resetsAt * 1000).toISOString() : null } : null)
       base.rateLimits = { plan: rl.planType ?? null, primary: win(rl.primary), secondary: win(rl.secondary) }
     }
+    if (base.server.versionMismatch) errors.push(base.server.versionMismatch)
     if (errors.length) base.error = errors.join('; ')
   } catch (e) {
     base.error = (e as Error).message
