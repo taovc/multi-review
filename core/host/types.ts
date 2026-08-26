@@ -22,6 +22,7 @@ export type RunEvent =
   | { t: 'local_command'; content: string }
   | { t: 'reset'; sessionId: string | null } // the CLI cleared the conversation (/clear): new transcript, cost baseline resets
   | { t: 'turn_done'; subtype: string; isError: boolean; resultText: string; costUsd: number | null; durationMs: number; numTurns: number; usage: ProviderUsage | null }
+  | { t: 'note'; text: string } // provider-side notices that are neither errors nor output (Codex warnings, plan updates, hooks)
   | { t: 'error'; message: string }
 
 export type PromptKind = 'tool' | 'question' | 'plan'
@@ -34,18 +35,42 @@ export type PromptAnswer =
 
 export type RunSpec = {
   runId: string
-  kind: 'session' | 'probe'
+  kind: 'session' | 'probe' | 'review' | 'helper' // review/helper: one-shot unattended kinds (Codex host only; Claude reviews use buildReviewOptions)
   cwd: string
   model?: string
   effort?: string
-  resume?: string | null // native claude session id to resume
+  resume?: string | null // native claude session id / codex thread id to resume
   permissionMode?: PermissionMode
   allowDanger?: boolean // let dangerous Bash commands run without a prompt (live-read on every call)
   systemAppend?: string
   chrome?: boolean // pass --chrome so the Claude in Chrome MCP connects
   projectDirName?: string // CLAUDE_CODE_PROJECT_DIR_NAME (unifies memory across worktrees)
+  // ── Codex-only knobs (ignored by the Claude host) ──
+  codexServiceTier?: string | null
+  ultracode?: boolean // raise the reasoning effort + prepend the deep-work instructions
+  guardScope?: 'fix' | 'feature' | 'global' // post-execution git/GitHub mutation guard for unattended (bypass) turns
+  allowNetwork?: boolean // review kind: let gh read PR metadata (writes are still declined before they run)
+  outputSchema?: unknown // review kind: JSON Schema constraining the final message
   db?: any
   schema?: any
+}
+
+// What every provider host exposes to the pipelines and the /api/runs endpoints. Claude and Codex implement it with
+// their own process model; callers pick one with hostFor(provider) / hostOf(runId) (core/host/index.ts).
+export interface SessionHost {
+  ensure(spec: RunSpec): Promise<unknown>
+  send(runId: string, text: string, cb?: TurnCallbacks & { turnId?: string | null }): Promise<TurnResult>
+  interrupt(runId: string): Promise<boolean>
+  setMode(runId: string, mode: PermissionMode): Promise<boolean>
+  setAllowDanger(runId: string, allow: boolean): void
+  answerPrompt(runId: string, promptId: string, a: PromptAnswer): boolean
+  pendingPrompts(runId: string): Array<{ id: string; kind: PromptKind; toolName: string; input: Record<string, unknown> }>
+  status(runId: string): 'busy' | 'waiting_prompt' | 'idle' | 'closed'
+  isBusy(runId: string): boolean
+  info(runId: string): { sessionId: string | null; init: Extract<RunEvent, { t: 'init' }> | null; permissionMode: PermissionMode | null }
+  close(runId: string, reason?: string): Promise<boolean>
+  closeAll(): Promise<boolean>
+  liveRunIds(): string[]
 }
 
 // Live-only conveniences the pipeline wants per turn.
@@ -85,6 +110,7 @@ export function eventMessage(e: RunEvent): string | null {
     case 'init': return `session ${e.model} · ${e.permissionMode} · ${e.slashCommands.length} commands`
     case 'local_command': return e.content.slice(0, 160)
     case 'reset': return 'conversation cleared'
+    case 'note': return e.text.slice(0, 160)
     default: return null
   }
 }
