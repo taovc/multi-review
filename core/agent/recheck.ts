@@ -1,8 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { withContract, reviewCanUseTool, ISOLATED } from './guard'
+import { withContract } from './guard'
+import { buildReviewOptions } from '../host/options'
+import type { ReviewHostOptions } from './review'
 import { salvageJson } from './jsonSalvage'
 import { outputLangClause, resolveLang } from './lang'
+import { usageFromClaudeResult } from './usage'
+import type { ProviderUsage } from '../runs/types'
 
 export const RecheckSchema = z.object({
   rechecks: z
@@ -37,7 +41,7 @@ export type RecheckResult = z.infer<typeof RecheckSchema>
 
 export type ExistingFinding = { fid: string; title: string; location: string | null; problem: string | null; fix: string | null; notes: string | null }
 
-export type RecheckAgentOptions = {
+export type RecheckAgentOptions = ReviewHostOptions & {
   cwd: string
   repo: string
   prNumber: number
@@ -96,23 +100,15 @@ ${outputLangClause(resolveLang(opts.lang))}
 ⚠️ Strictly valid JSON: **never use an unescaped ASCII double quote \`"\`** inside text/problem and similar fields; always quote with 「」 or backticks \`, never ASCII double quotes.`
 }
 
-export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number }> {
+export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }> {
   const prompt = buildRecheckPrompt(opts)
   const stream = query({
     prompt,
-    options: {
-      model: opts.model,
-      ...(opts.effort ? { effort: opts.effort as any } : {}),
-      systemPrompt: withContract(opts.methodology),
-      cwd: opts.cwd,
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      canUseTool: reviewCanUseTool,
-      ...ISOLATED,
-      maxTurns: 40,
-    },
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
   })
   let text = ''
   let costUsd = 0
+  let usage: ProviderUsage | null = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -125,8 +121,9 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
     } else if (msg.type === 'result') {
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
+      usage = usageFromClaudeResult(msg, opts.model)
     }
   }
-  const result = RecheckSchema.parse(await salvageJson(text, opts.model))
-  return { result, costUsd }
+  const result = RecheckSchema.parse(await salvageJson(text, opts.model, opts.cwd))
+  return { result, costUsd, usage }
 }

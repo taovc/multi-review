@@ -1,4 +1,4 @@
-import { runClaude } from './claudeCli'
+import { runHelperText } from '../host/helpers'
 
 function tryParse(s: string): { ok: true; value: unknown } | { ok: false } {
   try {
@@ -13,7 +13,7 @@ function tryParse(s: string): { ok: true; value: unknown } | { ok: false } {
 // Note: repairing is mechanical work — always use the fast model + low effort, it **must not follow the project's heavy model/effort** (otherwise even fixing a bit of JSON takes minutes and gets killed by the timeout).
 // timeoutMs: timeout of the fallback repair call. Defaults to 120s (enough for review/recheck); paths like feature plan, where
 // "the analysis runs for ages and the JSON is only repaired at the very end", pass something longer, so half a day of analysis isn't cut off by the 120s limit at the last step and the whole round wasted.
-export async function salvageJson(raw: string, _model?: string, timeoutMs = 120_000): Promise<unknown> {
+export async function salvageJson(raw: string, _model?: string, cwd?: string, timeoutMs = 120_000): Promise<unknown> {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
 
   let r = tryParse(cleaned)
@@ -28,7 +28,7 @@ export async function salvageJson(raw: string, _model?: string, timeoutMs = 120_
   // Fallback: fast model + low effort to repair it into valid JSON
   const target = m ? m[0] : cleaned
   const prompt = `The following is meant to be a single JSON object but is malformed (likely unescaped quotes/newlines inside string values). Fix it into ONE valid JSON object. Output ONLY the JSON — no code fences, no commentary. Preserve all content; just make it valid JSON.\n\n${target}`
-  const stdout = await runClaude(['--print', '--model', 'sonnet', '--effort', 'low'], { input: prompt, timeout: timeoutMs })
+  const stdout = await runHelperText({ prompt, cwd: cwd || process.cwd(), model: 'sonnet', effort: 'low', timeoutMs })
   const fixed = String(stdout).trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
   const fm = fixed.match(/\{[\s\S]*\}/)
   const final = tryParse(fm ? fm[0] : fixed)

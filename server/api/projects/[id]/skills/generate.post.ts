@@ -4,8 +4,13 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { generateSkill } from '~core/agent/skillgen'
 import { generateSkillCodex } from '~core/agent/codexSkill'
+import { getAgentSettings } from '~core/agent/settings'
+import { projectDirNameFor } from '~core/host/options'
 import { resolveLang, type LangCode } from '~core/agent/lang'
 import { cockpitBus } from '~core/events'
+import { ensureSkillVersion } from '~core/skillVersions'
+import { createRun, finishRun, recordRunUsage } from '~core/runs/store'
+import { formatUsageLabel } from '~core/runs/format'
 
 // The AI reads the local project and generates/improves a review skill. The result is stored as a
 // **new candidate** (not activated, nothing overwritten), and the new skill is returned for preview/comparison.
@@ -21,7 +26,7 @@ type SkillGenMessages = {
   noLocalPath: string
   defaultModel: string
   stage: (provider: string, model: string, effort: string) => string
-  done: (ops: number, costUsd: string) => string
+  done: (ops: number, usage: string) => string
   label: (optimize: boolean, stamp: string) => string
 }
 const SKILLGEN_MESSAGES = {
@@ -30,7 +35,7 @@ const SKILLGEN_MESSAGES = {
     noLocalPath: '项目未配置本地 clone 路径（生成需要读代码）',
     defaultModel: '默认',
     stage: (p, m, e) => `开始调研项目（${p} · ${m}${e}）…`,
-    done: (n, cost) => `生成完成 · 读取/搜索 ${n} 次 · $${cost}`,
+    done: (n, usage) => `生成完成 · 读取/搜索 ${n} 次 · ${usage}`,
     label: (o, s) => `${o ? 'AI 优化' : 'AI 生成'} · ${s}`,
   },
   en: {
@@ -38,7 +43,7 @@ const SKILLGEN_MESSAGES = {
     noLocalPath: 'Project has no local clone path configured (generation needs to read the code)',
     defaultModel: 'default',
     stage: (p, m, e) => `Researching project (${p} · ${m}${e})…`,
-    done: (n, cost) => `Generation complete · ${n} read/search ops · $${cost}`,
+    done: (n, usage) => `Generation complete · ${n} read/search ops · ${usage}`,
     label: (o, s) => `${o ? 'AI · Optimized' : 'AI · Generated'} · ${s}`,
   },
   fr: {
@@ -46,7 +51,7 @@ const SKILLGEN_MESSAGES = {
     noLocalPath: 'Le projet n’a pas de chemin de clone local configuré (la génération doit lire le code)',
     defaultModel: 'par défaut',
     stage: (p, m, e) => `Analyse du projet en cours (${p} · ${m}${e})…`,
-    done: (n, cost) => `Génération terminée · ${n} lectures/recherches · $${cost}`,
+    done: (n, usage) => `Génération terminée · ${n} lectures/recherches · ${usage}`,
     label: (o, s) => `${o ? 'IA · Optimisé' : 'IA · Généré'} · ${s}`,
   },
 } satisfies Record<LangCode, SkillGenMessages>
@@ -81,10 +86,16 @@ export default defineEventHandler(async (event) => {
   let toolN = 0
   // Follow the project's provider (never mixed): codex projects use Codex to read the project and generate the methodology, claude projects use Claude.
   const runGenerate = rc.provider === 'codex' ? generateSkillCodex : generateSkill
+  // Run record: skill generation is an agent run too (cost / tokens / model attribution on the dashboard).
+  const runId = createRun(d, schema, {
+    kind: 'review', subkind: 'skillgen', provider: rc.provider, projectId: id, workspaceType: 'cwd', workspacePath: project.localPath,
+    model: rc.model, effort: rc.effort || (rc.provider === 'claude' ? 'high' : ''), codexServiceTier: rc.codexServiceTier, skillId: b.baseSkillId ?? null, lang,
+  })
   try {
     emit('stage', t.stage(rc.provider, rc.model || t.defaultModel, rc.effort ? ' · ' + rc.effort : ''))
     const res = await runGenerate({
       cwd: project.localPath,
+      mcpAllow: getAgentSettings(d, schema).reviewMcpAllow, projectDirName: projectDirNameFor(project.localPath),
       model: rc.model,
       effort: rc.effort,
       codexServiceTier: rc.codexServiceTier,
@@ -94,8 +105,11 @@ export default defineEventHandler(async (event) => {
       onTool: (name, info) => emit('tool', `[${++toolN}] ${name} ${info}`),
     })
     content = res.content
-    emit('done', t.done(toolN, res.costUsd.toFixed(3)))
+    recordRunUsage(d, schema, runId, res.usage)
+    finishRun(d, schema, runId, { status: 'done' })
+    emit('done', t.done(toolN, formatUsageLabel(res.usage, res.costUsd)))
   } catch (e) {
+    finishRun(d, schema, runId, { status: 'error', error: (e as Error).message })
     emit('error', (e as Error).message)
     throw createError({ statusCode: 502, statusMessage: (e as Error).message })
   }
@@ -110,5 +124,6 @@ export default defineEventHandler(async (event) => {
     createdAt: new Date().toISOString(),
   }
   d.insert(schema.skills).values(row).run()
+  ensureSkillVersion(d, schema, row) // version 1 snapshot of the generated text
   return row // not activated; the frontend shows a diff preview and the user decides whether to activate
 })

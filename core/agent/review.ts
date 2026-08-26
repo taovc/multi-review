@@ -1,9 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { withContract, reviewCanUseTool, ISOLATED } from './guard'
+import { withContract } from './guard'
+import { buildReviewOptions, type ReviewOptionsSpec } from '../host/options'
 import { salvageJson } from './jsonSalvage'
 import { outputLangClause, resolveLang } from './lang'
 import { REVIEW_SECTIONS } from './reviewSections'
+import { usageFromClaudeResult } from './usage'
+import type { ProviderUsage } from '../runs/types'
 
 export const FindingSchema = z.object({
   severity: z.enum(['High', 'Medium', 'Low']),
@@ -64,7 +67,10 @@ Discipline (mandatory):
 ${outputSpec(opts.lang)}`
 }
 
-export type ReviewAgentOptions = {
+// Shared by the whole review family: read-only MCP allow list, memory directory pin and the stop handle (see core/host/options.ts).
+export type ReviewHostOptions = Pick<ReviewOptionsSpec, 'mcpAllow' | 'projectDirName' | 'abort'>
+
+export type ReviewAgentOptions = ReviewHostOptions & {
   cwd: string
   repo: string
   prNumber: number
@@ -79,23 +85,15 @@ export type ReviewAgentOptions = {
 }
 
 // Run one review: the Agent SDK works inside the worktree with git tools and returns a structured result.
-export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string }> {
+export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string; usage: ProviderUsage | null }> {
   const stream = query({
     prompt: buildReviewPrompt({ ...opts, lang: resolveLang(opts.lang) }),
-    options: {
-      model: opts.model,
-      ...(opts.effort ? { effort: opts.effort as any } : {}),
-      systemPrompt: withContract(opts.methodology),
-      cwd: opts.cwd,
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      canUseTool: reviewCanUseTool,
-      ...ISOLATED,
-      maxTurns: 60,
-    },
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 60, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
   })
 
   let text = ''
   let costUsd = 0
+  let usage: ProviderUsage | null = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -114,11 +112,12 @@ export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result
     } else if (msg.type === 'result') {
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
+      usage = usageFromClaudeResult(msg, opts.model) // tokens / per-model cost / duration for the run record
     }
   }
 
-  const parsed = ReviewResultSchema.parse(await salvageJson(text, opts.model))
-  return { result: parsed, costUsd, raw: text }
+  const parsed = ReviewResultSchema.parse(await salvageJson(text, opts.model, opts.cwd))
+  return { result: parsed, costUsd, raw: text, usage }
 }
 
 // ── Targeted re-review driven by reviewer feedback (guided) ──
@@ -151,7 +150,7 @@ export type GuidedResult = z.infer<typeof GuidedResultSchema>
 
 export type GuidedInput = { fid: string; severity: string; title: string; location: string | null; problem: string | null; reviewerNote: string | null }
 
-export type GuidedReviewAgentOptions = {
+export type GuidedReviewAgentOptions = ReviewHostOptions & {
   cwd: string
   repo: string
   prNumber: number
@@ -202,23 +201,15 @@ ${outputLangClause(resolveLang(opts.lang))}
 ⚠️ Strictly valid JSON: **never leave an unescaped ASCII double quote \`"\`** inside a string; always quote with 「」 or backticks \`.`
 }
 
-export async function runGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number }> {
+export async function runGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number; usage: ProviderUsage | null }> {
   const prompt = buildGuidedReviewPrompt(opts)
   const stream = query({
     prompt,
-    options: {
-      model: opts.model,
-      ...(opts.effort ? { effort: opts.effort as any } : {}),
-      systemPrompt: withContract(opts.methodology),
-      cwd: opts.cwd,
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      canUseTool: reviewCanUseTool,
-      ...ISOLATED,
-      maxTurns: 50,
-    },
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 50, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
   })
   let text = ''
   let costUsd = 0
+  let usage: ProviderUsage | null = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -231,7 +222,8 @@ export async function runGuidedReviewAgent(opts: GuidedReviewAgentOptions): Prom
     } else if (msg.type === 'result') {
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
+      usage = usageFromClaudeResult(msg, opts.model)
     }
   }
-  return { result: GuidedResultSchema.parse(await salvageJson(text, opts.model)), costUsd }
+  return { result: GuidedResultSchema.parse(await salvageJson(text, opts.model, opts.cwd)), costUsd, usage }
 }

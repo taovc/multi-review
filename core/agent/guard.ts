@@ -42,9 +42,10 @@ const SAFE_TOOLS = new Set(['Read', 'Grep', 'Glob'])
 // Dangerous commands (the ones that can really cause external damage / write beyond our scope)
 const DANGER: RegExp[] = [
   // git writes / history rewrites / touching the remote / pulling external stuff
-  /\bgit\b[^\n]*\b(add|commit|push|reset|rebase|merge|checkout|switch|restore|stash|clean|cherry-pick|revert|am|apply|tag|branch|gc|prune|worktree|config|remote|fetch|pull|clone|mv|rm)\b/i,
+  // (the subcommand must follow `git` and its global options, so paths like `git log -- rm-helper.ts` stay allowed)
+  /\bgit\b(\s+(-C\s+\S+|-c\s+\S+|--[a-z-]+(=\S+)?))*\s+(add|commit|push|reset|rebase|merge|checkout|switch|restore|stash|clean|cherry-pick|revert|am|apply|tag|branch|gc|prune|worktree|config|remote|fetch|pull|clone|mv|rm)\b/i,
   // gh write operations
-  /\bgh\s+(pr|issue|release|repo|api)\b[^\n]*\b(comment|review|merge|close|edit|create|delete|reopen|lock|unlock)\b/i,
+  /\bgh\s+(pr|issue|release|repo|api|gist|label|secret|variable|ssh-key|gpg-key|workflow|run)\b[^\n]*\b(comment|review|merge|close|edit|create|delete|reopen|lock|unlock|upload|publish|sync|fork|set|rename|transfer|archive|enable|disable|rerun|cancel|checkout|ready|update-branch)\b/i,
   /\bgh\s+api\b[^\n]*(--method\s+(POST|PUT|PATCH|DELETE)|-X\s+(POST|PUT|PATCH|DELETE))/i,
   // Outbound network (a review only reads locally, it never needs to download anything)
   /\b(curl|wget|nc|ncat|telnet|ssh|scp|rsync)\b/i,
@@ -52,13 +53,23 @@ const DANGER: RegExp[] = [
   /\|\s*(sh|bash|zsh|fish|python3?|node|deno|bun|perl|ruby|php)\b/i,
   /\b(bash|sh|zsh|fish)\b\s+-c\b/i,
   /\beval\b/i,
-  // Destructive / privilege escalation
-  /\brm\s+-[rf]/i,
-  /\bsudo\b/i,
+  // File-writing primitives, matched only in command position (start of the line or after ; && || | ( $( `) so that
+  // paths and grep patterns such as `patch.ts` or `grep -n install` stay allowed
+  /(^|[;&|(`\n]\s*)(touch|mkdir|rmdir|mv|cp|ln|tee|install|patch|rm|sudo|xargs)\b/i,
+  /(^|[;&|(`\n]\s*)sed\b[^\n]*\s-[a-zA-Z]*i/i,
+  // Output redirection into a file (2>/dev/null, >/dev/null and 2>&1 stay allowed; 1>file and &>file do not)
+  /(^|[^&=<>\-])\d?>{1,2}(?![=>])\s*(?!\/dev\/null|&)/,
+  /&>\s*(?!\/dev\/null)/,
+  // Interpreters given inline code or a heredoc can write anything
+  /\b(python3?|node|deno|bun|ruby|perl|php|osascript|awk|gawk)\b[^\n]*(\s-[a-zA-Z]*[cepr]\b|\s-m\s|<<)/i,
+  /\bfind\b[^\n]*\s-(exec|execdir|ok|delete)\b/i,
+  /\b(npm|pnpm|yarn|pip3?|brew|cargo|gem)\s+(install|add|i|uninstall|remove|link|publish|exec|dlx|x)\b/i,
+  // gh api: fields / input / graphql mutations turn it into a write even without an explicit method
+  /\bgh\s+api\b[^\n]*(\s-[fF]\s|\s--(field|raw-field|input)\b|\bmutation\b)/i,
   /\b(chmod|chown|dd|mkfs|truncate|kill|pkill)\b/i,
 ]
 
-function isDangerousBash(cmd: string): boolean {
+export function isDangerousBash(cmd: string): boolean {
   return DANGER.some((re) => re.test(cmd))
 }
 
