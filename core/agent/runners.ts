@@ -1,4 +1,3 @@
-import type { FixChatOptions, FixChatResult } from './fixer'
 import type { GuidedReviewAgentOptions, GuidedResult, ReviewAgentOptions, ReviewResult } from './review'
 import type { RecheckAgentOptions, RecheckResult } from './recheck'
 import type { ProviderUsage } from '../runs/types'
@@ -10,8 +9,4 @@ export interface ReviewRunner {
   runReview(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string; usage: ProviderUsage | null }>
   runGuidedReview(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number; usage: ProviderUsage | null }>
   runRecheck(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }>
-}
-
-export interface ChatRunner {
-  runChat(opts: FixChatOptions): Promise<FixChatResult>
 }

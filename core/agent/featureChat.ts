@@ -1,12 +1,10 @@
-import { runClaudeAgentChat, askUserClause } from './chat'
-import type { FixChatOptions, FixChatResult } from './fixer'
+import { askUserClause } from './chat'
 
 // Feature development, single-stage (native agent): claude goes through the shared runner (chat.ts) — same
 // bypassPermissions + dangerous-command guard + ultracode + decision cards as fix/global. The agent works directly
 // in an isolated worktree (new feature branch); when the user asks to open a PR it does the commit/push/gh pr create
 // itself (in English). Don't push by default (the guard blocks it unless allowDanger).
 
-export type FeatureChatOptions = FixChatOptions & { baseBranch?: string }
 
 export function featureSystemPrompt(lang: string, baseBranch?: string): string {
   const base = baseBranch || 'the default branch'
@@ -20,22 +18,4 @@ Working principles:
 Keep PR title/body, commit messages, and code comments in English.
 
 ${askUserClause(lang)}`
-}
-
-export async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatResult> {
-  return runClaudeAgentChat({
-    cwd: opts.cwd,
-    model: opts.model,
-    effort: opts.effort,
-    sessionId: opts.sessionId,
-    message: opts.message,
-    historyAccess: opts.historyAccess,
-    systemPrompt: featureSystemPrompt(opts.lang, opts.baseBranch),
-    allowDanger: opts.allowDanger,
-    ultracode: opts.ultracode,
-    onSpawn: opts.onSpawn,
-    onSessionId: opts.onSessionId,
-    onText: opts.onText,
-    onTool: opts.onTool,
-  })
 }
