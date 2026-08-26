@@ -727,6 +727,13 @@
       "codexRateLimits": "Rate limits",
       "codexError": "Codex probe failed: {msg}"
   },
+  "session": {
+    "cwdHint": "Working directory",
+    "terminal": "Terminal",
+    "fork": "Fork",
+    "forkHint": "Start a new session that continues from this one",
+    "forked": "Forked into a new session"
+  },
   "dashboard": {
     "title": "Dashboard",
     "subtitle": "Cost, tokens and quality signals from every agent run. Estimated Codex prices come from data/codex-rates.json.",

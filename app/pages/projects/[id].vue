@@ -37,6 +37,7 @@ const route = useRoute()
 const projectId = computed(() => route.params.id as string)
 const { data: project, refresh: refreshProject } = await useFetch<Project>(() => `/api/projects/${projectId.value}`)
 
+const sessionDeepLink = ref<string | null>(null) // ?session=<runId> opens a feature-branch session drawer
 const tab = ref<'pulls' | 'feature' | 'config'>('pulls')
 const msg = ref('')
 const automationOpen = ref(false)
@@ -118,6 +119,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   const pr = Number(route.query.pr)
   if (pr) openDetail(pr, typeof route.query.review === 'string' ? route.query.review : null, typeof route.query.fix === 'string' ? route.query.fix : null, typeof route.query.tab === 'string' ? route.query.tab : undefined)
+  if (typeof route.query.session === 'string' && route.query.session) { tab.value = 'feature'; sessionDeepLink.value = route.query.session }
   pollTimer = setInterval(() => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     refreshPulls()
@@ -289,7 +291,7 @@ const filterDims = computed(() => [
       >{{ $t('project.tabs.config') }}</button>
     </div>
 
-    <FeatureTab v-if="tab === 'feature' && project" :project-id="projectId" />
+    <SessionsTab v-if="tab === 'feature' && project" :project-id="projectId" :open-id="sessionDeepLink" />
     <ProjectConfig v-if="tab === 'config' && project" :project="project" @changed="onProjectChanged" @deleted="onProjectDeleted" />
 
     <!-- ── All PRs ── -->

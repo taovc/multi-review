@@ -282,7 +282,7 @@ const lineCls: Record<DiffLine['t'], string> = {
 
         <!-- ── Fix PR ── -->
         <div v-if="detail && activeTab === 'fix' && prNumber" class="flex-1 min-h-0 flex flex-col px-6 py-4">
-          <FixPanel :project-id="projectId" :pr-number="prNumber" :fix-id="fixId" :active="activeTab === 'fix'" @changed="emit('taskCreated')" />
+          <SessionView :run-id="fixId" workspace-type="pr_worktree" :project-id="projectId" :pr-number="prNumber" :active="activeTab === 'fix'" @changed="emit('taskCreated')" @created="emit('taskCreated')" @deleted="emit('taskCreated')" />
         </div>
 
         <!-- ── Timeline ── -->

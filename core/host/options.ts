@@ -19,7 +19,7 @@ export function buildOptions(spec: RunSpec, hooks: { canUseTool: CanUseTool; dan
     // Required up front so the user can switch to bypassPermissions later in the session without restarting it.
     allowDangerouslySkipPermissions: true,
     systemPrompt: spec.systemAppend ? { type: 'preset', preset: 'claude_code', append: spec.systemAppend } : { type: 'preset', preset: 'claude_code' },
-    ...(spec.resume ? { resume: spec.resume } : {}),
+    ...(spec.resume ? { resume: spec.resume, ...(spec.fork ? { forkSession: true } : {}) } : {}),
     includePartialMessages: true, // text deltas for live streaming
     canUseTool: hooks.canUseTool,
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hooks.dangerHook] }] },

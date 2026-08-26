@@ -1,3 +1,4 @@
+import { fixStatusOf } from '../runs/session'
 import { and, eq } from 'drizzle-orm'
 import {
   decideAutoAction,
@@ -66,15 +67,17 @@ function getReview(db: any, schema: any, projectId: string, prNumber: number) {
     .get()
 }
 
-// The PR's latest non-discarded fix (discard is a hard delete, so there is usually at most one)
+// The PR's latest session run (workspace pr_worktree; delete is a hard delete, so there is usually at most one).
+// `status` is the legacy fix status the decision core reasons about (open / ready / pushing / pushed / error).
 function getLatestFix(db: any, schema: any, projectId: string, prNumber: number) {
   const rows = db
     .select()
-    .from(schema.fixes)
-    .where(and(eq(schema.fixes.projectId, projectId), eq(schema.fixes.prNumber, prNumber)))
+    .from(schema.runs)
+    .where(and(eq(schema.runs.kind, 'session'), eq(schema.runs.workspaceType, 'pr_worktree'), eq(schema.runs.projectId, projectId), eq(schema.runs.prNumber, prNumber)))
     .all() as any[]
-  const live = rows.filter((f) => f.status !== 'discarded').sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  return live.length ? live[live.length - 1] : null
+  const live = rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const r = live.length ? live[live.length - 1] : null
+  return r ? { ...r, status: fixStatusOf(r) } : null
 }
 
 async function evaluatePr(db: any, schema: any, deps: EngineDeps, project: any, cfg: AutoConfig, p: EnginePull) {

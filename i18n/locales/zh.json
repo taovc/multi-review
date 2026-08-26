@@ -727,6 +727,13 @@
       "codexRateLimits": "用量窗口",
       "codexError": "Codex 探测失败：{msg}"
   },
+  "session": {
+    "cwdHint": "工作目录",
+    "terminal": "终端",
+    "fork": "Fork",
+    "forkHint": "以这个会话为起点开一个新会话",
+    "forked": "已 fork 出新会话"
+  },
   "dashboard": {
     "title": "仪表盘",
     "subtitle": "所有 agent 运行的成本、tokens 与质量信号。Codex 估算价格来自 data/codex-rates.json。",

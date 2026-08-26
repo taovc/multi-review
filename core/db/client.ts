@@ -1,3 +1,4 @@
+import { migrateLegacyRuns } from '../runs/migrate'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { mkdirSync, existsSync } from 'node:fs'
@@ -22,6 +23,7 @@ export function getDb(dbPath: string) {
   // MVP: create the tables with CREATE TABLE IF NOT EXISTS, no formal migrations
   ensureSchema(sqlite)
   ensureColumns(sqlite)
+  migrateLegacyRuns(sqlite)
   backfillSkillVersions(sqlite)
   backfillLegacyRunCosts(sqlite)
   return _db
@@ -140,6 +142,19 @@ function ensureColumns(sqlite: Database.Database) {
     ['projects', 'verify_before_post', 'INTEGER NOT NULL DEFAULT 0'],
     ['findings', 'verify_status', 'TEXT'],
     ['findings', 'verify_note', 'TEXT'],
+    // unified session runs (phase 3): workspace state that used to live on fixes / feature_tasks / global_sessions
+    ['runs', 'description', 'TEXT'],
+    ['runs', 'base_branch', 'TEXT'],
+    ['runs', 'base_head_sha', 'TEXT'],
+    ['runs', 'fix_head_sha', 'TEXT'],
+    ['runs', 'last_push_sha', 'TEXT'],
+    ['runs', 'pushed_at', 'TEXT'],
+    ['runs', 'reviews_at_push', 'INTEGER'],
+    ['runs', 'pr_url', 'TEXT'],
+    ['runs', 'pr_author', 'TEXT'],
+    ['runs', 'upload_state', "TEXT NOT NULL DEFAULT 'none'"],
+    ['runs', 'busy_action', 'TEXT'],
+    ['runs', 'forked_from', 'TEXT'],
   ]
   for (const [table, col, type] of adds) {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -546,6 +561,18 @@ function ensureSchema(sqlite: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS permission_requests_run_idx ON permission_requests(run_id);
     CREATE INDEX IF NOT EXISTS permission_requests_status_idx ON permission_requests(status);
+
+    CREATE TABLE IF NOT EXISTS run_turns (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'done',
+      created_at TEXT NOT NULL,
+      ended_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS run_turns_run_seq_idx ON run_turns(run_id, seq);
 
     CREATE TABLE IF NOT EXISTS eval_runs (
       id TEXT PRIMARY KEY,

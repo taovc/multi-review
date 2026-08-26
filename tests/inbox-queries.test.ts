@@ -25,8 +25,7 @@ finishRun(d, schema, oldRun, { status: 'error', error: 'old' })
 d.update(schema.runs).set({ endedAt: '2000-01-01T00:00:00.000Z', updatedAt: '2000-01-01T00:00:00.000Z', startedAt: '2000-01-01T00:00:00.000Z' }).where(eq(schema.runs.id, oldRun)).run()
 // pending prompt on a session run
 const sid = nanoid()
-d.insert(schema.globalSessions).values({ id: sid, title: 'my session', cwd: '/x', createdAt: now, lastUsedAt: now } as any).run()
-createRun(d, schema, { id: sid, kind: 'session', subkind: 'session', provider: 'claude', workspaceType: 'cwd', workspacePath: '/x', model: 'm', effort: '', lang: 'en' } as any)
+createRun(d, schema, { id: sid, kind: 'session', subkind: 'session', provider: 'claude', workspaceType: 'cwd', workspacePath: '/x', model: 'm', effort: '', lang: 'en', title: 'my session' } as any)
 d.insert(schema.permissionRequests).values({ id: nanoid(), runId: sid, kind: 'tool', toolName: 'Bash', input: '{}', status: 'pending', createdAt: now } as any).run()
 d.insert(schema.permissionRequests).values({ id: nanoid(), runId: sid, kind: 'tool', toolName: 'Bash', input: '{}', status: 'allowed', createdAt: now } as any).run()
 

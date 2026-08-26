@@ -40,6 +40,7 @@ export type RunSpec = {
   model?: string
   effort?: string
   resume?: string | null // native claude session id / codex thread id to resume
+  fork?: boolean // resume as a FORK: a new native session/thread that starts from the resumed transcript
   permissionMode?: PermissionMode
   allowDanger?: boolean // let dangerous Bash commands run without a prompt (live-read on every call)
   systemAppend?: string
@@ -50,6 +51,7 @@ export type RunSpec = {
   ultracode?: boolean // raise the reasoning effort + prepend the deep-work instructions
   guardScope?: 'fix' | 'feature' | 'global' // post-execution git/GitHub mutation guard for unattended (bypass) turns
   allowNetwork?: boolean // review kind: let gh read PR metadata (writes are still declined before they run)
+  mcpAllow?: string[] // review/helper kinds: MCP servers that may be called (empty = none connected)
   outputSchema?: unknown // review kind: JSON Schema constraining the final message
   db?: any
   schema?: any

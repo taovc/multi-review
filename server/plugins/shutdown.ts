@@ -1,6 +1,4 @@
-import { stopAllGlobalChats } from '~core/global/pipeline'
-import { stopAllFixChats } from '~core/fix/pipeline'
-import { stopAllFeatureImpl } from '~core/feature/pipeline'
+import { stopAllRuns } from '~core/runs/session'
 import { claudeHost, codexHost } from '~core/host'
 
 // Graceful exit: Electron sends Nitro a SIGTERM when the app closes (see stopNitro in electron/main.mjs).
@@ -24,7 +22,7 @@ export default defineNitroPlugin(() => {
     if (claudeHost.liveRunIds().length) { any = true; void claudeHost.closeAll() }
     if (codexHost.liveRunIds().length) { any = true }
     void codexHost.closeAll() // also stops the app-server process when nothing is live
-    for (const stopAll of [stopAllGlobalChats, stopAllFixChats, stopAllFeatureImpl]) {
+    for (const stopAll of [stopAllRuns]) {
       try {
         if (stopAll()) any = true
       } catch (err) {

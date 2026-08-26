@@ -65,6 +65,7 @@ export function useRunHost(runId: Ref<string | null>, opts: { pushLog: (line: st
         if (ev.costUsd != null) sessionCost.value = (sessionCost.value ?? 0) + ev.costUsd
         break
       case 'error': opts.pushLog(`✗ ${String(ev.message || '').slice(0, 200)}`); break
+      case 'note': opts.pushLog(String(ev.text || '').slice(0, 200)); break
       default: break
     }
   }

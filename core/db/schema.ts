@@ -416,7 +416,7 @@ export const prAutomation = sqliteTable('pr_automation', {
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
   kind: text('kind', { enum: ['review', 'session'] }).notNull(),
-  subkind: text('subkind', { enum: ['review', 'guided', 'recheck', 'skillgen', 'session', 'helper', 'eval'] }).notNull(),
+  subkind: text('subkind', { enum: ['review', 'guided', 'recheck', 'skillgen', 'session', 'helper', 'eval', 'verify'] }).notNull(),
   projectId: text('project_id'), // no FK: a run record must survive project deletion for the dashboard
   reviewId: text('review_id'),
   workspaceType: text('workspace_type', { enum: ['pr_worktree', 'branch_worktree', 'cwd'] }),
@@ -440,6 +440,19 @@ export const runs = sqliteTable('runs', {
   title: text('title'),
   lang: text('lang'),
   error: text('error'),
+  // ── Session workspace state (the unified replacement of fixes / feature_tasks / global_sessions) ──
+  description: text('description'), // branch_worktree: the requirement the session started from; pr_worktree: the reviewer's instruction
+  baseBranch: text('base_branch'), // pr_worktree: the PR's target branch; branch_worktree: the branch the new branch was cut from
+  baseHeadSha: text('base_head_sha'), // head when the worktree was created (diff baseline)
+  fixHeadSha: text('fix_head_sha'), // pr_worktree: head after the last local commit
+  lastPushSha: text('last_push_sha'), // pr_worktree: last commit pushed (≠ fix_head_sha → changes not uploaded yet)
+  pushedAt: text('pushed_at'),
+  reviewsAtPush: integer('reviews_at_push'), // pr_worktree: PR review count at push time ("reviewer updated" baseline)
+  prUrl: text('pr_url'), // branch_worktree: the PR the agent opened
+  prAuthor: text('pr_author'),
+  uploadState: text('upload_state', { enum: ['none', 'ready', 'pushed'] }).notNull().default('none'), // pr_worktree: uncommitted/unpushed work → ready; uploaded → pushed
+  busyAction: text('busy_action'), // 'pushing' while the upload path holds the worktree
+  forkedFrom: text('forked_from'), // run this session was forked from (native session forked on the first turn)
   costUsd: real('cost_usd'), // null = unknown (never 0 as a placeholder)
   costSource: text('cost_source', { enum: ['reported', 'estimated'] }),
   inputTokens: integer('input_tokens').notNull().default(0),
@@ -453,6 +466,22 @@ export const runs = sqliteTable('runs', {
   startedAt: text('started_at'),
   endedAt: text('ended_at'),
   updatedAt: text('updated_at').notNull(),
+})
+
+// Chat turns of a session run (the unified replacement of fix_turns / feature_turns / global_turns): a user turn plus
+// an assistant placeholder that streams in, appended per message. Turn ids double as run_usage.turn_id and as the
+// host's turnId.
+export const runTurns = sqliteTable('run_turns', {
+  id: text('id').primaryKey(),
+  runId: text('run_id')
+    .notNull()
+    .references(() => runs.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+  content: text('content').notNull().default(''),
+  status: text('status', { enum: ['streaming', 'done', 'error', 'stopped'] }).notNull().default('done'),
+  createdAt: text('created_at').notNull(),
+  endedAt: text('ended_at'),
 })
 
 // Per-model usage rows, one per result message (Claude) / turn (Codex). Written as deltas so a session that spans
@@ -594,6 +623,7 @@ export type ProjectAutomation = typeof projectAutomation.$inferSelect
 export type PrAutomation = typeof prAutomation.$inferSelect
 export type AutomationEvent = typeof automationEvents.$inferSelect
 export type Run = typeof runs.$inferSelect
+export type RunTurn = typeof runTurns.$inferSelect
 export type RunUsage = typeof runUsage.$inferSelect
 export type RunEventRow = typeof runEvents.$inferSelect
 export type PermissionRequest = typeof permissionRequests.$inferSelect

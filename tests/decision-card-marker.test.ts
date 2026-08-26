@@ -18,7 +18,7 @@ for (const f of ['core/agent/chat.ts', 'core/codex/prompts.ts']) {
 }
 
 // 2) All three consumers use the shared stripping function; nobody carries their own regex anymore.
-for (const f of ['app/components/FeatureDrawer.vue', 'app/components/FixPanel.vue', 'app/components/GlobalChat.vue']) {
+for (const f of ['app/components/session/SessionView.vue']) {
   const src = read(f)
   assert.match(src, /stripRecommendedMarker\(/, `${f}: should call the shared stripRecommendedMarker`)
   assert.doesNotMatch(src, /推荐\s*\[?\)）\]?/, `${f}: should no longer carry its own regex matching the Chinese marker`)

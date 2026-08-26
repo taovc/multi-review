@@ -26,10 +26,9 @@ export function inboxOverview(db: any, opts: { sinceIso: string }): InboxOvervie
   const since = opts.sinceIso.replace(/'/g, '')
   const prompts = all<InboxPrompt>(db, `
     SELECT q.id, q.run_id AS runId, q.kind, q.tool_name AS toolName, q.title, q.created_at AS createdAt,
-      COALESCE(g.title, ru.title) AS sessionTitle, ru.workspace_path AS workspacePath, ru.workspace_type AS workspaceType, ru.project_id AS projectId, ru.pr_number AS prNumber
+      ru.title AS sessionTitle, ru.workspace_path AS workspacePath, ru.workspace_type AS workspaceType, ru.project_id AS projectId, ru.pr_number AS prNumber
     FROM permission_requests q
     LEFT JOIN runs ru ON ru.id = q.run_id
-    LEFT JOIN global_sessions g ON g.id = q.run_id
     WHERE q.status = 'pending'
     ORDER BY q.created_at ASC`)
   const drafts = all<InboxReview>(db, `

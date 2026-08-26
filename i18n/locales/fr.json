@@ -727,6 +727,13 @@
       "codexRateLimits": "Limites de débit",
       "codexError": "Sondage Codex échoué : {msg}"
   },
+  "session": {
+    "cwdHint": "Répertoire de travail",
+    "terminal": "Terminal",
+    "fork": "Fork",
+    "forkHint": "Démarrer une nouvelle session qui continue celle-ci",
+    "forked": "Nouvelle session créée par fork"
+  },
   "dashboard": {
     "title": "Tableau de bord",
     "subtitle": "Coûts, tokens et signaux de qualité de chaque exécution. Les prix Codex estimés viennent de data/codex-rates.json.",

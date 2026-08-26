@@ -17,7 +17,7 @@ const reviewLink = (r: { projectId: string; prNumber: number; reviewId: string |
 // A session run lives in one of three workspaces: PR worktree (fix tab of the PR drawer), branch worktree (the project's feature list) or a plain cwd (global drawer).
 const runLink = (x: { runId: string; workspaceType: string | null; projectId: string | null; prNumber: number | null }) => {
   if (x.workspaceType === 'pr_worktree' && x.projectId && x.prNumber) return `/projects/${x.projectId}?pr=${x.prNumber}&fix=${x.runId}&tab=fix`
-  if (x.workspaceType === 'branch_worktree' && x.projectId) return `/projects/${x.projectId}`
+  if (x.workspaceType === 'branch_worktree' && x.projectId) return `/projects/${x.projectId}?session=${x.runId}`
   return null
 }
 </script>
