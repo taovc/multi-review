@@ -134,6 +134,7 @@ async function runCase(o: EvalOptions, evalRunId: string, c: GoldenCase, log: (l
   db.insert(schema.evalCases).values({ id: caseId, evalRunId, prNumber: c.prNumber, headSha: c.headSha, status: 'running', createdAt: now() }).run()
   const base: EvalCaseSummary & { verifyCostUsd: number | null } = { id: caseId, prNumber: c.prNumber, headSha: c.headSha, status: 'done', error: null, tp: 0, fp: 0, fn: 0, costUsd: null, durationMs: 0, missedLabelIds: [], findings: [], verified: null, verifyCostUsd: null }
   let wt: Awaited<ReturnType<typeof prepareWorktree>> | null = null
+  let runId: string | null = null
   const defaultBranch = c.baseBranch || o.golden.defaultBranch
   try {
     log(`PR #${c.prNumber} @ ${c.headSha.slice(0, 7)}: preparing worktree`)
@@ -141,7 +142,7 @@ async function runCase(o: EvalOptions, evalRunId: string, c: GoldenCase, log: (l
       localPath: o.localPath, reposDir: o.reposDir, location: o.worktreeLocation, reviewId: `eval-${caseId}`, branch: c.branch, defaultBranch,
       checkoutSha: c.headSha, prNumber: c.prNumber, mergeDefault: false, onStep: (m) => log(`  ${m}`),
     })
-    const runId = createRun(db, schema, { kind: 'review', subkind: 'eval', provider: o.provider, projectId: o.projectId ?? null, workspaceType: 'pr_worktree', workspacePath: wt.path, prNumber: c.prNumber, branch: c.branch, model: o.model, effort: o.effort, codexServiceTier: o.codexServiceTier, skillVersionId: o.skillVersionId ?? null, lang: o.lang ?? null, title: `eval ${o.golden.name} #${c.prNumber}` })
+    runId = createRun(db, schema, { kind: 'review', subkind: 'eval', provider: o.provider, projectId: o.projectId ?? null, workspaceType: 'pr_worktree', workspacePath: wt.path, prNumber: c.prNumber, branch: c.branch, model: o.model, effort: o.effort, codexServiceTier: o.codexServiceTier, skillVersionId: o.skillVersionId ?? null, lang: o.lang ?? null, title: `eval ${o.golden.name} #${c.prNumber}` })
     log(`  reviewing (${o.provider} ${o.model || 'default'})`)
     const r = await selectReviewRunner(o.provider).runReview({
       cwd: wt.path, repo: o.golden.repo, prNumber: c.prNumber, branch: c.branch, defaultBranch, methodology: o.methodology,
@@ -175,7 +176,9 @@ async function runCase(o: EvalOptions, evalRunId: string, c: GoldenCase, log: (l
         // Metrics as if refuted findings had been dropped before posting.
         const kept = base.findings.filter((f) => f.verifyStatus !== 'refuted')
         const keptTp = kept.filter((f) => f.matchedLabelId).length
-        const droppedTp = base.findings.filter((f) => f.verifyStatus === 'refuted' && f.matchedLabelId).length
+        // Only a refuted match to a must-find label becomes a miss; dropping an optional hit costs nothing.
+        const mustFind = new Set(c.labels.filter((l) => l.mustFind).map((l) => l.id))
+        const droppedTp = base.findings.filter((f) => f.verifyStatus === 'refuted' && f.matchedLabelId && mustFind.has(f.matchedLabelId)).length
         base.verified = { tp: keptTp, fp: kept.length - keptTp, fn: base.fn + droppedTp }
         log(`  after verify → TP ${base.verified.tp} · FP ${base.verified.fp} · FN ${base.verified.fn}`)
       } catch (e) {
@@ -186,6 +189,7 @@ async function runCase(o: EvalOptions, evalRunId: string, c: GoldenCase, log: (l
   } catch (e) {
     base.status = 'error'
     base.error = (e as Error).message
+    if (runId) finishRun(db, schema, runId, { status: 'error', error: base.error })
     log(`  error: ${base.error}`)
   } finally {
     if (wt) await wt.cleanup().catch(() => {})

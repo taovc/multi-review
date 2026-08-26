@@ -16,6 +16,7 @@ export async function runCodexReadonly(opts: {
   serviceTier?: CodexServiceTier | string | null
   outputSchema?: unknown
   allowNetwork?: boolean
+  mcpAllow?: string[]
   label: string
   onTool?: (name: string, info: string) => void
   onStop?: (stop: () => void) => void
@@ -23,7 +24,7 @@ export async function runCodexReadonly(opts: {
   const runId = `codex-${opts.label.replace(/\s+/g, '-')}-${nanoid(8)}`
   await codexHost.ensure({
     runId, kind: 'review', cwd: opts.cwd ?? process.cwd(), model: opts.model, effort: opts.effort,
-    codexServiceTier: opts.serviceTier ?? null, allowNetwork: !!opts.allowNetwork, outputSchema: opts.outputSchema,
+    codexServiceTier: opts.serviceTier ?? null, allowNetwork: !!opts.allowNetwork, outputSchema: opts.outputSchema, mcpAllow: opts.mcpAllow ?? [],
   })
   let stopped = false
   opts.onStop?.(() => { stopped = true; void codexHost.interrupt(runId) })

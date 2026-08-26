@@ -210,6 +210,7 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
       serviceTier: opts.codexServiceTier,
       outputSchema: REVIEW_RESULT_JSON_SCHEMA,
       allowNetwork: true, // lets gh read PR metadata; write operations are blocked by the command guard
+      mcpAllow: opts.mcpAllow,
       label: 'review',
       onTool: opts.onTool,
     })
@@ -232,6 +233,7 @@ export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions):
       serviceTier: opts.codexServiceTier,
       outputSchema: GUIDED_RESULT_JSON_SCHEMA,
       allowNetwork: true,
+      mcpAllow: opts.mcpAllow,
       label: 'guided review',
       onTool: opts.onTool,
     })
@@ -253,6 +255,7 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       serviceTier: opts.codexServiceTier,
       outputSchema: RECHECK_RESULT_JSON_SCHEMA,
       allowNetwork: true,
+      mcpAllow: opts.mcpAllow,
       label: 'recheck',
       onTool: opts.onTool,
     })

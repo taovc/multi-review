@@ -170,6 +170,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           db.update(schema.findings).set({
             severity: f.severity, title: f.title, location: f.location || null,
             problem: f.problem || null, detail: f.detail || null, fix: f.fix || null, introducedByPr: f.introducedByPr,
+            verifyStatus: null, verifyNote: null, // the verdict was about the previous wording
           }).where(eq(schema.findings.id, cur.id)).run()
           if (f.response) {
             db.insert(schema.findingRechecks).values({

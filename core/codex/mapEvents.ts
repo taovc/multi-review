@@ -20,14 +20,16 @@ export class CodexEventMapper {
   lastUsage: { total: TokenBreakdown; last: TokenBreakdown; contextWindow: number | null } | null = null
 
   resetTurn(): void {
-    this.textSeen.clear(); this.reasoning.clear(); this.cmdOutput.clear(); this.fileChanges.clear(); this.finalTexts = []; this.finalAnswer = null
+    this.textSeen.clear(); this.reasoning.clear(); this.cmdOutput.clear(); this.fileChanges.clear(); this.finalTexts = []; this.finalAnswer = null; this.turnUsage = null
   }
 
   // Paths touched by a fileChange item (for the approval card before the item completes).
   pathsOf(itemId: string): string[] { return this.fileChanges.get(itemId) ?? [] }
 
   // Returns the events to emit plus, for turn/completed, the turn outcome.
-  map(method: string, p: any): { events: RunEvent[]; turnEnd?: MappedTurnEnd; command?: { id: string; command: string; exitCode: number | null; status: string } } {
+  turnUsage: TokenBreakdown | null = null // sum of the `last` breakdowns since resetTurn()
+
+  map(method: string, p: any): { events: RunEvent[]; turnEnd?: MappedTurnEnd; command?: { id: string; command: string; exitCode: number | null; status: string }; turnStarted?: string } {
     const ev: RunEvent[] = []
     switch (method) {
       case 'item/agentMessage/delta':
@@ -98,6 +100,7 @@ export class CodexEventMapper {
         const u = p.tokenUsage ?? {}
         const br = (x: any): TokenBreakdown => ({ totalTokens: num(x?.totalTokens), inputTokens: num(x?.inputTokens), cachedInputTokens: num(x?.cachedInputTokens), cacheWriteInputTokens: num(x?.cacheWriteInputTokens), outputTokens: num(x?.outputTokens), reasoningOutputTokens: num(x?.reasoningOutputTokens) })
         this.lastUsage = { total: br(u.total), last: br(u.last), contextWindow: typeof u.modelContextWindow === 'number' ? u.modelContextWindow : null }
+        this.turnUsage = addBreakdown(this.turnUsage, this.lastUsage.last)
         if (this.lastUsage.contextWindow) {
           const used = this.lastUsage.last.totalTokens
           ev.push({ t: 'context', totalTokens: used, maxTokens: this.lastUsage.contextWindow, percentage: Math.min(100, Math.round((used / this.lastUsage.contextWindow) * 100)) })
@@ -118,6 +121,8 @@ export class CodexEventMapper {
         if (steps) ev.push({ t: 'note', text: `plan:\n${steps}` })
         break
       }
+      case 'turn/started':
+        return { events: ev, turnStarted: String(p.turn?.id ?? '') || undefined }
       case 'turn/diff/updated':
         break // the fix/feature panels compute their own diff from the worktree
       case 'error': {
@@ -145,6 +150,11 @@ export class CodexEventMapper {
     }
     return { events: ev }
   }
+}
+
+export function addBreakdown(a: TokenBreakdown | null, b: TokenBreakdown): TokenBreakdown {
+  if (!a) return { ...b }
+  return { totalTokens: a.totalTokens + b.totalTokens, inputTokens: a.inputTokens + b.inputTokens, cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens, cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens, outputTokens: a.outputTokens + b.outputTokens, reasoningOutputTokens: a.reasoningOutputTokens + b.reasoningOutputTokens }
 }
 
 // Per-turn token delta from two cumulative thread snapshots.

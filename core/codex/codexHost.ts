@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { PermissionMode, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import { getCodexServer, registerThread, stopCodexServer, type CodexServer } from './appServer'
 import { RpcError } from './rpc'
-import { CodexEventMapper, diffBreakdown, type TokenBreakdown } from './mapEvents'
+import { CodexEventMapper } from './mapEvents'
 import { helperPolicy, reviewPolicy, sessionPolicy, type CodexPolicy } from './policy'
 import { codexSessionContract, codexUltracodePrompt } from './prompts'
 import { toCodexEffort } from '../agent/codexAgent'
@@ -35,7 +35,6 @@ type LiveTurn = {
   resolve: (r: TurnResult) => void
   interrupted: boolean
   startedAt: number
-  usageAtStart: TokenBreakdown | null
   error: string | null
 }
 
@@ -111,6 +110,7 @@ class CodexHost implements SessionHost {
   private async create(spec: RunSpec): Promise<LiveThread> {
     const server = await getCodexServer()
     const policy = policyFor(spec)
+    const unattended = spec.kind === 'review' || spec.kind === 'helper' // read-only kinds: MCP only through the allow list
     const effort = await effortFor(spec)
     const instructions = developerInstructions(spec)
     const base = {
@@ -119,14 +119,16 @@ class CodexHost implements SessionHost {
       ...(spec.codexServiceTier ? { serviceTier: spec.codexServiceTier } : {}),
       approvalPolicy: policy.approval,
       sandbox: policy.sandboxMode,
-      ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+      ...(effort || unattended ? { config: { ...(effort ? { model_reasoning_effort: effort } : {}), ...(unattended && !(spec.mcpAllow?.length) ? { mcp_servers: {} } : {}) } } : {}),
       ...(instructions ? { developerInstructions: instructions } : {}),
     }
     const notes: string[] = []
     let resp: any = null
     if (spec.resume) {
       try {
-        resp = await server.rpc.request('thread/resume', { threadId: spec.resume, ...base }, THREAD_START_TIMEOUT_MS)
+        resp = spec.fork
+          ? await server.rpc.request('thread/fork', { threadId: spec.resume, ...base }, THREAD_START_TIMEOUT_MS)
+          : await server.rpc.request('thread/resume', { threadId: spec.resume, ...base }, THREAD_START_TIMEOUT_MS)
       } catch (e) {
         // A stale / foreign thread id (rollout gone, other codex home): start fresh instead of failing the turn.
         notes.push(`saved Codex thread ${spec.resume} could not be resumed (${(e as Error).message.slice(0, 200)}); started a fresh thread`)
@@ -181,13 +183,24 @@ class CodexHost implements SessionHost {
       }
       return
     }
-    const { events, turnEnd, command } = live.mapper.map(method, params)
+    const { events, turnEnd, command, turnStarted } = live.mapper.map(method, params)
+    if (turnStarted && live.turn && !live.turn.codexTurnId) live.turn.codexTurnId = turnStarted
     for (const e of events) this.dispatch(live, e)
     if (command) this.afterCommand(live, command)
     if (turnEnd) this.onTurnEnd(live, turnEnd)
   }
 
   private dispatch(live: LiveThread, e: RunEvent): void {
+    // Read-only kinds: an MCP tool outside the allow list is a policy breach the approval flow never sees → fail the turn before it goes further.
+    if (e.t === 'tool_use' && e.name.startsWith('mcp__') && live.policy.autoDecide && live.turn) {
+      const server = e.name.split('__')[1] ?? ''
+      if (!(live.spec.mcpAllow ?? []).includes(server)) {
+        const message = `MCP server "${server}" is not allowed in a read-only run (tool ${e.name})`
+        live.turn.error = message
+        live.emit({ t: 'permission_denied', toolName: e.name, message })
+        void this.rpcInterrupt(live)
+      }
+    }
     switch (e.t) {
       case 'text_delta':
         try { live.turn?.cb.onText?.(e.text) } catch { /* ignore */ }
@@ -229,8 +242,8 @@ class CodexHost implements SessionHost {
     const t = live.turn
     if (!t) return
     if (t.codexTurnId && end.turnId && t.codexTurnId !== end.turnId) return // not ours (e.g. a compaction turn)
-    const total = live.mapper.lastUsage?.total ?? null
-    const delta = total ? diffBreakdown(t.usageAtStart, total) : null
+    // Per-turn usage = the sum of the `last` breakdowns this turn produced (robust across resumes, where the thread total already carries history).
+    const delta = live.mapper.turnUsage
     const usage = delta
       ? usageFromCodexTurn({ input_tokens: delta.inputTokens, cached_input_tokens: delta.cachedInputTokens, cache_write_input_tokens: delta.cacheWriteInputTokens, output_tokens: delta.outputTokens, reasoning_output_tokens: delta.reasoningOutputTokens }, live.model, { threadId: live.threadId, durationMs: Date.now() - t.startedAt })
       : null
@@ -279,7 +292,8 @@ class CodexHost implements SessionHost {
     const decline = legacy ? 'denied' : 'decline'
 
     if (method === 'item/commandExecution/requestApproval' || method === 'execCommandApproval') {
-      const command = String(params.command ?? (Array.isArray(params.command) ? params.command.join(' ') : ''))
+      const command = Array.isArray(params.command) ? params.command.map(String).join(' ') : typeof params.command === 'string' ? params.command : ''
+      if (!command && auto) { rpc.respond(id, { decision: decline }); live.emit({ t: 'permission_denied', toolName: 'Bash', message: 'declined: approval request without a readable command' }); return }
       if (auto) {
         const d = auto(command)
         rpc.respond(id, { decision: d === 'accept' ? accept(false) : decline })
@@ -297,7 +311,8 @@ class CodexHost implements SessionHost {
     }
 
     if (method === 'item/fileChange/requestApproval' || method === 'applyPatchApproval') {
-      const paths = live.mapper.pathsOf(String(params.itemId ?? '')).join(', ')
+      const fromReq = (Array.isArray(params.fileChanges) ? params.fileChanges : Array.isArray(params.changes) ? params.changes : []).map((c: any) => String(c?.path ?? '')).filter(Boolean)
+      const paths = (live.mapper.pathsOf(String(params.itemId ?? '')).length ? live.mapper.pathsOf(String(params.itemId ?? '')) : fromReq).join(', ')
       if (auto) { rpc.respond(id, { decision: decline }); live.emit({ t: 'permission_denied', toolName: 'ApplyPatch', message: `file change declined by the read-only policy: ${paths}` }); return }
       const mode = live.spec.permissionMode ?? 'default'
       if (mode === 'acceptEdits' || mode === 'bypassPermissions') { rpc.respond(id, { decision: accept(false) }); return }
@@ -394,7 +409,7 @@ class CodexHost implements SessionHost {
     live.emit({ t: 'status', status: 'busy' })
     try { cb.onSessionId?.(live.threadId) } catch { /* ignore */ }
     return new Promise<TurnResult>((resolve) => {
-      live.turn = { turnId: cb.turnId ?? null, codexTurnId: null, cb, text: '', resolve, interrupted: false, startedAt: Date.now(), usageAtStart: live.mapper.lastUsage?.total ?? null, error: null }
+      live.turn = { turnId: cb.turnId ?? null, codexTurnId: null, cb, text: '', resolve, interrupted: false, startedAt: Date.now(), error: null }
       live.mapper.resetTurn()
       void this.startTurn(live, text)
     })
@@ -424,7 +439,7 @@ class CodexHost implements SessionHost {
         ...(live.spec.outputSchema ? { outputSchema: live.spec.outputSchema } : {}),
       }
       const resp = await rpc.request('turn/start', params, 60_000)
-      if (live.turn) live.turn.codexTurnId = String(resp?.turn?.id ?? '') || null
+      if (live.turn && !live.turn.codexTurnId) live.turn.codexTurnId = String(resp?.turn?.id ?? '') || null
       if (live.turn?.interrupted) await this.interrupt(live.spec.runId) // stop requested while turn/start was in flight
     } catch (e) {
       const message = e instanceof RpcError ? e.message : (e as Error)?.message || String(e)

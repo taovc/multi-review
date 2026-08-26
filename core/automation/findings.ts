@@ -38,6 +38,7 @@ export function reviewFindingStats(db: any, schema: any, reviewId: string): Revi
 
   const actionableFindings = findings.filter((f) => {
     if (!ACTIONABLE_SEVERITY.has(f.severity)) return false
+    if (f.verifyStatus === 'refuted') return false // the verify pass refuted it → not something to auto-fix
     const rc = latest.get(f.id)
     return !rc || !RESOLVED_RECHECK.has(rc.status) // never rechecked, or the latest recheck is not "resolved" → still to fix
   })

@@ -31,7 +31,8 @@ export default defineEventHandler(async (event) => {
 
   // Observability: the latest run of this review (cost / tokens / model / skill version) + the sum over all its runs.
   const runs = d.select().from(schema.runs).where(eq(schema.runs.reviewId, id)).orderBy(desc(schema.runs.createdAt)).all()
-  const latest = runs[0] ?? null
+  const latest = runs.find((r) => r.subkind !== 'verify') ?? null
+  const verifyRun = runs.find((r) => r.subkind === 'verify') ?? null
   let run: any = null
   if (latest) {
     const sv = latest.skillVersionId ? d.select().from(schema.skillVersions).where(eq(schema.skillVersions.id, latest.skillVersionId)).get() : null
@@ -40,6 +41,7 @@ export default defineEventHandler(async (event) => {
       id: latest.id, subkind: latest.subkind, provider: latest.provider, model: latest.model, effort: latest.effort, status: latest.status,
       costUsd: latest.costUsd, costSource: latest.costSource, inputTokens: latest.inputTokens, outputTokens: latest.outputTokens, durationMs: latest.durationMs,
       skillVersion: sv?.version ?? null, skillName: sk?.name ?? sv?.skillName ?? null,
+      verify: verifyRun ? { status: verifyRun.status, costUsd: verifyRun.costUsd, durationMs: verifyRun.durationMs } : null,
     }
   }
   const priced = runs.filter((r) => r.costUsd != null)

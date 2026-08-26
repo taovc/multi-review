@@ -70,7 +70,9 @@ const project = projectRef ? projects.find((p) => p.id === projectRef || p.name 
 if (!project) { process.stderr.write(`project not found for ${projectRef ?? golden.repo}\n`); process.exit(1) }
 if (!project.localPath || !existsSync(project.localPath)) { process.stderr.write(`project ${project.name} has no local clone path\n`); process.exit(1) }
 
-const provider = (str('provider') || project.provider || 'claude') as 'claude' | 'codex'
+const providerRaw = str('provider') || project.provider || 'claude'
+if (providerRaw !== 'claude' && providerRaw !== 'codex') { process.stderr.write(`--provider must be claude or codex (got ${providerRaw})\n`); process.exit(1) }
+const provider = providerRaw as 'claude' | 'codex'
 const models = (str('model') || project.model || process.env[provider === 'codex' ? 'CODEX_MODEL' : 'ANTHROPIC_MODEL'] || '').split(',').map((s) => s.trim()).filter(Boolean)
 if (!models.length) models.push('')
 const effort = str('effort') || project.effort || undefined
