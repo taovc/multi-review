@@ -5,6 +5,7 @@
 // editable commit message) → commit+push happens only after you confirm.
 // Layout: flexes to fill the drawer's fix tab height — the chat stream scrolls internally, the input bar stays pinned at the bottom.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
+import { useRunHost, type Pending, type HostInfo, type PermissionMode, type RunSummary } from '../composables/useRunHost'
 
 const props = defineProps<{ projectId: string; prNumber: number; fixId: string | null; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -18,6 +19,9 @@ type FixData = {
   hasUnpushed: boolean
   prUrl: string | null
   commitUrl: string | null
+  host?: HostInfo
+  pending?: Pending[]
+  run?: RunSummary
 }
 
 const currentFixId = ref<string | null>(props.fixId)
@@ -31,6 +35,15 @@ const showLog = ref(false)
 let es: EventSource | null = null
 // load race guard (same as FeatureDrawer): when switching fixes / discarding, an in-flight load for the old fix must not land back into data.
 let loadToken = 0
+// Session host (shared with the global drawer): native permission / question / plan cards, mode, context meter, cost.
+function pushLog(line: string) {
+  logLines.value.push(`${hhmmss()}  ${line}`)
+  if (logLines.value.length > 300) logLines.value.shift()
+}
+const host = useRunHost(currentFixId, { pushLog, notify })
+const LS_MODE = 'mr.fix.mode'
+watch(currentFixId, () => host.reset())
+watch(host.mode, (m) => { if (import.meta.client) localStorage.setItem(LS_MODE, m) })
 
 // Allow dangerous commands + ultracode background activation: persisted in localStorage (across PRs/reloads, same as feature/global); the prefix is injected by the backend.
 const allowDanger = ref(false)
@@ -40,8 +53,14 @@ const LS_ULTRA = 'mr.fix.ultracode'
 onMounted(() => {
   allowDanger.value = localStorage.getItem(LS_DANGER) === '1'
   ultracodeOn.value = localStorage.getItem(LS_ULTRA) === '1'
+  // A fix session edits code by design: bypassPermissions + the danger guard is the default, the user can tighten it per session.
+  const m = localStorage.getItem(LS_MODE) as PermissionMode | null
+  host.mode.value = m && ['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(m) ? m : 'bypassPermissions'
 })
-watch(allowDanger, (v) => { if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0') })
+watch(allowDanger, (v) => {
+  if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0')
+  if (currentFixId.value) void host.setAllowDanger(v) // a live host session picks it up immediately
+})
 function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
@@ -96,6 +115,7 @@ async function load() {
   const detail = await $fetch<FixData>(`/api/fixes/${fid}`)
   if (my !== loadToken || fid !== currentFixId.value) return // stale result (fix switched / a newer load started) → drop it
   data.value = detail
+  host.applyDetail(detail)
   // First time: backfill the run log from the persisted historical events
   if (!logLines.value.length && detail.events?.length) {
     logLines.value = detail.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
@@ -111,11 +131,9 @@ function openSSE() {
     if (fid !== currentFixId.value) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
+      if (e.kind === 'run') { host.onRunEvent(e.data); return }
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
-      if (e.message) {
-        logLines.value.push(`${hhmmss()}  ${e.message}`)
-        if (logLines.value.length > 300) logLines.value.shift()
-      }
+      if (e.message) pushLog(e.message)
       if (['done', 'status', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
     } catch {}
   }
@@ -173,7 +191,7 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
       emit('changed')
       openSSE()
     }
-    await $fetch(`/api/fixes/${currentFixId.value}/chat`, { method: 'POST', body: { message: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
+    await $fetch(`/api/fixes/${currentFixId.value}/chat`, { method: 'POST', body: { message: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, permissionMode: host.mode.value } })
     await load()
     return true
   } catch (e: any) {
@@ -327,6 +345,9 @@ async function copyWorktree() {
           </div>
         </template>
 
+        <!-- Native prompts from the session host: permission / question / plan -->
+        <div class="space-y-3 mb-3"><RunPromptCards :host="host" /></div>
+
         <!-- Decision card (the agent is waiting on your call; same as feature development) -->
         <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2 mb-3">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
@@ -350,10 +371,13 @@ async function copyWorktree() {
       <!-- Input bar (pinned at the bottom) -->
       <div class="shrink-0 border-t border-default pt-3 mt-1">
         <!-- Allow dangerous commands (git push / gh pr create are blocked by default and only let through once enabled, same as feature/global) -->
-        <label class="flex items-center gap-2 text-[11px] cursor-pointer mb-2">
-          <input v-model="allowDanger" type="checkbox" class="accent-error" />
-          <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
-        </label>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] mb-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input v-model="allowDanger" type="checkbox" class="accent-error" />
+            <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
+          </label>
+          <RunHostStrip :host="host" :live="!!currentFixId" :tokens="data?.run" />
+        </div>
         <textarea
           v-model="chatInput" rows="3" :placeholder="$t('fix.chatPlaceholder')" :disabled="chatting"
           class="w-full text-sm bg-muted border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-accented disabled:opacity-50"

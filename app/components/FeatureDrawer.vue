@@ -5,6 +5,8 @@
 // (clicking an option = the next message); clicking "open PR" lets the agent open it itself.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 
+import { useRunHost, type Pending, type HostInfo, type PermissionMode, type RunSummary } from '../composables/useRunHost'
+
 const props = defineProps<{ projectId: string; featureId: string | null }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string] }>()
@@ -13,7 +15,7 @@ const toast = useToast()
 
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string }
 type Task = { id: string; title: string | null; description?: string; status: string; branch: string | null; prUrl: string | null; prNumber: number | null; error: string | null }
-type Detail = { task: Task; turns: Turn[]; events?: { ts: string; kind: string; message: string | null }[]; busy: boolean }
+type Detail = { task: Task; turns: Turn[]; events?: { ts: string; kind: string; message: string | null }[]; busy: boolean; host?: HostInfo; pending?: Pending[]; run?: RunSummary }
 
 const data = ref<Detail | null>(null)
 const input = ref('')
@@ -26,6 +28,15 @@ const sending = ref(false) // send/create/open-PR in flight: prevents duplicate 
 let es: EventSource | null = null
 // load race guard (same fix as in main): when switching tasks, a late in-flight load for the old task must not overwrite data.
 let loadToken = 0
+// Session host (shared with the fix panel / global drawer): native permission / question / plan cards, mode, context meter, cost.
+function pushLog(line: string) {
+  logLines.value.push(`${hhmmss()}  ${line}`)
+  if (logLines.value.length > 300) logLines.value.shift()
+}
+const featureIdRef = computed(() => props.featureId)
+const host = useRunHost(featureIdRef, { pushLog, notify })
+const LS_MODE = 'mr.feature.mode'
+watch(host.mode, (m) => { if (import.meta.client) localStorage.setItem(LS_MODE, m) })
 
 // ultracode activated in the background + allow dangerous commands: persisted in localStorage (remembered across tasks/reloads), the prefix is injected by the backend.
 const allowDanger = ref(false)
@@ -35,8 +46,14 @@ const LS_ULTRA = 'mr.feature.ultracode'
 onMounted(() => {
   allowDanger.value = localStorage.getItem(LS_DANGER) === '1'
   ultracodeOn.value = localStorage.getItem(LS_ULTRA) === '1'
+  // A feature session edits code by design: bypassPermissions + the danger guard is the default, the user can tighten it per session.
+  const m = localStorage.getItem(LS_MODE) as PermissionMode | null
+  host.mode.value = m && ['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(m) ? m : 'bypassPermissions'
 })
-watch(allowDanger, (v) => { if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0') })
+watch(allowDanger, (v) => {
+  if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0')
+  if (props.featureId) void host.setAllowDanger(v) // a live host session picks it up immediately
+})
 function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
@@ -92,6 +109,7 @@ async function load() {
   const detail = await $fetch<Detail>(`/api/features/${fid}`)
   if (my !== loadToken || fid !== props.featureId) return // stale result → discard
   data.value = detail
+  host.applyDetail(detail)
   if (!logLines.value.length && detail.events?.length) {
     logLines.value = detail.events.filter((e) => e.message).map((e) => `${hhmmss(e.ts)}  ${e.message}`)
   }
@@ -106,8 +124,9 @@ function openSSE() {
     if (fid !== props.featureId) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
+      if (e.kind === 'run') { host.onRunEvent(e.data); return }
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
-      if (e.message) { logLines.value.push(`${hhmmss()}  ${e.message}`); if (logLines.value.length > 300) logLines.value.shift() }
+      if (e.message) pushLog(e.message)
       if (['done', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
     } catch { /* ignore */ }
   }
@@ -117,7 +136,7 @@ function closeSSE() { es?.close(); es = null }
 watch([open, () => props.featureId], () => {
   if (!open.value) { closeSSE(); return }
   // Opening / switching tasks / switching to the new id after creation: clear the previous leftovers first (otherwise the old task's content flashes before load returns)
-  data.value = null; liveAssistant.value = ''; logLines.value = []; confirming.value = ''; otherAnswer.value = ''
+  data.value = null; liveAssistant.value = ''; logLines.value = []; confirming.value = ''; otherAnswer.value = ''; host.reset()
   if (props.featureId) { load(); openSSE() } else closeSSE()
 })
 onBeforeUnmount(closeSSE)
@@ -142,11 +161,11 @@ async function sendChat(overrideMsg?: string): Promise<boolean> {
   sending.value = true
   try {
     if (!props.featureId) {
-      const res = await $fetch<{ id: string }>(`/api/projects/${props.projectId}/features`, { method: 'POST', body: { description: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
+      const res = await $fetch<{ id: string }>(`/api/projects/${props.projectId}/features`, { method: 'POST', body: { description: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, permissionMode: host.mode.value } })
       emit('created', res.id) // the parent switches activeId to the new id → this drawer's featureId changes → the watch loads the running task
       return true
     }
-    await $fetch(`/api/features/${props.featureId}/chat`, { method: 'POST', body: { message: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value } })
+    await $fetch(`/api/features/${props.featureId}/chat`, { method: 'POST', body: { message: msg, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, permissionMode: host.mode.value } })
     await load()
     return true
   } catch (e: any) {
@@ -165,7 +184,7 @@ async function openPr() {
   liveAssistant.value = ''
   sending.value = true
   try {
-    await $fetch(`/api/features/${props.featureId}/chat`, { method: 'POST', body: { message: t('feature.openPrMsg'), allowDanger: true, ultracode: ultracodeOn.value } })
+    await $fetch(`/api/features/${props.featureId}/chat`, { method: 'POST', body: { message: t('feature.openPrMsg'), allowDanger: true, ultracode: ultracodeOn.value, permissionMode: host.mode.value } })
     await load()
   } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
   finally { sending.value = false }
@@ -246,6 +265,9 @@ async function doDelete() {
             <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ $t('feature.status.working') }}…
           </div>
 
+          <!-- Native prompts from the session host: permission / question / plan -->
+          <RunPromptCards :host="host" />
+
           <!-- Decision card (the agent is waiting for your call) -->
           <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2">
             <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
@@ -279,10 +301,13 @@ async function doDelete() {
             >{{ task.prUrl ? $t('feature.updatePr') : $t('feature.openPr') }}</button>
             <button v-if="running" class="text-sm border border-accented px-4 py-1.5 rounded hover:bg-muted ml-auto" @click="stop">{{ $t('fix.stop') }}</button>
           </div>
-          <label class="flex items-center gap-2 text-[11px] cursor-pointer">
-            <input v-model="allowDanger" type="checkbox" class="accent-error" />
-            <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
-          </label>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input v-model="allowDanger" type="checkbox" class="accent-error" />
+              <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
+            </label>
+            <RunHostStrip :host="host" :live="!!featureId" :tokens="data?.run" />
+          </div>
           <textarea
             v-model="input" rows="2" :placeholder="featureId ? $t('feature.chatPlaceholder') : $t('feature.composerPlaceholder')"
             class="w-full text-sm border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-inverted" :disabled="!canChat"

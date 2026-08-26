@@ -1,7 +1,11 @@
 <script setup lang="ts">
-// Global do-anything assistant: floating button bottom-right + slideover. Native claude experience via bypassPermissions.
-// The command palette (/clear /resume /copy /cd) is homegrown (headless has no native slash REPL).
+// Global do-anything assistant: floating button bottom-right + slideover.
+// Claude runs on the session host (core/host): the stream carries native RunEvents — permission prompts, AskUserQuestion,
+// plan approval, tool calls/results, compaction, context usage, mode changes — rendered here as cards. Codex still goes
+// through the legacy runner (text/tool events + ```ask-user decision cards). The command palette mixes 4 local commands
+// (/clear /resume /copy /cd) with the session's own slash commands/skills reported by the host.
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
+import { useRunHost, PERMISSION_MODES, type Pending, type HostInfo, type PermissionMode, type RunSummary } from '../composables/useRunHost'
 
 const { t, locale } = useI18n()
 const toast = useToast()
@@ -9,7 +13,7 @@ const route = useRoute()
 
 type Turn = { id: string; role: 'user' | 'assistant'; content: string; status: string; seq: number }
 type Session = { id: string; title: string | null; provider: string; cwd: string | null; status: string; error: string | null; lastUsedAt: string }
-type Detail = { session: Session; turns: Turn[]; chatting: boolean }
+type Detail = { session: Session; turns: Turn[]; chatting: boolean; host?: HostInfo; pending?: Pending[]; run?: RunSummary }
 
 const open = ref(false)
 const sessionId = ref<string | null>(null)
@@ -19,34 +23,56 @@ const input = ref('')
 const liveAssistant = ref('')
 const logLines = ref<string[]>([]) // tool/stage log (live; panel state lives inside ChatLogPanel)
 const busy = ref(false)
-// "allow dangerous commands" + "ultracode background activation": once turned on it is remembered forever
-// (localStorage, across sessions/reloads), no need to re-click per message. ultracode no longer stuffs a prefix
-// into the input box; the backend injects it when sending to the agent (you never see the prefix).
+// Session-host state (shared with the fix panel): prompts, live status, mode, context meter, cost.
+const host = useRunHost(sessionId, { pushLog, notify })
+const { pending, liveStatus, hostCommands, contextUse, lastTurnCost, sessionCost, mode } = host
+// "allow dangerous commands" / "ultracode" / permission mode: remembered in localStorage across sessions/reloads.
 const allowDanger = ref(false)
 const ultracodeOn = ref(false)
 const LS_DANGER = 'mr.global.allowDanger'
 const LS_ULTRA = 'mr.global.ultracode'
+const LS_MODE = 'mr.global.mode'
+const MODES = PERMISSION_MODES
 onMounted(() => {
   allowDanger.value = localStorage.getItem(LS_DANGER) === '1'
   ultracodeOn.value = localStorage.getItem(LS_ULTRA) === '1'
+  const m = localStorage.getItem(LS_MODE) as PermissionMode | null
+  if (m && MODES.includes(m)) mode.value = m
 })
-watch(allowDanger, (v) => { if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0') })
+// Deep link from the inbox: open the drawer on a given session.
+const openSessionRequest = useOpenGlobalSession()
+watch(openSessionRequest, async (sid) => {
+  if (!sid) return
+  openSessionRequest.value = null
+  open.value = true
+  await openHistorySession(sid).catch((e: any) => notify(e?.data?.statusMessage || t('common.failed')))
+}, { immediate: true })
+watch(allowDanger, (v) => {
+  if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0')
+  // A live host session picks the switch up immediately (the danger hook reads it on every command).
+  if (sessionId.value && isClaude.value) $fetch(`/api/runs/${sessionId.value}/mode`, { method: 'POST', body: { allowDanger: v } }).catch(() => {})
+})
 function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
   if (import.meta.client) localStorage.setItem(LS_ULTRA, ultracodeOn.value ? '1' : '0')
+}
+async function setMode(m: PermissionMode) {
+  mode.value = m
+  if (import.meta.client) localStorage.setItem(LS_MODE, m)
+  if (sessionId.value && isClaude.value && liveStatus.value !== 'closed') await host.setMode(m)
 }
 const { confirming } = useInlineConfirm() // '' | 'delete' (inline confirm inside the slideover, no modal)
 const renaming = ref(false)
 const renameVal = ref('')
 let es: EventSource | null = null
-// load race guard (same as FeatureDrawer): when switching sessions / starting a new chat, a late in-flight load from the previous session must not overwrite data.
-let loadToken = 0
+let loadToken = 0 // load race guard: a late in-flight load from a previous session must not overwrite data
 
 const currentProjectId = computed(() => {
   if (!route.path.startsWith('/projects/')) return undefined
   const id = route.params.id
   return typeof id === 'string' && id.trim() ? id : undefined
 })
+const isClaude = computed(() => (data.value?.session.provider ?? 'claude') !== 'codex')
 
 const chatting = computed(() => {
   const ts = data.value?.turns ?? []
@@ -71,16 +97,23 @@ async function load() {
   if (!sid) return
   const my = ++loadToken
   const detail = await $fetch<Detail>(`/api/global/sessions/${sid}`)
-  if (my !== loadToken || sid !== sessionId.value) return // stale result (session switched / a newer load exists) → discard
+  if (my !== loadToken || sid !== sessionId.value) return // stale result → discard
   data.value = detail
+  host.applyDetail(detail)
 }
-// New chat = reset to blank; don't create a session right away (lazy: only the first message persists it, so opening doesn't spawn an "untitled chat").
+// New chat = reset to blank; don't create a session right away (lazy: only the first message persists it).
 function newSession() {
   closeSSE()
   sessionId.value = null
   data.value = null
   liveAssistant.value = ''
   logLines.value = []
+  pending.value = []
+  contextUse.value = null
+  lastTurnCost.value = null
+  sessionCost.value = null
+  hostCommands.value = []
+  liveStatus.value = 'closed'
   view.value = 'chat'
   confirming.value = ''
 }
@@ -89,7 +122,6 @@ async function deleteSession() {
   await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'DELETE' }).catch(() => {})
   newSession()
 }
-// Rename (click the title to edit in place + PATCH)
 async function saveRename() {
   const title = renameVal.value.trim()
   renaming.value = false
@@ -98,19 +130,23 @@ async function saveRename() {
   await $fetch(`/api/global/sessions/${sessionId.value}`, { method: 'PATCH', body: { title } }).catch(() => {})
 }
 
-// ── SSE ──
+// ── SSE: legacy pipeline events ({kind:'text'|'tool'|'stage'|'chat'|'done'|'error'}) + host RunEvents ({kind:'run', data}) ──
+function pushLog(line: string) {
+  logLines.value.push(`${hhmmss()}  ${line}`)
+  if (logLines.value.length > 300) logLines.value.shift()
+}
 function openSSE() {
   if (!sessionId.value || !import.meta.client) return
   es?.close()
-  const sid = sessionId.value // bind this stream to its session: leftover messages no longer land after a session switch
+  const sid = sessionId.value
   es = new EventSource(`/api/global/sessions/${sid}/stream`)
   es.onmessage = (ev) => {
     if (sid !== sessionId.value) return // stale stream → ignore
     try {
       const e = JSON.parse(ev.data)
+      if (e.kind === 'run') { host.onRunEvent(e.data); return }
       if (e.kind === 'text') { liveAssistant.value += e.message || ''; return }
-      // tool/stage events → collect into the log panel (same as fix)
-      if (e.message && e.kind !== 'chat') { logLines.value.push(`${hhmmss(e.ts)}  ${e.message}`); if (logLines.value.length > 300) logLines.value.shift() }
+      if (e.message && e.kind !== 'chat') pushLog(e.message)
       if (['done', 'error', 'chat'].includes(e.kind)) { liveAssistant.value = ''; load() }
     } catch { /* ignore */ }
   }
@@ -118,7 +154,6 @@ function openSSE() {
 function closeSSE() { es?.close(); es = null }
 
 watch(open, (on) => {
-  // Lazy creation: opening the slideover doesn't create a session; only load when one already exists. A new chat is created by the first message.
   if (on) { confirming.value = ''; logLines.value = []; if (sessionId.value) { load(); openSSE() } }
   else closeSSE()
 })
@@ -126,7 +161,7 @@ onBeforeUnmount(() => { closeSSE(); if (timer) clearInterval(timer) })
 
 // auto-scroll to bottom + elapsed timer while a turn is running
 const { scrollEl, scrollToBottom } = useScrollToBottom()
-watch([() => data.value?.turns.length, liveAssistant, open], () => { if (open.value) scrollToBottom() })
+watch([() => data.value?.turns.length, liveAssistant, open, () => pending.value.length], () => { if (open.value) scrollToBottom() })
 const elapsed = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
 watch(chatting, (on) => {
@@ -135,7 +170,7 @@ watch(chatting, (on) => {
   else load() // backstop refresh when the turn ends
 })
 
-// Decision card (same as feature/fix): the last assistant turn contains an ```ask-user block → question + options; clicking an option sends it as the next message (free-form answers use the input box).
+// Decision card (legacy ```ask-user block, used by the Codex path): the last assistant turn contains a block → options.
 const ASK_RE = /```ask-user\s*\n([\s\S]*?)```/i
 const IS_OPT = /^(?:[-*]|\d+[.)])\s+/
 const askCard = computed(() => {
@@ -157,12 +192,12 @@ function displayText(content: string, stripAsk: boolean): string {
 }
 function answer(opt: string) {
   if (chatting.value || busy.value) return
-  input.value = stripRecommendedMarker(opt) // the recommended marker is display-only (defined in ~core/agent/decisionCard)
+  input.value = stripRecommendedMarker(opt)
   send(true) // bypass the slash interception
 }
 
-// ── command palette (homegrown) ──
-const COMMANDS = [
+// ── command palette: 4 local commands + the session's own slash commands / skills (reported by the host) ──
+const LOCAL_COMMANDS = [
   { cmd: '/clear', desc: () => t('global.cmd.clear') },
   { cmd: '/resume', desc: () => t('global.cmd.resume') },
   { cmd: '/copy', desc: () => t('global.cmd.copy') },
@@ -172,7 +207,9 @@ const slashOpen = computed(() => input.value.startsWith('/') && !input.value.inc
 const slashMatches = computed(() => {
   if (!slashOpen.value) return []
   const head = input.value.split(/\s/)[0]!.toLowerCase()
-  return COMMANDS.filter((c) => c.cmd.startsWith(head))
+  const local = LOCAL_COMMANDS.filter((c) => c.cmd.startsWith(head)).map((c) => ({ cmd: c.cmd, desc: c.desc(), local: true }))
+  const remote = hostCommands.value.filter((c) => `/${c}`.toLowerCase().startsWith(head)).slice(0, 12).map((c) => ({ cmd: `/${c}`, desc: '', local: false }))
+  return [...local, ...remote]
 })
 
 function lastAssistantText(): string {
@@ -181,7 +218,7 @@ function lastAssistantText(): string {
   return ''
 }
 
-// returns true = handled as a command (not sent as a normal message)
+// returns true = handled locally (not sent as a message). Anything else — /compact, /context, skills, custom commands — goes to the agent verbatim.
 async function handleSlash(raw: string): Promise<boolean> {
   const [cmd, ...rest] = raw.trim().split(/\s+/)
   const arg = rest.join(' ')
@@ -195,7 +232,7 @@ async function handleSlash(raw: string): Promise<boolean> {
       return true
     }
     case '/cd': {
-      if (!arg) return false // "/cd <path>" needs an argument; without one, treat it as ordinary input
+      if (!arg) return false
       input.value = ''
       pendingCwd.value = arg
       notify(t('global.cdSet', { path: arg }), true)
@@ -210,19 +247,22 @@ const pendingCwd = ref<string | null>(null)
 async function send(skipSlash = false) {
   const msg = input.value.trim()
   if (!msg || chatting.value || busy.value) return
-  // commands take priority (decision-card answers pass skipSlash so option text starting with something like /clear isn't swallowed as a command)
   if (!skipSlash && msg.startsWith('/') && await handleSlash(msg)) return
   input.value = ''
   liveAssistant.value = ''
   try {
     const id = await ensureSession()
-    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, projectId: currentProjectId.value } })
+    await $fetch(`/api/global/sessions/${id}/chat`, { method: 'POST', body: { message: msg, cwd: pendingCwd.value || undefined, allowDanger: allowDanger.value, ultracode: ultracodeOn.value, permissionMode: mode.value, projectId: currentProjectId.value } })
     pendingCwd.value = null
     await load()
   } catch (e: any) {
     input.value = msg
     notify(e?.data?.statusMessage || t('common.failed'))
   }
+}
+function onComposerKey(e: KeyboardEvent) {
+  // Enter sends, Shift+Enter inserts a newline (IME composition is left alone).
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
 }
 async function stop() {
   if (!sessionId.value) return
@@ -239,8 +279,7 @@ async function loadHistory() {
 }
 async function openHistorySession(id: string) {
   closeSSE()
-  // clear the previous session's leftovers (turns/streaming text/log) first, otherwise the old content flashes before load returns
-  data.value = null; liveAssistant.value = ''; logLines.value = []
+  data.value = null; liveAssistant.value = ''; logLines.value = []; pending.value = []; contextUse.value = null
   sessionId.value = id
   view.value = 'chat'
   await load()
@@ -251,10 +290,11 @@ function histNext() { if (hist.value?.hasNext) { histPage.value++; loadHistory()
 
 function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value, { hour12: false }) }
 function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString()).toLocaleTimeString(locale.value, { hour12: false }) }
+function fmtTok(n: number) { return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n) }
 </script>
 
 <template>
-  <!-- Floating button bottom-right: black circle + white icon (chat bubble + sparkle) -->
+  <!-- Floating button bottom-right -->
   <button
     class="fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-neutral-900 text-white shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
     :title="$t('global.fabTitle')"
@@ -265,6 +305,7 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
       <path d="M20 12a8 8 0 0 1-11.3 7.3L4 20l.9-4.2A8 8 0 1 1 20 12Z" />
       <path d="M12 8.3l.95 2.25 2.25.95-2.25.95L12 14.7l-.95-2.25L8.8 11.5l2.25-.95L12 8.3Z" fill="currentColor" stroke="none" />
     </svg>
+    <span v-if="pending.length" class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-[10px] text-white flex items-center justify-center">{{ pending.length }}</span>
   </button>
 
   <USlideover v-model:open="open" :title="$t('global.title')" :ui="{ content: 'w-[100vw] max-w-full min-w-0 md:w-[calc(100vw-15rem)] md:min-w-[640px] md:max-w-none' }">
@@ -274,16 +315,15 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
         <div class="shrink-0 flex items-center gap-2 pb-2 mb-2 border-b border-default text-xs">
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" @click="newSession">{{ $t('global.newSession') }}</button>
           <button class="px-2 py-1 rounded border border-default hover:bg-muted" :class="view === 'history' ? 'bg-muted text-highlighted' : ''" @click="view = 'history'; loadHistory()">{{ $t('global.history') }}</button>
-          <!-- Editable title (click to rename) -->
           <input
             v-if="renaming" v-model="renameVal" class="flex-1 min-w-0 text-xs border-b border-inverted outline-none bg-transparent py-0.5"
-            :placeholder="$t('global.untitled')" @keydown.enter="saveRename" @blur="saveRename"
+            :placeholder="$t('global.untitled')" @keydown.enter="$event.isComposing || saveRename()" @blur="saveRename"
           />
           <button
             v-else-if="sessionId" class="flex-1 min-w-0 truncate text-left text-dimmed hover:text-highlighted"
             :title="$t('global.rename')" @click="renameVal = data?.session.title || ''; renaming = true"
           >{{ data?.session.title || $t('global.untitled') }}</button>
-          <!-- Delete: inline confirm inside the slideover (no modal) -->
+          <span v-else class="flex-1" />
           <template v-if="confirming === 'delete'">
             <span class="text-dimmed">{{ $t('global.confirmDelete') }}</span>
             <button class="text-error font-medium hover:underline" @click="deleteSession">{{ $t('common.delete') }}</button>
@@ -292,12 +332,17 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
           <button v-else-if="sessionId" class="px-2 py-1 rounded border border-default text-error hover:bg-muted shrink-0" @click="confirming = 'delete'">{{ $t('common.delete') }}</button>
           <span v-if="data?.session.cwd" class="font-mono text-dimmed truncate max-w-[14rem] shrink-0" :title="data.session.cwd">{{ data.session.cwd }}</span>
         </div>
-        <label class="shrink-0 flex items-center gap-2 text-[11px] mb-2 cursor-pointer">
-          <input v-model="allowDanger" type="checkbox" class="accent-error" />
-          <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
-        </label>
+        <!-- Mode / danger / status strip -->
+        <div class="shrink-0 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] mb-2">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input v-model="allowDanger" type="checkbox" class="accent-error" />
+            <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
+          </label>
+          <RunHostStrip v-if="isClaude" :host="host" :live="!!sessionId" :tokens="data?.run" />
+          <span v-else-if="sessionCost != null" class="text-dimmed tabular-nums">{{ $t('global.sessionCost') }} ${{ sessionCost.toFixed(3) }}</span>
+        </div>
 
-        <!-- Run log (tool calls / stages, expandable; same as fix) -->
+        <!-- Run log (tool calls / results / stages, expandable) -->
         <ChatLogPanel v-if="view === 'chat'" :lines="logLines" />
 
         <!-- History list -->
@@ -323,16 +368,17 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
           <div ref="scrollEl" class="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
             <div v-if="!data?.turns.length" class="text-xs text-dimmed py-10 text-center">{{ $t('global.empty') }}</div>
             <div v-for="(turn, ti) in data?.turns ?? []" :key="turn.id" :class="turn.role === 'user' ? 'text-right' : ''">
-              <!-- user: plain-text bubble -->
               <div v-if="turn.role === 'user'" class="inline-block max-w-[90%] text-left text-sm rounded-lg px-3 py-2 whitespace-pre-wrap break-words bg-inverted text-inverted">{{ turn.content }}</div>
-              <!-- assistant: rendered markdown -->
               <div v-else class="inline-block max-w-[90%] text-left text-sm rounded-lg px-3 py-2 break-words bg-muted">
                 <MarkdownBody :text="turn.status === 'streaming' && ti === (data?.turns.length ?? 0) - 1 && liveAssistant ? liveAssistant : displayText(turn.content, !!askCard && ti === (data?.turns.length ?? 0) - 1)" />
                 <span v-if="turn.status === 'streaming'" class="animate-pulse">▍</span>
                 <span v-if="turn.status === 'stopped'" class="text-[10px] text-dimmed ml-1">· {{ $t('fix.stoppedTag') }}</span>
               </div>
             </div>
-            <!-- Decision card (the agent is waiting on you; same as feature/fix). Free-form answers use the input box below. -->
+
+            <RunPromptCards :host="host" />
+
+            <!-- Legacy decision card (Codex path) -->
             <div v-if="askCard" class="rounded border border-inverted p-3 space-y-2 text-left">
               <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('feature.decisionTitle') }}</div>
               <p v-if="askCard.question" class="text-sm font-medium whitespace-pre-wrap">{{ askCard.question }}</p>
@@ -341,26 +387,26 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
               </div>
             </div>
             <div v-if="chatting" class="text-xs text-toned flex items-center gap-2">
-              <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ $t('global.thinking') }}… {{ elapsed }}s
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-inverted animate-pulse" />{{ liveStatus === 'waiting_prompt' ? $t('global.live.waiting_prompt') : $t('global.thinking') }}… {{ elapsed }}s
             </div>
-            <p v-if="data?.session.status === 'error' && data.session.error" class="text-xs text-error">{{ data.session.error }}</p>
+            <p v-if="data?.session.status === 'error' && data.session.error" class="text-xs text-error whitespace-pre-wrap">{{ data.session.error }}</p>
           </div>
 
           <!-- composer + command palette -->
           <div class="shrink-0 relative pt-2 mt-2 border-t border-default">
-            <div v-if="slashMatches.length" class="absolute bottom-full left-0 mb-1 w-full bg-default border border-default rounded shadow-lg overflow-hidden">
+            <div v-if="slashMatches.length" class="absolute bottom-full left-0 mb-1 w-full max-h-64 overflow-y-auto bg-default border border-default rounded shadow-lg">
               <div v-for="c in slashMatches" :key="c.cmd" class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs hover:bg-muted cursor-pointer" @click="input = c.cmd + ' '">
                 <span class="font-mono text-highlighted">{{ c.cmd }}</span>
-                <span class="text-dimmed truncate">{{ c.desc() }}</span>
+                <span class="text-dimmed truncate">{{ c.desc || (c.local ? '' : $t('global.commandsHint')) }}</span>
               </div>
             </div>
             <span v-if="pendingCwd" class="block text-[11px] text-dimmed mb-1">{{ $t('global.cdPending', { path: pendingCwd }) }}</span>
             <textarea
               v-model="input" rows="2" :placeholder="$t('global.placeholder')"
               class="w-full text-sm border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-inverted"
+              @keydown="onComposerKey"
             />
             <div class="flex items-center justify-between gap-2 mt-1.5">
-              <!-- ultracode background-activation toggle: off = grey gradient (no shine), on = purple gradient + shine. One click is remembered forever, no need to click per message. -->
               <button
                 type="button"
                 class="ultra-btn relative overflow-hidden shrink-0 text-xs rounded px-2.5 py-1.5 font-medium text-white shadow-sm transition"
@@ -387,7 +433,6 @@ function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString())
 </template>
 
 <style scoped>
-/* ultracode button: only the active state gets a highlight sweeping left to right (with a pause between sweeps); inactive is grey and doesn't sweep. */
 .ultra-btn.is-active::after {
   content: '';
   position: absolute;
