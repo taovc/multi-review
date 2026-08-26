@@ -116,6 +116,8 @@ function prevPage() { if (page.value > 0) page.value-- }
 // change surfaces with the list refresh.
 let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
+  const pr = Number(route.query.pr)
+  if (pr) openDetail(pr, typeof route.query.review === 'string' ? route.query.review : null, typeof route.query.fix === 'string' ? route.query.fix : null, typeof route.query.tab === 'string' ? route.query.tab : undefined)
   pollTimer = setInterval(() => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     refreshPulls()

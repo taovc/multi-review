@@ -11,6 +11,14 @@ useHead({
 
 const { data: projects, refresh } = await useFetch<Project[]>('/api/projects')
 const route = useRoute()
+// Inbox badge: how many things wait for the human (polled; cheap read query).
+const inboxCount = ref(0)
+let inboxTimer: ReturnType<typeof setInterval> | null = null
+async function refreshInbox() {
+  try { inboxCount.value = (await $fetch<{ counts: { total: number } }>('/api/inbox')).counts.total } catch { /* keep the last count */ }
+}
+onMounted(() => { void refreshInbox(); inboxTimer = setInterval(() => { if (document.visibilityState !== 'hidden') void refreshInbox() }, 30_000) })
+onBeforeUnmount(() => { if (inboxTimer) clearInterval(inboxTimer) })
 
 // Electron (macOS) hides the native title bar → leave room on the left of the header for the traffic lights
 const isElectronMac = ref(false)
@@ -95,6 +103,22 @@ async function createProject() {
           </div>
 
           <nav class="flex-1 overflow-x-auto overflow-y-hidden md:overflow-x-hidden md:overflow-y-auto px-3 pb-3 md:pb-0 flex md:block gap-2 md:gap-0 md:space-y-px">
+            <!-- global pages (not tied to a project) -->
+            <NuxtLink
+              to="/inbox"
+              class="block w-52 md:w-auto shrink-0 px-3 py-2 md:mb-1 text-xs uppercase tracking-[0.12em] transition-colors border-b-2 md:border-b-0 md:border-l-2"
+              :class="route.path === '/inbox' ? 'border-inverted text-highlighted' : 'border-transparent text-muted hover:text-highlighted'"
+            >{{ $t('layout.inbox') }}<span v-if="inboxCount" class="ml-2 inline-block min-w-5 text-center px-1 rounded-full bg-inverted text-inverted normal-case tracking-normal">{{ inboxCount }}</span></NuxtLink>
+            <NuxtLink
+              to="/dashboard"
+              class="block w-52 md:w-auto shrink-0 px-3 py-2 md:mb-1 text-xs uppercase tracking-[0.12em] transition-colors border-b-2 md:border-b-0 md:border-l-2"
+              :class="route.path === '/dashboard' ? 'border-inverted text-highlighted' : 'border-transparent text-muted hover:text-highlighted'"
+            >{{ $t('layout.dashboard') }}</NuxtLink>
+            <NuxtLink
+              to="/agent-config"
+              class="block w-52 md:w-auto shrink-0 px-3 py-2 md:mb-1 text-xs uppercase tracking-[0.12em] transition-colors border-b-2 md:border-b-0 md:border-l-2"
+              :class="route.path === '/agent-config' ? 'border-inverted text-highlighted' : 'border-transparent text-muted hover:text-highlighted'"
+            >{{ $t('layout.agentConfig') }}</NuxtLink>
             <NuxtLink
               v-for="p in projects"
               :key="p.id"
