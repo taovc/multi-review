@@ -271,12 +271,21 @@ export async function prepareWorktree(opts: {
       return sha
     }
     onStep?.(`fetch origin ${branch}`)
-    await git(localPath, ['fetch', 'origin', branch, defaultBranch])
-    const sha = (await git(localPath, ['rev-parse', `origin/${branch}`])).trim()
+    let ref = `origin/${branch}`
+    try {
+      await git(localPath, ['fetch', 'origin', branch, defaultBranch])
+    } catch (e) {
+      // The branch is gone from the remote (merged + deleted): GitHub still serves the PR head under refs/pull/<n>/head.
+      if (!opts.prNumber) throw e
+      onStep?.(`分支已不在远端，改用 refs/pull/${opts.prNumber}/head`)
+      await git(localPath, ['fetch', 'origin', `+refs/pull/${opts.prNumber}/head:refs/remotes/origin/pr/${opts.prNumber}`, defaultBranch])
+      ref = `origin/pr/${opts.prNumber}`
+    }
+    const sha = (await git(localPath, ['rev-parse', ref])).trim()
 
     onStep?.('创建 worktree')
     // Detached at the PR head, to avoid clashing with a branch already checked out in the main repo
-    await git(localPath, ['worktree', 'add', '--detach', wtPath, `origin/${branch}`])
+    await git(localPath, ['worktree', 'add', '--detach', wtPath, ref])
     return sha
   })
 

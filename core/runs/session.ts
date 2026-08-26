@@ -116,7 +116,7 @@ export async function ensureRunWorkspace(ctx: Pick<SessionTurnCtx, 'db' | 'schem
   if (run.workspaceType === 'pr_worktree') {
     if (!run.branch) throw new Error('PR 分支为空，无法准备 worktree')
     const wt = await prepareWorktree({
-      localPath: project.localPath, reposDir: ctx.reposDir, location: ctx.worktreeLocation, reviewId: runId, branch: run.branch, defaultBranch: project.defaultBranch,
+      localPath: project.localPath, reposDir: ctx.reposDir, location: ctx.worktreeLocation, reviewId: runId, branch: run.branch, defaultBranch: project.defaultBranch, prNumber: run.prNumber,
       mergeDefault: false, // the session pushes to the PR branch, so the commits it produces must stay clean
       onStep: (m) => emit('stage', m),
     })

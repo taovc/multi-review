@@ -159,9 +159,22 @@ function openSSE() {
 function closeSSE() { es?.close(); es = null }
 function resetLocal() { data.value = null; liveAssistant.value = ''; logLines.value = []; otherAnswer.value = ''; confirming.value = ''; view.value = 'chat'; host.reset() }
 
+// A PR tab opened without a known run id (deep link, filtered list): the PR's existing session is looked up so the
+// conversation continues instead of showing an empty panel.
+async function resolveExistingRun(): Promise<string | null> {
+  if (!isPr.value || !props.projectId || !props.prNumber) return null
+  try {
+    const r = await $fetch<{ runs: Array<{ id: string }> }>('/api/runs', { query: { workspaceType: 'pr_worktree', projectId: props.projectId, prNumber: props.prNumber, pageSize: 1 } })
+    return r.runs[0]?.id ?? null
+  } catch { return null }
+}
 watch(() => [props.active, currentRunId.value] as const, async ([on, id]) => {
   if (!on) { closeSSE(); return }
   resetLocal()
+  if (!id) {
+    const found = await resolveExistingRun()
+    if (found) { currentRunId.value = found; return } // the watch re-runs with the id
+  }
   if (id) { await load(); openSSE(); scrollToBottom() } else closeSSE()
 }, { immediate: true })
 onBeforeUnmount(() => { closeSSE(); if (timer) clearInterval(timer); if (pollTimer) clearInterval(pollTimer) })

@@ -1,3 +1,4 @@
+import { ghBin } from './gh'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { writeFile, rm, mkdtemp } from 'node:fs/promises'
@@ -237,10 +238,10 @@ export async function postReview(opts: {
   // Any PENDING visible in the GET response is necessarily ours (other people's pending reviews aren't visible), so just delete it.
   try {
     // With timeout: these two steps run inside the review's 'posting' claim window, and a gh call hanging forever would pin the row at 'posting' permanently (recover only runs at startup).
-    const { stdout } = await pexec('gh', ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'], { maxBuffer: 1024 * 1024 * 16, timeout: 30_000 })
+    const { stdout } = await pexec(ghBin(), ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'], { maxBuffer: 1024 * 1024 * 16, timeout: 30_000 })
     for (const r of (JSON.parse(stdout) as any[][]).flat()) {
       if (r.state === 'PENDING') {
-        await pexec('gh', ['api', `repos/${repo}/pulls/${prNumber}/reviews/${r.id}`, '--method', 'DELETE'], { timeout: 30_000 }).catch(() => {})
+        await pexec(ghBin(), ['api', `repos/${repo}/pulls/${prNumber}/reviews/${r.id}`, '--method', 'DELETE'], { timeout: 30_000 }).catch(() => {})
       }
     }
   } catch {

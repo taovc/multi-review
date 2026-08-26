@@ -7,6 +7,7 @@ import { isRunBusy, fixStatusOf } from '~core/runs/session'
 const Query = z.object({
   workspaceType: z.enum(['pr_worktree', 'branch_worktree', 'cwd']).optional(),
   projectId: z.string().optional(),
+  prNumber: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().min(0).default(0),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 })
@@ -17,6 +18,7 @@ export default defineEventHandler((event) => {
   const conds = [eq(schema.runs.kind, 'session')]
   if (q.workspaceType) conds.push(eq(schema.runs.workspaceType, q.workspaceType))
   if (q.projectId) conds.push(eq(schema.runs.projectId, q.projectId))
+  if (q.prNumber) conds.push(eq(schema.runs.prNumber, q.prNumber))
   const where = and(...conds)
   const total = Number(d.select({ n: sql<number>`COUNT(*)` }).from(schema.runs).where(where).get()?.n ?? 0)
   const rows = d.select().from(schema.runs).where(where).orderBy(desc(schema.runs.updatedAt)).limit(q.pageSize).offset(q.page * q.pageSize).all()

@@ -1,7 +1,24 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { existsSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
+import os from 'node:os'
 
 const pexec = promisify(execFile)
+
+// The gh binary: PATH first, then the usual install directories — a LaunchAgent / Electron process often starts with a
+// minimal PATH that lacks /opt/homebrew/bin (same fallback the claude and codex binaries get).
+let _gh: string | null = null
+export function ghBin(): string {
+  if (_gh) return _gh
+  const dirs = (process.env.PATH || '').split(delimiter).concat(['/opt/homebrew/bin', '/usr/local/bin', join(os.homedir(), '.local', 'bin')])
+  for (const d of dirs) {
+    if (!d) continue
+    const p = join(d, process.platform === 'win32' ? 'gh.exe' : 'gh')
+    if (existsSync(p)) return (_gh = p)
+  }
+  return (_gh = 'gh')
+}
 
 export class GhError extends Error {
   constructor(
@@ -18,7 +35,7 @@ export class GhError extends Error {
 // No timeout by default (long paginated pulls with --paginate/--slurp shouldn't be cut off).
 async function gh(args: string[], timeoutMs?: number): Promise<string> {
   try {
-    const { stdout } = await pexec('gh', args, { maxBuffer: 1024 * 1024 * 32, ...(timeoutMs ? { timeout: timeoutMs } : {}) })
+    const { stdout } = await pexec(ghBin(), args, { maxBuffer: 1024 * 1024 * 32, ...(timeoutMs ? { timeout: timeoutMs } : {}) })
     return stdout
   } catch (e: any) {
     const stderr = e?.stderr?.toString?.() ?? ''
