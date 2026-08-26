@@ -508,7 +508,7 @@
     "ultracode": "ultracode模式",
     "ultracodeHint": "开关 ultracode 模式（开了就一直生效）—— Codex 模型支持时使用原生 ultra，否则使用 xhigh + 增强工作流（更强，但更慢更贵）。正常打字即可，后台自动激活。",
     "modeLabel": "权限",
-    "permissionTitle": "Claude 请求权限",
+    "permissionTitle": "Agent 请求权限",
     "questionTitle": "Claude 有问题问你",
     "planTitle": "方案待批准",
     "allow": "允许",

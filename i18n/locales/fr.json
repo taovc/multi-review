@@ -508,7 +508,7 @@
     "ultracode": "mode ultracode",
     "ultracodeHint": "Active le mode ultracode (reste activé) — Codex utilise ultra nativement si le modèle le permet, sinon xhigh avec le workflow renforcé (plus puissant, mais plus lent et plus coûteux). Tapez normalement, c'est appliqué en arrière-plan.",
     "modeLabel": "Permissions",
-    "permissionTitle": "Claude demande une permission",
+    "permissionTitle": "L'agent demande une permission",
     "questionTitle": "Claude a une question",
     "planTitle": "Plan à approuver",
     "allow": "Autoriser",

@@ -50,7 +50,7 @@ watch(openSessionRequest, async (sid) => {
 watch(allowDanger, (v) => {
   if (import.meta.client) localStorage.setItem(LS_DANGER, v ? '1' : '0')
   // A live host session picks the switch up immediately (the danger hook reads it on every command).
-  if (sessionId.value && isClaude.value) $fetch(`/api/runs/${sessionId.value}/mode`, { method: 'POST', body: { allowDanger: v } }).catch(() => {})
+  if (sessionId.value) $fetch(`/api/runs/${sessionId.value}/mode`, { method: 'POST', body: { allowDanger: v } }).catch(() => {})
 })
 function toggleUltracode() {
   ultracodeOn.value = !ultracodeOn.value
@@ -59,7 +59,7 @@ function toggleUltracode() {
 async function setMode(m: PermissionMode) {
   mode.value = m
   if (import.meta.client) localStorage.setItem(LS_MODE, m)
-  if (sessionId.value && isClaude.value && liveStatus.value !== 'closed') await host.setMode(m)
+  if (sessionId.value && liveStatus.value !== 'closed') await host.setMode(m)
 }
 const { confirming } = useInlineConfirm() // '' | 'delete' (inline confirm inside the slideover, no modal)
 const renaming = ref(false)
@@ -72,7 +72,6 @@ const currentProjectId = computed(() => {
   const id = route.params.id
   return typeof id === 'string' && id.trim() ? id : undefined
 })
-const isClaude = computed(() => (data.value?.session.provider ?? 'claude') !== 'codex')
 
 const chatting = computed(() => {
   const ts = data.value?.turns ?? []
@@ -338,8 +337,7 @@ function fmtTok(n: number) { return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >=
             <input v-model="allowDanger" type="checkbox" class="accent-error" />
             <span :class="allowDanger ? 'text-error' : 'text-dimmed'">{{ allowDanger ? $t('global.dangerOn') : $t('global.dangerOff') }}</span>
           </label>
-          <RunHostStrip v-if="isClaude" :host="host" :live="!!sessionId" :tokens="data?.run" />
-          <span v-else-if="sessionCost != null" class="text-dimmed tabular-nums">{{ $t('global.sessionCost') }} ${{ sessionCost.toFixed(3) }}</span>
+          <RunHostStrip :host="host" :live="!!sessionId" :tokens="data?.run" />
         </div>
 
         <!-- Run log (tool calls / results / stages, expandable) -->
