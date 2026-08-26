@@ -2,16 +2,22 @@ import { eq } from 'drizzle-orm'
 import { join } from 'node:path'
 import { appendTurns } from '../db/turns'
 import { makeEmit } from '../streaming/emit'
-import { runGlobalChat } from '../agent/globalChat'
+import { runGlobalChat, globalSystemPrompt } from '../agent/globalChat'
 import { sessionFields } from '../agent/session'
 import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchIssueContext } from '../github/issueAssets'
+import { ensureSessionRun, finishRun, recordRunUsage } from '../runs/store'
+import { claudeHost } from '../host/claudeHost'
+import { runChannel } from '../host/recorder'
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
 
-// A global session = one always-on "can do anything" conversation. Same as feature/fix: the claude/codex dual provider, image reading, ultracode,
-// the dangerous-command guard and decision cards all go through the shared capabilities (chat.ts / runCodexChat). The SSE channel is `g:<sessionId>`.
-export const globalChan = (id: string) => `g:${id}`
+// A global session = one always-on "can do anything" conversation. Claude runs on the session host (core/host: a long-lived
+// SDK query with native permission prompts / AskUserQuestion / plan mode / interrupt); Codex still goes through runCodexChat.
+// Image reading, ultracode and decision cards are shared. The SSE channel is `run:<sessionId>` — the host's RunEvents and
+// this pipeline's own chat/stage/done/error events travel on the same channel.
+export const globalChan = (id: string) => runChannel(id)
 
 const chatLocks = new Set<string>()
 const activeChats = new Map<string, ChildProcess>()
@@ -23,6 +29,10 @@ export function isGlobalChatting(id: string): boolean {
 }
 
 export function stopGlobalChat(id: string): boolean {
+  // Host-backed (claude) session: interrupt the current turn, keep the session alive.
+  if (claudeHost.isBusy(id)) { stopRequested.add(id); void claudeHost.interrupt(id); return true }
+  // The job holds the lock but has not reached send() yet (still creating the query): remember the stop so the turn is skipped.
+  if (chatLocks.has(id) && !activeChatStops.has(id) && !activeChats.has(id)) { stopRequested.add(id); return true }
   const stop = activeChatStops.get(id)
   const cp = activeChats.get(id)
   if (!stop && (!cp || cp.pid == null)) return false
@@ -44,6 +54,10 @@ export function stopAllGlobalChats(): boolean {
   return any
 }
 
+export function isGlobalLive(id: string): boolean {
+  return chatLocks.has(id) || claudeHost.isBusy(id)
+}
+
 export type GlobalChatJobCtx = {
   db: any
   schema: any
@@ -56,6 +70,8 @@ export type GlobalChatJobCtx = {
   lang: string
   allowDanger?: boolean // the user turned on the "allow dangerous commands" switch → let them past the guard
   ultracode?: boolean // activate ultracode in the background (the prefix is injected by the runner)
+  permissionMode?: PermissionMode // claude host: default / acceptEdits / plan / bypassPermissions
+  chrome?: boolean // claude host: pass --chrome so Claude in Chrome connects
   assetsDir: string // root directory for downloaded issue/PR images
 }
 
@@ -99,6 +115,11 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
     const cur = row()
     const resumeId: string | null = (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null
     let newSessionId: string | null = resumeId
+    // Run record (id = session id): one row per global conversation, usage appended per turn.
+    ensureSessionRun(db, schema, {
+      id: sessionId, kind: 'session', subkind: 'session', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+      workspaceType: 'cwd', workspacePath: ctx.cwd, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, title: cur?.title ?? null,
+    })
     const historyAccess = await prepareAgentHistoryAccess({
       db, schema, scope: 'global', id: sessionId, cwd: ctx.cwd, limit: 80,
     }).catch((e) => {
@@ -106,33 +127,55 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
       return undefined
     })
     try {
-      const r = await runGlobalChat(ctx.provider, {
-        cwd: ctx.cwd,
-        model: ctx.model,
-        effort: ctx.effort,
-        codexServiceTier: ctx.codexServiceTier,
-        lang: ctx.lang,
-        sessionId: resumeId,
-        message: agentMessage,
-        historyAccess,
-        allowDanger: ctx.allowDanger,
-        ultracode: ctx.ultracode,
-        onSpawn: (cp) => activeChats.set(sessionId, cp),
-        onStop: (stop) => activeChatStops.set(sessionId, stop),
-        onSessionId: (sid) => {
-          newSessionId = sid
-          db.update(schema.globalSessions).set({ ...saveSession(sid), lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
-        },
-        onTool: (name, info) => emit('tool', `${name} ${info}`),
-        onText: (t) => {
-          acc += t
-          const n = new Date().getTime()
-          if (n - lastWrite > 400) { lastWrite = n; flush('streaming') }
-          emit('text', t)
-        },
-      })
-      acc = r.text || acc
-      newSessionId = r.sessionId ?? newSessionId
+      const onSessionId = (sid: string) => {
+        newSessionId = sid
+        db.update(schema.globalSessions).set({ ...saveSession(sid), lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
+      }
+      const onText = (t: string) => {
+        acc += t
+        const n = new Date().getTime()
+        if (n - lastWrite > 400) { lastWrite = n; flush('streaming') }
+        emit('text', t)
+      }
+      if (ctx.provider === 'claude') {
+        // Session host: one live query per session; permission prompts / AskUserQuestion / plan approval surface as RunEvents.
+        // The cross-provider history handoff is only needed when this session previously ran on Codex.
+        const needsHandoff = !!cur?.codexSessionId && !resumeId
+        const text = `${ctx.ultracode ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
+        await claudeHost.ensure({
+          runId: sessionId, kind: 'session', cwd: ctx.cwd, model: ctx.model, effort: ctx.effort, resume: resumeId,
+          permissionMode: ctx.permissionMode ?? 'default', allowDanger: ctx.allowDanger, systemAppend: globalSystemPrompt(ctx.lang), chrome: ctx.chrome,
+          db, schema,
+        })
+        if (stopRequested.has(sessionId)) throw new Error('stopped before the turn started')
+        const r = await claudeHost.send(sessionId, text, { turnId: asstId, onSessionId, onText })
+        acc = r.text || acc
+        newSessionId = r.sessionId ?? newSessionId
+        recordRunUsage(db, schema, sessionId, r.usage, asstId)
+        if (r.interrupted || stopRequested.has(sessionId)) stopped = true
+        else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
+      } else {
+        const r = await runGlobalChat(ctx.provider, {
+          cwd: ctx.cwd,
+          model: ctx.model,
+          effort: ctx.effort,
+          codexServiceTier: ctx.codexServiceTier,
+          lang: ctx.lang,
+          sessionId: resumeId,
+          message: agentMessage,
+          historyAccess,
+          allowDanger: ctx.allowDanger,
+          ultracode: ctx.ultracode,
+          onSpawn: (cp) => activeChats.set(sessionId, cp),
+          onStop: (stop) => activeChatStops.set(sessionId, stop),
+          onSessionId,
+          onTool: (name, info) => emit('tool', `${name} ${info}`),
+          onText,
+        })
+        acc = r.text || acc
+        newSessionId = r.sessionId ?? newSessionId
+        recordRunUsage(db, schema, sessionId, r.usage, asstId)
+      }
     } catch (e) {
       if (stopRequested.has(sessionId)) stopped = true // stopped by the user, not an error
       else throw e
@@ -148,6 +191,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
       .set({ ...saveSession(newSessionId), status: 'idle', error: null, title, lastUsedAt: now() })
       .where(eq(schema.globalSessions.id, sessionId))
       .run()
+    finishRun(db, schema, sessionId, { status: stopped ? 'stopped' : 'idle' })
     emit('chat', stopped ? 'stopped' : 'done')
   } catch (e) {
     activeChats.delete(sessionId)
@@ -156,6 +200,7 @@ export async function runGlobalChatJob(ctx: GlobalChatJobCtx, message: string): 
     flush('error')
     const errMsg = (e as Error).message
     db.update(schema.globalSessions).set({ status: 'error', error: errMsg, lastUsedAt: now() }).where(eq(schema.globalSessions.id, sessionId)).run()
+    finishRun(db, schema, sessionId, { status: 'error', error: errMsg })
     emit('error', errMsg)
   } finally {
     chatLocks.delete(sessionId)

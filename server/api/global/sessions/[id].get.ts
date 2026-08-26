@@ -1,6 +1,8 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
-import { isGlobalChatting } from '~core/global/pipeline'
+import { isGlobalChatting, isGlobalLive } from '~core/global/pipeline'
+import { claudeHost } from '~core/host/claudeHost'
+import { pendingPromptsFor } from '~core/host/pending'
 
 // Single-stage global session detail: the session row + its turns (ordered by ascending seq). Used when loading history / opening the drawer.
 export default defineEventHandler((event) => {
@@ -18,7 +20,7 @@ export default defineEventHandler((event) => {
   // Self-heal orphaned streaming turns: a streaming turn exists ⟺ one is running (the job synchronously takes the lock before creating the turn); the only exception is a dead process (restart/killed).
   // In that case wrap it up as stopped + put the session back to idle, so the frontend doesn't get stuck on "generating / stop does nothing".
   const last = turns[turns.length - 1] as any
-  if (last && last.role === 'assistant' && last.status === 'streaming' && !isGlobalChatting(id)) {
+  if (last && last.role === 'assistant' && last.status === 'streaming' && !isGlobalLive(id)) {
     d.update(schema.globalTurns).set({ status: 'stopped' }).where(eq(schema.globalTurns.id, last.id)).run()
     if (session.status === 'streaming') {
       d.update(schema.globalSessions).set({ status: 'idle' }).where(eq(schema.globalSessions.id, id)).run()
@@ -26,5 +28,14 @@ export default defineEventHandler((event) => {
     }
     last.status = 'stopped'
   }
-  return { session, turns, chatting: isGlobalChatting(id) }
+  // Host state: pending permission / question / plan prompts + the live session's mode and slash-command palette.
+  const pending = pendingPromptsFor(d, schema, id)
+  const info = claudeHost.info(id)
+  const run = d.select().from(schema.runs).where(eq(schema.runs.id, id)).get()
+  return {
+    session, turns, chatting: isGlobalChatting(id) || isGlobalLive(id),
+    host: { live: claudeHost.status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
+    pending,
+    run: run ? { costUsd: run.costUsd, costSource: run.costSource, inputTokens: run.inputTokens, outputTokens: run.outputTokens, numTurns: run.numTurns } : null,
+  }
 })

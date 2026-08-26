@@ -1,0 +1,332 @@
+import { randomUUID } from 'node:crypto'
+import { query, type PermissionMode, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { eq } from 'drizzle-orm'
+import { PushQueue } from './queue'
+import { normalize, diffCumulativeUsage } from './normalize'
+import { buildOptions } from './options'
+import { answerPending, makeDangerHook, makePromptBridge, resolvePromptRow, type PendingPrompt } from './permissions'
+import { makeRunEmitter, setRunStatus } from './recorder'
+import type { ProviderUsage } from '../runs/types'
+import type { PromptAnswer, RunEvent, RunSpec, TurnCallbacks, TurnResult } from './types'
+
+// The Claude session host: one long-lived SDK query() per live run, fed by a push queue (streaming-input mode).
+// This is what gives the UI the CLI's native behaviours — permission prompts, AskUserQuestion, plan mode,
+// interrupt, mode switching, compaction/context events — instead of a one-shot `claude -p` per turn.
+
+const IDLE_MS = Number(process.env.HOST_IDLE_MS || 20 * 60_000)
+// A parked prompt nobody answers must not pin a CLI process forever: after this long it is denied as expired and the
+// session idles out like any other.
+const PROMPT_TTL_MS = Number(process.env.HOST_PROMPT_TTL_MS || 12 * 60 * 60_000)
+// Upper bound on simultaneously live queries (each is a claude process); the oldest idle one is closed to make room.
+const MAX_LIVE = Number(process.env.HOST_MAX_LIVE || 8)
+
+type LiveTurn = {
+  turnId: string | null
+  cb: TurnCallbacks
+  text: string // accumulated assistant text (main thread only)
+  resolve: (r: TurnResult) => void
+  interrupted: boolean
+}
+
+type LiveRun = {
+  spec: RunSpec
+  q: Query
+  input: PushQueue<SDKUserMessage>
+  abort: AbortController
+  sessionId: string | null
+  busy: boolean
+  turn: LiveTurn | null
+  prompts: Map<string, PendingPrompt>
+  promptTimers: Map<string, ReturnType<typeof setTimeout>>
+  lastCumulative: ProviderUsage | null
+  idleTimer: ReturnType<typeof setTimeout> | null
+  closed: boolean
+  lastUsedAt: number
+  init: Extract<RunEvent, { t: 'init' }> | null
+  emit: (e: RunEvent) => void
+  stderr: string
+  consumer: Promise<void>
+}
+
+class ClaudeHost {
+  private runs = new Map<string, LiveRun>()
+
+  // Make sure a live query exists for this run. Reuses the live one when it can continue the same native
+  // session; otherwise (idle-closed, crashed, different resume id) starts a fresh query with `resume`.
+  async ensure(spec: RunSpec): Promise<LiveRun> {
+    const cur = this.runs.get(spec.runId)
+    if (cur && !cur.closed) {
+      const sameSession = !spec.resume || spec.resume === cur.sessionId || !cur.sessionId
+      // cwd, effort, the system prompt and --chrome are fixed for the life of a query: a change means a fresh query that
+      // resumes the same native session (the transcript follows the session id, not the directory).
+      const sameShape = cur.spec.cwd === spec.cwd && (cur.spec.effort ?? '') === (spec.effort ?? '') && (cur.spec.systemAppend ?? '') === (spec.systemAppend ?? '') && !!cur.spec.chrome === !!spec.chrome
+      if (sameSession && sameShape && !cur.busy) {
+        cur.spec = { ...cur.spec, ...spec, resume: cur.spec.resume, allowDanger: spec.allowDanger ?? cur.spec.allowDanger }
+        if (spec.permissionMode && spec.permissionMode !== cur.init?.permissionMode) await this.setMode(spec.runId, spec.permissionMode).catch(() => {})
+        if (spec.model && spec.model !== (cur.spec.model ?? '') && cur.init && spec.model !== cur.init.model) await cur.q.setModel(spec.model).catch(() => {})
+        this.armIdle(cur)
+        return cur
+      }
+      if (cur.busy) throw new Error('a turn is already running')
+      await this.close(spec.runId, sameSession ? 'restart with new cwd/effort' : 'restart with different session')
+      if (sameSession && cur.sessionId) spec = { ...spec, resume: cur.sessionId }
+    }
+    await this.evictIfNeeded()
+    return this.create(spec)
+  }
+
+  // Keep at most MAX_LIVE queries alive: close the least recently used idle one (never a busy one or one waiting on a prompt).
+  private async evictIfNeeded(): Promise<void> {
+    const live = [...this.runs.values()].filter((r) => !r.closed)
+    if (live.length < MAX_LIVE) return
+    const idle = live.filter((r) => !r.busy && !r.prompts.size).sort((a, b) => a.lastUsedAt - b.lastUsedAt)
+    for (const r of idle.slice(0, live.length - MAX_LIVE + 1)) await this.close(r.spec.runId, 'evicted')
+  }
+
+  private create(spec: RunSpec): LiveRun {
+    const input = new PushQueue<SDKUserMessage>()
+    const abort = new AbortController()
+    const prompts = new Map<string, PendingPrompt>()
+    const store = { db: spec.db, schema: spec.schema }
+    const live: Partial<LiveRun> & { spec: RunSpec } = { spec, input, abort, prompts, promptTimers: new Map(), sessionId: spec.resume ?? null, busy: false, turn: null, lastCumulative: null, idleTimer: null, closed: false, init: null, stderr: '', lastUsedAt: Date.now() }
+    const emitRaw = makeRunEmitter({ runId: spec.runId, db: spec.db, schema: spec.schema, turnId: () => live.turn?.turnId ?? null })
+    const emit = (e: RunEvent) => { emitRaw(e); try { live.turn?.cb.onEvent?.(e) } catch { /* ignore */ } }
+    live.emit = emit
+    const canUseTool = makePromptBridge({
+      runId: spec.runId, store, prompts, currentTurnId: () => live.turn?.turnId ?? null, emit,
+      onWaiting: (w) => { emit({ t: 'status', status: w ? 'waiting_prompt' : 'busy' }); setRunStatus(spec.db, spec.schema, spec.runId, w ? 'awaiting_input' : 'running') },
+      onParked: (promptId) => {
+        // TTL: an unanswered prompt expires (denied) so the session can idle out instead of pinning a process for days.
+        const timer = setTimeout(() => {
+          const p = prompts.get(promptId)
+          if (!p) return
+          resolvePromptRow(store, promptId, 'expired')
+          emit({ t: 'permission_resolved', promptId, status: 'expired' })
+          p.resolve({ behavior: 'deny', message: 'No answer within the prompt time limit (PR Cockpit)', interrupt: false })
+        }, PROMPT_TTL_MS)
+        timer.unref?.()
+        live.promptTimers?.set(promptId, timer)
+      },
+      onSettled: (promptId) => { const t = live.promptTimers?.get(promptId); if (t) clearTimeout(t); live.promptTimers?.delete(promptId) },
+    })
+    const dangerHook = makeDangerHook(() => !!live.spec.allowDanger)
+    const q = query({ prompt: input, options: buildOptions(spec, { canUseTool, dangerHook, abort, stderr: (d) => { live.stderr = (live.stderr + d).slice(-4000) } }) })
+    live.q = q
+    const run = live as LiveRun
+    run.consumer = this.consume(run)
+    this.runs.set(spec.runId, run)
+    return run
+  }
+
+  private async consume(live: LiveRun): Promise<void> {
+    try {
+      for await (const msg of live.q) {
+        for (const e of normalize(msg)) this.dispatch(live, e)
+      }
+    } catch (e) {
+      const message = (e as Error)?.message || String(e)
+      if (!live.closed) live.emit({ t: 'error', message: `${message}${live.stderr ? `\n${live.stderr.slice(-800)}` : ''}` })
+      this.finishTurn(live, { text: live.turn?.text ?? '', sessionId: live.sessionId, usage: null, costUsd: null, subtype: 'error_during_execution', isError: true, interrupted: !!live.turn?.interrupted, error: message })
+    } finally {
+      this.teardown(live)
+    }
+  }
+
+  private dispatch(live: LiveRun, e: RunEvent): void {
+    switch (e.t) {
+      case 'init':
+        live.sessionId = e.sessionId || live.sessionId
+        live.init = e
+        if (e.sessionId) {
+          try { live.turn?.cb.onSessionId?.(e.sessionId) } catch { /* ignore */ }
+          if (live.spec.db && live.spec.schema) setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, live.busy ? 'running' : 'idle', { claudeSessionId: e.sessionId, permissionMode: e.permissionMode })
+        }
+        break
+      case 'text_delta':
+        if (e.parent == null) { try { live.turn?.cb.onText?.(e.text) } catch { /* ignore */ } }
+        break
+      case 'assistant_text':
+        if (e.parent == null && live.turn) live.turn.text += e.text
+        break
+      case 'tool_use':
+        try { live.turn?.cb.onTool?.(e.name, summarizeInput(e.input)) } catch { /* ignore */ }
+        break
+      case 'mode':
+        // The CLI changes modes on its own too (approving ExitPlanMode leaves plan mode) → keep our record in sync.
+        live.spec.permissionMode = e.permissionMode
+        if (live.init) live.init = { ...live.init, permissionMode: e.permissionMode }
+        setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, live.busy ? 'running' : 'idle', { permissionMode: e.permissionMode })
+        break
+      case 'turn_done': {
+        const delta = diffCumulativeUsage(live.lastCumulative, e.usage)
+        // A crash/startup-error result may carry zeroed usage: keep the baseline, or the next turn would be billed the whole session.
+        if (e.usage && e.usage.models.some((m) => m.inputTokens || m.outputTokens)) live.lastCumulative = e.usage
+        // On an API error the result text IS the error; the partial assistant output stays in the turn, not in the error.
+        const r: TurnResult = { text: e.isError ? (live.turn?.text || '') : (e.resultText || live.turn?.text || ''), sessionId: live.sessionId, usage: delta, costUsd: delta?.costUsd ?? null, subtype: e.subtype, isError: e.isError, interrupted: !!live.turn?.interrupted, ...(e.isError && e.resultText ? { error: e.resultText } : {}) }
+        live.emit({ ...e, usage: delta, costUsd: delta?.costUsd ?? null })
+        this.finishTurn(live, r)
+        void this.emitContextUsage(live)
+        return // already emitted with the per-turn delta
+      }
+      case 'reset':
+        live.lastCumulative = null // "a mid-session /clear resets the running total" (sdk.d.ts SDKResultMessage.total_cost_usd)
+        if (e.sessionId) {
+          live.sessionId = e.sessionId
+          try { live.turn?.cb.onSessionId?.(e.sessionId) } catch { /* ignore */ }
+          setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, live.busy ? 'running' : 'idle', { claudeSessionId: e.sessionId })
+        }
+        break
+      case 'local_command':
+        // /compact, /context, /cost … print through the CLI's local command output — show it as the assistant's reply.
+        if (live.turn) live.turn.text += (live.turn.text ? '\n' : '') + e.content
+        try { live.turn?.cb.onText?.(e.content) } catch { /* ignore */ }
+        break
+      default:
+        break
+    }
+    live.emit(e)
+  }
+
+  // Context-window usage after a turn (the UI's context meter). Best effort: older CLIs may not support the request.
+  private async emitContextUsage(live: LiveRun): Promise<void> {
+    if (live.closed) return
+    try {
+      const u: any = await live.q.getContextUsage()
+      const total = Number(u?.total_tokens ?? u?.totalTokens ?? 0)
+      const max = Number(u?.raw_max_tokens ?? u?.rawMaxTokens ?? u?.max_tokens ?? 0)
+      if (max > 0) live.emit({ t: 'context', totalTokens: total, maxTokens: max, percentage: Number(u?.percentage ?? Math.round((total / max) * 100)) })
+    } catch { /* unsupported or the query closed */ }
+  }
+
+  private finishTurn(live: LiveRun, r: TurnResult & { error?: string }): void {
+    const t = live.turn
+    live.busy = false
+    live.turn = null
+    live.lastUsedAt = Date.now()
+    if (t) t.resolve(r)
+    if (!live.closed) {
+      live.emit({ t: 'status', status: 'idle' })
+      setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, r.isError && !r.interrupted ? 'error' : r.interrupted ? 'stopped' : 'idle', r.error ? { error: r.error } : { error: null })
+      this.armIdle(live)
+    }
+  }
+
+  private armIdle(live: LiveRun): void {
+    if (live.idleTimer) clearTimeout(live.idleTimer)
+    live.idleTimer = setTimeout(() => { if (!live.busy && !live.prompts.size) void this.close(live.spec.runId, 'idle') }, IDLE_MS)
+    live.idleTimer.unref?.()
+  }
+
+  private teardown(live: LiveRun): void {
+    if (live.idleTimer) clearTimeout(live.idleTimer)
+    live.closed = true
+    for (const p of [...live.prompts.values()]) {
+      resolvePromptRow({ db: live.spec.db, schema: live.spec.schema }, p.id, 'cancelled')
+      live.emit({ t: 'permission_resolved', promptId: p.id, status: 'cancelled' })
+      p.resolve({ behavior: 'deny', message: 'session closed', interrupt: false })
+    }
+    live.prompts.clear()
+    for (const t of live.promptTimers.values()) clearTimeout(t)
+    live.promptTimers.clear()
+    if (live.turn) this.finishTurn(live, { text: live.turn.text, sessionId: live.sessionId, usage: null, costUsd: null, subtype: 'closed', isError: true, interrupted: live.turn.interrupted })
+    // Only announce 'closed' when this query is still the registered one — a replacement may already be live under the same id.
+    if (this.runs.get(live.spec.runId) === live) { this.runs.delete(live.spec.runId); live.emit({ t: 'status', status: 'closed' }) }
+  }
+
+  // Send one user message and wait for the turn to complete (result message). Rejects when a turn is already running.
+  send(runId: string, text: string, cb: TurnCallbacks & { turnId?: string | null } = {}): Promise<TurnResult> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return Promise.reject(new Error('run is not live'))
+    if (live.busy) return Promise.reject(new Error('a turn is already running'))
+    live.busy = true
+    live.lastUsedAt = Date.now()
+    if (live.idleTimer) clearTimeout(live.idleTimer)
+    setRunStatus(live.spec.db, live.spec.schema, runId, 'running')
+    live.emit({ t: 'status', status: 'busy' })
+    return new Promise<TurnResult>((resolve) => {
+      live.turn = { turnId: cb.turnId ?? null, cb, text: '', resolve, interrupted: false }
+      // uuid lets results/stream events be bound back to this send (user_message_uuid); the CLI stamps session_id itself.
+      const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: randomUUID() as SDKUserMessage['uuid'] } as SDKUserMessage
+      live.input.push(msg)
+    })
+  }
+
+  async interrupt(runId: string): Promise<boolean> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    if (live.turn) live.turn.interrupted = true
+    try { await live.q.interrupt() } catch { /* the turn may already be over */ }
+    return true
+  }
+
+  async setMode(runId: string, mode: PermissionMode): Promise<boolean> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    await live.q.setPermissionMode(mode)
+    this.dispatch(live, { t: 'mode', permissionMode: mode })
+    return true
+  }
+
+  setAllowDanger(runId: string, allow: boolean): void {
+    const live = this.runs.get(runId)
+    if (live) live.spec.allowDanger = allow
+  }
+
+  answerPrompt(runId: string, promptId: string, a: PromptAnswer): boolean {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    return answerPending(live.prompts, { db: live.spec.db, schema: live.spec.schema }, live.emit, promptId, a)
+  }
+
+  pendingPrompts(runId: string): PendingPrompt[] {
+    return [...(this.runs.get(runId)?.prompts.values() ?? [])]
+  }
+
+  status(runId: string): 'busy' | 'waiting_prompt' | 'idle' | 'closed' {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return 'closed'
+    if (live.prompts.size) return 'waiting_prompt'
+    return live.busy ? 'busy' : 'idle'
+  }
+
+  isBusy(runId: string): boolean { return this.status(runId) === 'busy' || this.status(runId) === 'waiting_prompt' }
+
+  info(runId: string): { sessionId: string | null; init: Extract<RunEvent, { t: 'init' }> | null; permissionMode: PermissionMode | null } {
+    const live = this.runs.get(runId)
+    return { sessionId: live?.sessionId ?? null, init: live?.init ?? null, permissionMode: live?.spec.permissionMode ?? live?.init?.permissionMode ?? null }
+  }
+
+  async close(runId: string, reason = 'closed'): Promise<boolean> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    live.closed = true
+    if (live.idleTimer) clearTimeout(live.idleTimer)
+    try { live.input.close() } catch { /* ignore */ }
+    try { live.q.close() } catch { /* ignore */ }
+    if (live.spec.db && live.spec.schema) {
+      // A closed run is idle from the UI's point of view (the transcript survives on disk; the next message resumes it).
+      try { live.spec.db.update(live.spec.schema.runs).set({ status: live.turn ? 'stopped' : 'idle', updatedAt: new Date().toISOString() }).where(eq(live.spec.schema.runs.id, runId)).run() } catch { /* ignore */ }
+    }
+    void reason
+    return true
+  }
+
+  async closeAll(): Promise<boolean> {
+    let any = false
+    for (const id of [...this.runs.keys()]) any = (await this.close(id, 'shutdown')) || any
+    return any
+  }
+
+  liveRunIds(): string[] { return [...this.runs.keys()].filter((id) => !this.runs.get(id)!.closed) }
+}
+
+function summarizeInput(input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>
+  const v = i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.description ?? i.prompt ?? ''
+  return String(v).slice(0, 100)
+}
+
+// HMR-safe singleton (same pattern as core/events.ts): a dev reload must not orphan live CLI processes.
+const g = globalThis as unknown as { __claudeHost?: ClaudeHost }
+export const claudeHost = g.__claudeHost ?? (g.__claudeHost = new ClaudeHost())
+export type { ClaudeHost }

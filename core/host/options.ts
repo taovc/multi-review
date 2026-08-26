@@ -1,0 +1,117 @@
+import type { CanUseTool, HookCallback, Options } from '@anthropic-ai/claude-agent-sdk'
+import { resolveClaudeExecutable } from '../agent/claude-bin'
+import type { RunSpec } from './types'
+import { makeReviewCanUseTool, makeReviewGuardHook, REVIEW_DENY_RULES, REVIEW_DISALLOWED_TOOLS } from './readonly'
+
+// The single place SDK options are assembled. Sessions load the user's configuration exactly like the CLI
+// (settingSources omitted = user+project+local → settings.json, CLAUDE.md, rules, skills, commands, hooks, MCP,
+// plugins) and keep Claude Code's own system prompt, appending ours. Safety lives in permissions (mode +
+// canUseTool bridge + danger hook), not in isolation.
+export function buildOptions(spec: RunSpec, hooks: { canUseTool: CanUseTool; dangerHook: HookCallback; abort: AbortController; stderr?: (d: string) => void }): Options {
+  const bin = resolveClaudeExecutable()
+  const env: Record<string, string | undefined> = { ...process.env }
+  if (spec.projectDirName) env.CLAUDE_CODE_PROJECT_DIR_NAME = spec.projectDirName
+  const opts: Options = {
+    cwd: spec.cwd,
+    ...(spec.model ? { model: spec.model } : {}),
+    ...(spec.effort ? { effort: spec.effort as Options['effort'] } : {}),
+    permissionMode: spec.permissionMode ?? 'default',
+    // Required up front so the user can switch to bypassPermissions later in the session without restarting it.
+    allowDangerouslySkipPermissions: true,
+    systemPrompt: spec.systemAppend ? { type: 'preset', preset: 'claude_code', append: spec.systemAppend } : { type: 'preset', preset: 'claude_code' },
+    ...(spec.resume ? { resume: spec.resume } : {}),
+    includePartialMessages: true, // text deltas for live streaming
+    canUseTool: hooks.canUseTool,
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hooks.dangerHook] }] },
+    toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+    env,
+    ...(spec.chrome ? { extraArgs: { chrome: null } } : {}),
+    ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
+    abortController: hooks.abort,
+    ...(hooks.stderr ? { stderr: hooks.stderr } : {}),
+    ...(spec.kind === 'probe' ? { persistSession: false } : {}),
+  }
+  return opts
+}
+
+// Claude Code keys its per-project memory/transcript directory by the sanitised cwd. Reviews and PR sessions run in
+// worktrees, so we pin the directory to the project's main clone to keep one memory per project instead of one per worktree.
+export function projectDirNameFor(localPath: string | null | undefined): string | undefined {
+  if (!localPath) return undefined
+  return localPath.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+export type ReviewOptionsSpec = {
+  cwd: string
+  model?: string
+  effort?: string
+  methodology: string // already wrapped by withContract()
+  maxTurns: number
+  mcpAllow?: string[]
+  projectDirName?: string
+  abort?: AbortController
+}
+
+// Review family: the user's configuration is loaded like the CLI, but the run is read-only by three independent layers
+// (see core/host/readonly.ts) and the operating contract is appended to Claude Code's own system prompt.
+export function buildReviewOptions(spec: ReviewOptionsSpec): Options {
+  const bin = resolveClaudeExecutable()
+  const env: Record<string, string | undefined> = { ...process.env }
+  if (spec.projectDirName) env.CLAUDE_CODE_PROJECT_DIR_NAME = spec.projectDirName
+  const mcpAllow = spec.mcpAllow ?? []
+  return {
+    cwd: spec.cwd,
+    ...(spec.model ? { model: spec.model } : {}),
+    ...(spec.effort ? { effort: spec.effort as Options['effort'] } : {}),
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: spec.methodology },
+    permissionMode: 'default',
+    canUseTool: makeReviewCanUseTool(mcpAllow),
+    hooks: { PreToolUse: [{ hooks: [makeReviewGuardHook(mcpAllow)] }] },
+    disallowedTools: REVIEW_DISALLOWED_TOOLS,
+    settings: { permissions: { deny: REVIEW_DENY_RULES }, disableAllHooks: true },
+    // No allowed server → do not even connect the configured ones (faster start, nothing to leak to); with an allow
+    // list the servers connect and the verdict gates them per call.
+    ...(mcpAllow.length ? {} : { mcpServers: {}, strictMcpConfig: true }),
+    maxTurns: spec.maxTurns,
+    env,
+    ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
+    ...(spec.abort ? { abortController: spec.abort } : {}),
+  }
+}
+
+// One-shot text helpers (commit message, title, comment rewrite, JSON repair): no user configuration, no tools, one turn,
+// nothing persisted, and an explicit cwd so nothing runs in the server's own directory by accident.
+export function buildHelperOptions(spec: { cwd: string; model?: string; effort?: string; abort?: AbortController }): Options {
+  const bin = resolveClaudeExecutable()
+  return {
+    cwd: spec.cwd,
+    ...(spec.model ? { model: spec.model } : {}),
+    ...(spec.effort ? { effort: spec.effort as Options['effort'] } : {}),
+    settingSources: [],
+    mcpServers: {},
+    strictMcpConfig: true,
+    tools: [],
+    maxTurns: 1,
+    persistSession: false,
+    permissionMode: 'dontAsk',
+    ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
+    ...(spec.abort ? { abortController: spec.abort } : {}),
+  }
+}
+
+// Configuration probe (agent-config screen): load everything like a session would, never persist, never run a turn.
+export function buildProbeOptions(spec: { cwd: string; chrome?: boolean; projectDirName?: string; abort: AbortController }): Options {
+  const bin = resolveClaudeExecutable()
+  const env: Record<string, string | undefined> = { ...process.env }
+  if (spec.projectDirName) env.CLAUDE_CODE_PROJECT_DIR_NAME = spec.projectDirName
+  return {
+    cwd: spec.cwd,
+    systemPrompt: { type: 'preset', preset: 'claude_code' },
+    permissionMode: 'default',
+    persistSession: false,
+    env,
+    ...(spec.chrome ? { extraArgs: { chrome: null } } : {}),
+    ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
+    abortController: spec.abort,
+  }
+}

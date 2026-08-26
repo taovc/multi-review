@@ -2,6 +2,7 @@ import { runClaudeAgentChat, askUserClause } from './chat'
 import { runCodexChat } from './codexChat'
 import type { ReviewProvider } from './runners'
 import type { ChildProcess } from 'node:child_process'
+import type { ProviderUsage } from '../runs/types'
 
 // The global "can do anything" assistant, aligned with feature/fix: claude goes through the shared
 // runner (bypassPermissions + dangerous-command guard + ultracode + decision cards); codex goes
@@ -26,9 +27,9 @@ export type GlobalChatOptions = {
   onTool?: (name: string, info: string) => void
 }
 
-export type GlobalChatResult = { costUsd: number; sessionId: string | null; text: string }
+export type GlobalChatResult = { costUsd: number; sessionId: string | null; text: string; usage: ProviderUsage | null }
 
-function globalSystemPrompt(lang: string): string {
+export function globalSystemPrompt(lang: string): string {
   return `You are a capable general-purpose coding assistant. The current directory is the user's chosen working directory. You have the full toolset and full permissions (bash, git, gh, network, tests) — investigate and do whatever the user asks directly.
 
 ${askUserClause(lang)}`

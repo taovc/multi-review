@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 import { resolveClaudeExecutable } from './claude-bin'
+import { usageFromClaudeResult } from './usage'
+import type { ProviderUsage } from '../runs/types'
 
 // Run `claude --print ...`. The prompt goes through stdin (ended right after writing): this neither
 // hits ARG_MAX with an oversized argument nor hangs on "no stdin data received" (we write and close
@@ -50,7 +52,7 @@ export function runClaudeStream(
   args: string[],
   // onSpawn exposes the child process handle to the caller (the M2 stop button has to kill it)
   opts: { input?: string; cwd?: string; timeout?: number; idleTimeout?: number; env?: Record<string, string>; onEvent?: (msg: StreamMsg) => void; onSpawn?: (cp: import('node:child_process').ChildProcess) => void } = {},
-): Promise<{ costUsd: number; result: string; sessionId: string | null }> {
+): Promise<{ costUsd: number; result: string; sessionId: string | null; usage: ProviderUsage | null }> {
   // Idle timeout: the agent can run for a long time (ultracode with many subagents / opus[1m] / big
   // changes are all normal) — as long as it keeps producing output, don't kill it.
   // Any output resets the timer; we only kill runs that are truly stuck with no output for a long
@@ -68,6 +70,7 @@ export function runClaudeStream(
     let costUsd = 0
     let result = ''
     let sessionId: string | null = null // comes with stream-json, kept for resuming the chat later with --resume
+    let usage: ProviderUsage | null = null // tokens / per-model cost / duration from the result line (for the run record)
     let done = false
     let idleTimer: ReturnType<typeof setTimeout> | undefined
     let hardTimer: ReturnType<typeof setTimeout> | undefined
@@ -95,6 +98,7 @@ export function runClaudeStream(
       if (msg?.type === 'result') {
         if (typeof msg.total_cost_usd === 'number') costUsd = msg.total_cost_usd
         if (typeof msg.result === 'string') result = msg.result
+        usage = usageFromClaudeResult(msg)
       }
       try {
         opts.onEvent?.(msg)
@@ -117,7 +121,7 @@ export function runClaudeStream(
     cp.on('error', (e) => finish(() => reject(e)))
     cp.on('close', (code) => {
       consume(buf.trim()) // the last line may have no trailing newline (losing the result line would cost us cost/sessionId)
-      finish(() => (code === 0 ? resolve({ costUsd, result, sessionId }) : reject(new Error(`claude 退出码 ${code}: ${err.slice(0, 500)}`))))
+      finish(() => (code === 0 ? resolve({ costUsd, result, sessionId, usage }) : reject(new Error(`claude 退出码 ${code}: ${err.slice(0, 500)}`))))
     })
     if (hasInput) {
       cp.stdin!.on('error', () => {})

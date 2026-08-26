@@ -4,13 +4,17 @@ import os from 'node:os'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
-import { runGlobalChatJob, isGlobalChatting, type GlobalChatJobCtx } from '~core/global/pipeline'
+import { runGlobalChatJob, isGlobalChatting, isGlobalLive, type GlobalChatJobCtx } from '~core/global/pipeline'
 import type { ReviewProvider } from '~core/agent/runners'
 import { resolveGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../../../../utils/globalAgentConfig'
 import { resolveLang } from '~core/agent/lang'
+import { getAgentSettings } from '~core/agent/settings'
 
 // Send one global session message (fire-and-forget; progress goes over SSE). May carry a cwd (/cd): validated to exist, then persisted on the session.
-const Body = z.object({ message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), projectId: z.string().optional() })
+const Body = z.object({
+  message: z.string().min(1).max(20000), cwd: z.string().optional(), allowDanger: z.boolean().optional(), ultracode: z.boolean().optional(), projectId: z.string().optional(),
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).optional(), // claude host only
+})
 
 function existingPath(path?: string | null): string | null {
   const p = path?.trim()
@@ -24,11 +28,11 @@ function existingPath(path?: string | null): string | null {
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const { message, cwd, allowDanger, ultracode, projectId } = Body.parse((await readBody(event)) || {})
+  const { message, cwd, allowDanger, ultracode, projectId, permissionMode } = Body.parse((await readBody(event)) || {})
   const d = db()
   const session = d.select().from(schema.globalSessions).where(eq(schema.globalSessions.id, id)).get()
   if (!session) throw createError({ statusCode: 404, statusMessage: 'session 不存在' })
-  if (isGlobalChatting(id)) throw createError({ statusCode: 409, statusMessage: '上一条还在生成中，请等它完成或停止' })
+  if (isGlobalChatting(id) || isGlobalLive(id)) throw createError({ statusCode: 409, statusMessage: '上一条还在生成中，请等它完成或停止' })
 
   const cfg = useRuntimeConfig()
   const defaults = resolveGlobalAgentDefaults(d, cfg, projectId)
@@ -70,8 +74,10 @@ export default defineEventHandler(async (event) => {
     effort: (canReuseSessionConfig ? session.effort : null) || providerDefaults.effort,
     codexServiceTier: provider === defaults.provider ? defaults.codexServiceTier : null,
     lang: resolveLang(getCookie(event, 'mr-locale')),
-    allowDanger: !!allowDanger,
+    allowDanger,
     ultracode: !!ultracode,
+    permissionMode: permissionMode ?? 'default',
+    chrome: getAgentSettings(d, schema).chrome, // agent-config screen switch (PR_COCKPIT_CHROME=1 as the fallback default)
     assetsDir: resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets'),
   }
   void runGlobalChatJob(ctx, message).catch((e) => console.error('[global-chat] job failed', e))

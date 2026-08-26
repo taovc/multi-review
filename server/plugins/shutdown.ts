@@ -1,6 +1,7 @@
 import { stopAllGlobalChats } from '~core/global/pipeline'
 import { stopAllFixChats } from '~core/fix/pipeline'
 import { stopAllFeatureImpl } from '~core/feature/pipeline'
+import { claudeHost } from '~core/host/claudeHost'
 
 // Graceful exit: Electron sends Nitro a SIGTERM when the app closes (see stopNitro in electron/main.mjs).
 // Running claude/codex agents are spawned detached in their own process groups, so killing the Nitro
@@ -19,6 +20,8 @@ export default defineNitroPlugin(() => {
     stopping = true
 
     let any = false
+    // Host-backed sessions (live SDK queries): close them first — they own child claude processes too.
+    if (claudeHost.liveRunIds().length) { any = true; void claudeHost.closeAll() }
     for (const stopAll of [stopAllGlobalChats, stopAllFixChats, stopAllFeatureImpl]) {
       try {
         if (stopAll()) any = true

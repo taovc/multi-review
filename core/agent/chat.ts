@@ -3,6 +3,7 @@ import { dangerSettingsJson, dangerEnv } from './dangerGuard'
 import { langName } from './lang'
 import { RECOMMENDED_MARKER } from './decisionCard'
 import type { ChildProcess } from 'node:child_process'
+import type { ProviderUsage } from '../runs/types'
 
 // The claude runner + shared capability fragments used by all three chats (feature development / main assistant Global / fix a PR).
 // Unified: bypassPermissions + dangerous-command guard (dangerGuard) + ultracode background injection + stream-json event parsing +
@@ -28,7 +29,7 @@ export type AgentChatOptions = AgentChatCallbacks & {
   ultracode?: boolean // background activation → inject an `ultracode:` prefix into the message sent to the agent (what is stored/displayed stays the clean message)
 }
 
-export type AgentChatResult = { costUsd: number; sessionId: string | null; text: string }
+export type AgentChatResult = { costUsd: number; sessionId: string | null; text: string; usage: ProviderUsage | null }
 
 // Decision-card convention (identical across all three): on a genuine fork, emit one ```ask-user fenced block and end the turn; the frontend parses it into a decision card (clicking an option = the next message, resuming the session).
 // This block is concatenated into each chat's systemPrompt. Both claude and codex use it, with identical behavior.
@@ -64,7 +65,7 @@ export async function runClaudeAgentChat(opts: AgentChatOptions): Promise<AgentC
   let text = ''
   // Hand over session_id as early as possible (for persistence): stream-json carries it on the very first message; otherwise stopping midway → non-zero exit → we never get it → the next turn loses context.
   let sentSession = false
-  const { costUsd, result, sessionId } = await runClaudeStream(args, {
+  const { costUsd, result, sessionId, usage } = await runClaudeStream(args, {
     input,
     cwd: opts.cwd,
     env: dangerEnv(opts.allowDanger),
@@ -87,5 +88,5 @@ export async function runClaudeAgentChat(opts: AgentChatOptions): Promise<AgentC
     },
   })
   if (sessionId && !sentSession) opts.onSessionId?.(sessionId) // backstop
-  return { costUsd, sessionId, text: (result || text).trim() }
+  return { costUsd, sessionId, text: (result || text).trim(), usage }
 }
