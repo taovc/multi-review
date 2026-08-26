@@ -12,6 +12,7 @@ import {
   type ReviewResult,
 } from './review'
 import { buildRecheckPrompt, RecheckSchema, type RecheckAgentOptions, type RecheckResult } from './recheck'
+import { resolveLang } from './lang'
 import type { ReviewRunner } from './runners'
 
 // ── Structured-output JSON Schemas (aligned with their zod schemas, forcing Codex to emit parseable JSON) ──
