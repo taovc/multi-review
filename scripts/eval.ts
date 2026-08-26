@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { getDb, schema } from '../core/db/client'
-import { loadGolden } from '../core/eval/golden'
+import { goldenFromReviews, loadGolden } from '../core/eval/golden'
 import { runEval } from '../core/eval/runner'
 import { renderReport } from '../core/eval/report'
 import { loadMethodology } from '../core/methodology'
@@ -52,8 +52,23 @@ if (cmd === 'score-history') {
   process.exit(0)
 }
 
+if (cmd === 'golden-from-reviews') {
+  const dbPath0 = str('db') || process.env.NUXT_DB_PATH || process.env.DB_PATH || resolve('data', 'cockpit.db')
+  const d0 = getDb(dbPath0)
+  const ref = str('project')
+  const proj = ref ? (d0.select().from(schema.projects).all() as any[]).find((p) => p.id === ref || p.name === ref || p.slug === ref) : null
+  if (!proj) { process.stderr.write('--project <id|name> is required\n'); process.exit(1) }
+  const g = goldenFromReviews(d0, schema, proj, { limit: str('limit') ? Number(str('limit')) : undefined })
+  if (!g.cases.length) { process.stderr.write('no review with human-accepted findings for this project\n'); process.exit(1) }
+  const out = str('out') || resolve('eval', 'golden', `${g.name}.json`)
+  mkdirSync(resolve(out, '..'), { recursive: true })
+  writeFileSync(out, JSON.stringify(g, null, 2) + '\n')
+  process.stdout.write(`${g.cases.length} case(s), ${g.cases.reduce((a, c) => a + c.labels.length, 0)} label(s) → ${out}\nReview the labels by hand before trusting the scores (accepted ≠ complete).\n`)
+  process.exit(0)
+}
+
 if (cmd !== 'run') {
-  process.stdout.write('usage: pnpm eval run --golden <file> … | pnpm eval score-history [--project <id|name>] [--from iso] [--to iso]\n       pnpm eval run --golden <file> [--project <id|name>] [--provider claude|codex] [--model a,b] [--effort e] [--skill-version id | --skill id | --methodology file] [--verify] [--lang en] [--db path]\n')
+  process.stdout.write('usage: pnpm eval run --golden <file> … | pnpm eval score-history [--project <id|name>] [--from iso] [--to iso] | pnpm eval golden-from-reviews --project <id|name> [--out file] [--limit n]\n       pnpm eval run --golden <file> [--project <id|name>] [--provider claude|codex] [--model a,b] [--effort e] [--skill-version id | --skill id | --methodology file] [--verify] [--lang en] [--db path]\n')
   process.exit(cmd === 'help' ? 0 : 1)
 }
 
