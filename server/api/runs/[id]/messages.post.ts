@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
-import { isRunBusy, runSessionTurn } from '~core/runs/session'
+import { submitSessionTurn } from '~core/runs/session'
 import { buildSessionTurnCtx, getRunOr404 } from '../../../utils/runContext'
 
 // Send one message to a session run (fire-and-forget; progress streams on /api/runs/:id/stream). A cwd run may
@@ -21,7 +21,6 @@ export default defineEventHandler(async (event) => {
   const b = Body.parse((await readBody(event)) || {})
   const d = db()
   let run: any = getRunOr404(id)
-  if (isRunBusy(id)) throw createError({ statusCode: 409, statusMessage: '上一条还在生成中，请等它完成或停止' })
   if (run.busyAction === 'pushing') throw createError({ statusCode: 409, statusMessage: '上传进行中，请等它完成' })
   if (run.workspaceType === 'cwd') {
     const cwd = b.cwd?.trim()
@@ -34,6 +33,7 @@ export default defineEventHandler(async (event) => {
     }
   }
   const ctx = buildSessionTurnCtx(event, run, { message: b.message, permissionMode: b.permissionMode, allowDanger: b.allowDanger, ultracode: b.ultracode, projectId: b.projectId })
-  void runSessionTurn(ctx).catch((e) => console.error('[runs] turn failed', e))
-  return { ok: true, cwd: run.workspacePath }
+  // A running turn does not block: the message is queued and starts when the turn ends.
+  const r = submitSessionTurn(ctx)
+  return { ok: true, cwd: run.workspacePath, queued: r.queued, turnId: r.turnId }
 })

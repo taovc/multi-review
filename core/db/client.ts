@@ -155,6 +155,7 @@ function ensureColumns(sqlite: Database.Database) {
     ['runs', 'upload_state', "TEXT NOT NULL DEFAULT 'none'"],
     ['runs', 'busy_action', 'TEXT'],
     ['runs', 'forked_from', 'TEXT'],
+    ['run_turns', 'message_uuid', 'TEXT'],
   ]
   for (const [table, col, type] of adds) {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]

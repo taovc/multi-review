@@ -479,7 +479,8 @@ export const runTurns = sqliteTable('run_turns', {
   seq: integer('seq').notNull(),
   role: text('role', { enum: ['user', 'assistant'] }).notNull(),
   content: text('content').notNull().default(''),
-  status: text('status', { enum: ['streaming', 'done', 'error', 'stopped'] }).notNull().default('done'),
+  status: text('status', { enum: ['queued', 'streaming', 'done', 'error', 'stopped'] }).notNull().default('done'), // queued = a user message waiting for the running turn to finish
+  messageUuid: text('message_uuid'), // user turns: the SDK user-message uuid (file checkpoint anchor for rewind)
   createdAt: text('created_at').notNull(),
   endedAt: text('ended_at'),
 })

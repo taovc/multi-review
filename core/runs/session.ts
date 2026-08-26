@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { eq } from 'drizzle-orm'
+import { nanoid } from 'nanoid'
 import { prepareWorktree, prepareFeatureWorktree } from '../git/worktree'
 import { hostFor, hostOf } from '../host'
 import { runChannel } from '../host/recorder'
@@ -54,9 +55,51 @@ export type SessionTurnCtx = {
   chrome?: boolean
 }
 
-// ── busy / stop bookkeeping ──
+// ── busy / stop bookkeeping + the per-run message queue ──
 const locks = new Set<string>()
 const stopRequested = new Set<string>()
+// Messages sent while a turn runs wait here (persisted as run_turns rows with status 'queued') and start one after the
+// other when the running turn ends. Stop clears the queue; a restart drops it (recover marks the rows stopped).
+const queues = new Map<string, Array<{ ctx: SessionTurnCtx; userTurnId: string }>>()
+
+export function queuedTurns(runId: string): string[] { return (queues.get(runId) ?? []).map((q) => q.userTurnId) }
+
+// Run now when the run is free, otherwise park the message. Returns the queued user turn id when parked.
+export function submitSessionTurn(ctx: SessionTurnCtx): { queued: boolean; turnId: string | null } {
+  if (!isRunBusy(ctx.runId)) { void runSessionTurn(ctx).catch((e) => console.error('[runs] turn failed', e)); return { queued: false, turnId: null } }
+  const { db, schema, runId } = ctx
+  const now = new Date().toISOString()
+  const maxSeq = (db.select().from(schema.runTurns).where(eq(schema.runTurns.runId, runId)).all() as { seq: number }[]).reduce((m, t) => Math.max(m, t.seq), 0)
+  const id = nanoid()
+  db.insert(schema.runTurns).values({ id, runId, seq: maxSeq + 1, role: 'user', content: ctx.message, status: 'queued', createdAt: now }).run()
+  const q = queues.get(runId) ?? []
+  q.push({ ctx, userTurnId: id })
+  queues.set(runId, q)
+  cockpitBus.emit({ reviewId: runChannel(runId), ts: now, kind: 'chat', message: 'queued' })
+  return { queued: true, turnId: id }
+}
+
+export function cancelQueuedTurn(runId: string, turnId: string, db: any, schema: any): boolean {
+  const q = queues.get(runId) ?? []
+  const i = q.findIndex((x) => x.userTurnId === turnId)
+  if (i < 0) return false
+  q.splice(i, 1)
+  db.delete(schema.runTurns).where(eq(schema.runTurns.id, turnId)).run()
+  cockpitBus.emit({ reviewId: runChannel(runId), ts: new Date().toISOString(), kind: 'chat', message: 'dequeued' })
+  return true
+}
+
+function clearQueue(runId: string, db?: any, schema?: any): void {
+  const q = queues.get(runId) ?? []
+  queues.delete(runId)
+  if (db && schema) for (const x of q) { try { db.update(schema.runTurns).set({ status: 'stopped', endedAt: new Date().toISOString() }).where(eq(schema.runTurns.id, x.userTurnId)).run() } catch { /* ignore */ } }
+}
+
+function startNextQueued(runId: string): void {
+  const next = queues.get(runId)?.shift()
+  if (!next) { queues.delete(runId); return }
+  void runSessionTurn(next.ctx, { userTurnId: next.userTurnId }).catch((e) => console.error('[runs] queued turn failed', e))
+}
 
 export function isRunBusy(runId: string): boolean {
   return locks.has(runId) || hostOf(runId).isBusy(runId)
@@ -64,7 +107,8 @@ export function isRunBusy(runId: string): boolean {
 
 // Stop the turn in progress: interrupt the live host session (it stays alive) or, when the job has not reached the host
 // yet, remember the stop so the turn is skipped. Returns false when nothing is running.
-export function stopRun(runId: string): boolean {
+export function stopRun(runId: string, store?: { db: any; schema: any }): boolean {
+  clearQueue(runId, store?.db, store?.schema) // Stop means stop everything, queued messages included
   const host = hostOf(runId)
   if (host.isBusy(runId)) { stopRequested.add(runId); void host.interrupt(runId); return true }
   if (locks.has(runId)) { stopRequested.add(runId); return true }
@@ -144,7 +188,7 @@ function systemPromptFor(run: any, ctx: SessionTurnCtx, extra: { conflict?: stri
   return globalSystemPrompt(ctx.lang)
 }
 
-export async function runSessionTurn(ctx: SessionTurnCtx): Promise<void> {
+export async function runSessionTurn(ctx: SessionTurnCtx, opts: { userTurnId?: string } = {}): Promise<void> {
   const { db, schema, runId } = ctx
   const now = () => new Date().toISOString()
   if (locks.has(runId)) return
@@ -154,7 +198,20 @@ export async function runSessionTurn(ctx: SessionTurnCtx): Promise<void> {
   const run0 = row()
   if (!run0) { locks.delete(runId); return }
 
-  const { assistantId: asstId } = appendTurns({ db, turnTable: schema.runTurns, fkField: 'runId', fkValue: runId, now, message: ctx.message })
+  // A queued message already has its user row: mark it done and append only the assistant placeholder.
+  let asstId: string
+  let userTurnId: string
+  if (opts.userTurnId) {
+    userTurnId = opts.userTurnId
+    const maxSeq = (db.select().from(schema.runTurns).where(eq(schema.runTurns.runId, runId)).all() as { seq: number }[]).reduce((m, t) => Math.max(m, t.seq), 0)
+    db.update(schema.runTurns).set({ status: 'done' }).where(eq(schema.runTurns.id, userTurnId)).run()
+    asstId = nanoid()
+    db.insert(schema.runTurns).values({ id: asstId, runId, seq: maxSeq + 1, role: 'assistant', content: '', status: 'streaming', createdAt: now() }).run()
+  } else {
+    const t = appendTurns({ db, turnTable: schema.runTurns, fkField: 'runId', fkValue: runId, now, message: ctx.message })
+    asstId = t.assistantId
+    userTurnId = t.userId
+  }
   db.update(schema.runs).set({ status: 'running', error: null, updatedAt: now() }).where(eq(schema.runs.id, runId)).run()
   emit('chat', 'user')
 
@@ -232,6 +289,7 @@ export async function runSessionTurn(ctx: SessionTurnCtx): Promise<void> {
     const r = await host.send(runId, text, {
       turnId: asstId,
       onSessionId: (sid) => setRunSession(db, schema, runId, provider, sid),
+      onUserUuid: (uuid) => { try { db.update(schema.runTurns).set({ messageUuid: uuid }).where(eq(schema.runTurns.id, userTurnId)).run() } catch { /* ignore */ } },
       onText: (t) => {
         acc += t
         const n = Date.now()
@@ -284,5 +342,6 @@ export async function runSessionTurn(ctx: SessionTurnCtx): Promise<void> {
     locks.delete(runId)
     stopRequested.delete(runId)
     cockpitBus.emit({ reviewId: runChannel(runId), ts: now(), kind: 'status', message: row()?.status })
+    startNextQueued(runId)
   }
 }

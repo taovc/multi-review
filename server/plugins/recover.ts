@@ -143,7 +143,7 @@ export default defineNitroPlugin(async () => {
   // 3) Interrupted chat turns: assistant turns still streaming → stopped. The changes stay in the worktree (uncommitted),
   // and next time it's opened the dirty check makes the upload button appear.
   try {
-    const streaming = d.select().from(schema.runTurns).where(eq(schema.runTurns.status, 'streaming' as any)).all()
+    const streaming = d.select().from(schema.runTurns).where(inArray(schema.runTurns.status, ['streaming', 'queued'] as any)).all() // queued messages died with the process too
     for (const tn of streaming as any[]) {
       d.update(schema.runTurns).set({ status: 'stopped', endedAt: now() }).where(eq(schema.runTurns.id, tn.id)).run()
     }
