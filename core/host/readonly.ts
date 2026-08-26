@@ -10,7 +10,7 @@ import { isDangerousBash } from '../agent/guard'
 // Unlike the old ISOLATED mode the user's configuration (CLAUDE.md, rules, skills, MCP, plugins) is loaded; MCP tools are
 // denied unless their server is on the read-only allow list from the agent-config screen.
 
-export const READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'Skill', 'TodoWrite', 'Task', 'TaskOutput', 'TaskStop'])
+export const READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'Skill', 'TodoWrite', 'Task', 'TaskOutput', 'TaskStop', 'StructuredOutput']) // StructuredOutput = how the CLI delivers outputFormat json_schema results
 
 export const REVIEW_DISALLOWED_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'ExitPlanMode', 'EnterPlanMode']
 

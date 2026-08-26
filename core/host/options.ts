@@ -50,6 +50,7 @@ export type ReviewOptionsSpec = {
   mcpAllow?: string[]
   projectDirName?: string
   abort?: AbortController
+  outputSchema?: Record<string, unknown> // JSON Schema the CLI validates the final message against (structured_output on the result)
 }
 
 // Review family: the user's configuration is loaded like the CLI, but the run is read-only by three independent layers
@@ -73,6 +74,7 @@ export function buildReviewOptions(spec: ReviewOptionsSpec): Options {
     // list the servers connect and the verdict gates them per call.
     ...(mcpAllow.length ? {} : { mcpServers: {}, strictMcpConfig: true }),
     maxTurns: spec.maxTurns,
+    ...(spec.outputSchema ? { outputFormat: { type: 'json_schema', schema: spec.outputSchema } } : {}),
     env,
     ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
     ...(spec.abort ? { abortController: spec.abort } : {}),

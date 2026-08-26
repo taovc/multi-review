@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { withContract } from './guard'
 import { buildReviewOptions } from '../host/options'
 import type { ReviewHostOptions } from './review'
-import { salvageJson } from './jsonSalvage'
+import { jsonSchemaFor, parseStructured } from './structured'
 import { outputLangClause, resolveLang } from './lang'
 import { usageFromClaudeResult } from './usage'
 import type { ProviderUsage } from '../runs/types'
@@ -38,6 +38,7 @@ export const RecheckSchema = z.object({
   conclusion: z.string().default(''),
 })
 export type RecheckResult = z.infer<typeof RecheckSchema>
+const RECHECK_JSON_SCHEMA = jsonSchemaFor(RecheckSchema)
 
 export type ExistingFinding = { fid: string; title: string; location: string | null; problem: string | null; fix: string | null; notes: string | null }
 
@@ -104,11 +105,12 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
   const prompt = buildRecheckPrompt(opts)
   const stream = query({
     prompt,
-    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort, outputSchema: RECHECK_JSON_SCHEMA }),
   })
   let text = ''
   let costUsd = 0
   let usage: ProviderUsage | null = null
+  let structured: unknown = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -122,8 +124,9 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
       usage = usageFromClaudeResult(msg, opts.model)
+      structured = (msg as any).structured_output ?? null
     }
   }
-  const result = RecheckSchema.parse(await salvageJson(text, opts.model, opts.cwd))
+  const result = parseStructured(RecheckSchema, structured, text)
   return { result, costUsd, usage }
 }

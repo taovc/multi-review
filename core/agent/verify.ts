@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { buildReviewOptions, type ReviewOptionsSpec } from '../host/options'
 import { withContract } from './guard'
-import { salvageJson } from './jsonSalvage'
+import { jsonSchemaFor, parseStructured } from './structured'
 import { usageFromClaudeResult } from './usage'
 import { resolveLang, outputLangClause } from './lang'
 import { runCodexReadonly } from '../codex/oneshot'
@@ -91,11 +91,12 @@ export async function runVerifyAgent(opts: VerifyAgentOptions): Promise<{ result
   }
   const stream = query({
     prompt: buildVerifyPrompt(opts),
-    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort, outputSchema: jsonSchemaFor(VerifyResultSchema) }),
   })
   let text = ''
   let costUsd = 0
   let usage: ProviderUsage | null = null
+  let structured: unknown = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -109,9 +110,10 @@ export async function runVerifyAgent(opts: VerifyAgentOptions): Promise<{ result
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
       usage = usageFromClaudeResult(msg, opts.model)
+      structured = (msg as any).structured_output ?? null
     }
   }
-  return { result: VerifyResultSchema.parse(await salvageJson(text, opts.model, opts.cwd)), costUsd, usage }
+  return { result: parseStructured(VerifyResultSchema, structured, text), costUsd, usage }
 }
 
 // Verdict per fid with 'unsure' for anything the verifier did not mention.

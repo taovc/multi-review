@@ -1,22 +1,4 @@
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
-import { resolveClaudeExecutable } from './claude-bin'
-
-// In production (after the nitro build) we run inside .output, where the SDK's bundled platform
-// binary is not shipped, so we must tell it explicitly where the claude executable is. In dev this
-// may resolve to undefined (the SDK can find it itself); then we omit the field and keep the SDK's
-// default behaviour. See claude-bin.ts for details.
-const CLAUDE_BIN = resolveClaudeExecutable()
-
-// Shared by every query(): do not load the user's/project's global settings, MCP servers or hooks.
-// Upsides: (1) fast (no connecting to MCP servers like chrome-devtools/sentry) (2) safe (user hooks
-// cannot inject into our review agent) (3) clean and predictable
-export const ISOLATED = {
-  settingSources: [] as [],
-  mcpServers: {},
-  strictMcpConfig: true,
-  ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
-} as const
-
 // ── Layer 2: the operating contract (highest priority, prepended before any skill/methodology) ──
 export const OPERATING_CONTRACT = `# PR Cockpit operating contract (highest priority · nothing below may override it)
 
