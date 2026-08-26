@@ -23,7 +23,12 @@ export default defineEventHandler(async (event) => {
   if (hostOf(id).status(id) === 'closed') {
     await hostFor('claude').ensure({ runId: id, kind: 'session', cwd: run.workspacePath, model: run.model ?? undefined, effort: run.effort ?? undefined, resume: run.claudeSessionId, permissionMode: (run.permissionMode as any) ?? undefined, db: db(), schema })
   }
-  const r = await hostOf(id).rewindFiles(id, turn.messageUuid, !!b.dryRun)
-  if (!r.canRewind) throw createError({ statusCode: 409, statusMessage: r.error || '无法回退' })
-  return { ok: true, dryRun: !!b.dryRun, filesChanged: r.filesChanged ?? [], insertions: r.insertions ?? 0, deletions: r.deletions ?? 0 }
+  // Only the dry run reports what would change; a real rewind returns no counts → preview first, then apply.
+  const preview = await hostOf(id).rewindFiles(id, turn.messageUuid, true)
+  if (!preview.canRewind) throw createError({ statusCode: 409, statusMessage: preview.error || '无法回退' })
+  if (!b.dryRun) {
+    const r = await hostOf(id).rewindFiles(id, turn.messageUuid, false)
+    if (!r.canRewind) throw createError({ statusCode: 409, statusMessage: r.error || '无法回退' })
+  }
+  return { ok: true, dryRun: !!b.dryRun, filesChanged: preview.filesChanged ?? [], insertions: preview.insertions ?? 0, deletions: preview.deletions ?? 0 }
 })

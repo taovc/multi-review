@@ -9,6 +9,7 @@ const entries = classifyCommands([
   { name: 'Notion:tasks:plan', description: 'Plan tasks in Notion', argumentHint: '' },
   { name: 'mcp__plugin_Notion_notion__make-this-a-notion-page', description: 'Turn this into a Notion page', argumentHint: '' },
   { name: 'compact', description: 'Compact the conversation', argumentHint: '' },
+  { name: 'plugin:Notion:notion:make-this-a-notion-page (MCP)', description: 'MCP prompt', argumentHint: '' },
   { name: 'usage', description: 'Show usage', argumentHint: '', aliases: ['cost', 'stats'] },
   { name: 'vim', description: 'Toggle vim mode', argumentHint: '' },
   { name: 'exit', description: 'Exit', argumentHint: '' },
@@ -25,6 +26,8 @@ assert.equal(byName['Notion:tasks:plan']!.plugin, 'Notion')
 assert.equal(byName['Notion:tasks:plan']!.shortName, 'tasks:plan')
 assert.equal(byName['mcp__plugin_Notion_notion__make-this-a-notion-page']!.plugin, 'Notion')
 assert.equal(byName['mcp__plugin_Notion_notion__make-this-a-notion-page']!.shortName, 'make-this-a-notion-page')
+assert.equal(byName['plugin:Notion:notion:make-this-a-notion-page']!.plugin, 'Notion') // " (MCP)" suffix stripped, plugin parsed past the 'plugin:' prefix
+assert.equal(byName['plugin:Notion:notion:make-this-a-notion-page']!.shortName, 'notion:make-this-a-notion-page')
 assert.equal(byName['compact']!.origin, 'builtin')
 assert.equal(byName['compact']!.curated, true)
 assert.equal(byName['vim'], undefined) // hidden outright

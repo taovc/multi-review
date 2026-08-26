@@ -35,13 +35,15 @@ function isUserSkill(description: string): boolean {
 }
 
 export function classifyCommand(c: RawCommand, opts: { terminalOnly?: Set<string> } = {}): CommandEntry | null {
-  const name = String(c.name ?? '').trim()
+  // MCP prompts exposed by plugins are listed as "plugin:<plugin>:<server>:<prompt> (MCP)"; the suffix is display-only.
+  const name = String(c.name ?? '').trim().replace(/\s+\(MCP\)\s*$/, '')
   if (!name) return null
   if (HIDDEN_COMMANDS.has(name) || opts.terminalOnly?.has(name)) return null
   const description = String(c.description ?? '').replace(/\s*\((user|project|plugin)\)\s*$/, '').trim()
-  const plugin = isPluginName(name) ? (name.startsWith('mcp__plugin_') ? name.split('__')[1]?.replace(/^plugin_/, '').split('_')[0] ?? 'plugin' : name.split(':')[0]!) : undefined
+  const colon = name.startsWith('plugin:') ? name.split(':').slice(1) : name.split(':') // ['Notion', 'tasks', 'plan']
+  const plugin = isPluginName(name) ? (name.startsWith('mcp__plugin_') ? name.split('__')[1]?.replace(/^plugin_/, '').split('_')[0] ?? 'plugin' : colon[0]!) : undefined
   const origin: CommandOrigin = plugin ? 'plugin' : isUserSkill(String(c.description ?? '')) ? 'user' : 'builtin'
-  const shortName = plugin ? (name.startsWith('mcp__plugin_') ? name.split('__').slice(2).join('__') : name.split(':').slice(1).join(':')) : name
+  const shortName = plugin ? (name.startsWith('mcp__plugin_') ? name.split('__').slice(2).join('__') : colon.slice(1).join(':')) : name
   return {
     name, description, argumentHint: String(c.argumentHint ?? ''), aliases: Array.isArray(c.aliases) ? c.aliases.map(String) : [],
     origin, plugin, shortName: shortName || name, curated: origin !== 'builtin' || CURATED_BUILTINS.has(name),
