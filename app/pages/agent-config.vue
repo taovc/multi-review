@@ -190,5 +190,32 @@ const contextTotal = computed(() => (data.value?.probe?.context ?? []).reduce((a
         </div>
       </div>
     </section>
+
+    <!-- Codex (app-server) -->
+    <section v-if="data" :class="box">
+      <h2 :class="h2">{{ t('agentConfig.codex') }}
+        <span v-if="data.codex" class="normal-case tracking-normal">· {{ data.codex.version || '?' }} · {{ data.codex.ms }} ms</span>
+      </h2>
+      <p v-if="data.codex?.error" class="text-xs text-highlighted mb-3">{{ t('agentConfig.codexError', { msg: data.codex.error }) }}</p>
+      <div v-if="data.codex" class="grid md:grid-cols-2 gap-4 text-xs">
+        <div>
+          <div class="text-dimmed">{{ t('agentConfig.codexBin') }}</div>
+          <div class="font-mono break-all">{{ data.codex.bin || '—' }} <span class="text-dimmed">({{ data.codex.binSource || '?' }})</span></div>
+          <div class="text-dimmed mt-2">{{ t('agentConfig.codexAuth') }}</div>
+          <div>{{ data.codex.auth.method || t('agentConfig.none') }}</div>
+          <div class="text-dimmed mt-2">{{ t('agentConfig.mcp') }} ({{ data.codex.mcpServers.length }})</div>
+          <div v-for="s in data.codex.mcpServers" :key="s.name" class="font-mono">{{ s.name }} · {{ s.authStatus }} · {{ s.tools }} tools</div>
+          <div class="text-dimmed mt-2">{{ t('agentConfig.models') }} ({{ data.codex.models.length }})</div>
+          <div v-for="m in data.codex.models" :key="m.id" class="font-mono">{{ m.id }} <span class="text-dimmed">{{ m.efforts.join('/') }}</span></div>
+        </div>
+        <div>
+          <div class="text-dimmed">{{ t('agentConfig.codexConfig') }}</div>
+          <div v-for="(v, k) in data.codex.config" :key="k" class="flex gap-2 font-mono"><span class="whitespace-nowrap">{{ k }}</span><span class="text-dimmed truncate">{{ typeof v === 'object' ? JSON.stringify(v) : v }}<template v-if="data.codex.configOrigins[k]"> ({{ data.codex.configOrigins[k] }})</template></span></div>
+          <div class="text-dimmed mt-2">{{ t('agentConfig.codexSkills') }} ({{ data.codex.skills.length }})</div>
+          <div v-for="s in data.codex.skills" :key="s.path" class="font-mono" :class="s.enabled ? '' : 'text-dimmed'">{{ s.name }} <span class="text-dimmed">· {{ s.scope }}</span></div>
+        </div>
+      </div>
+      <div v-else class="text-xs text-dimmed">{{ t('agentConfig.noProbe') }}</div>
+    </section>
   </div>
 </template>

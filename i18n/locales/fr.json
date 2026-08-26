@@ -710,7 +710,13 @@
       "mcpAllow": "Serveurs MCP autorisés en revue (lecture seule)",
       "mcpAllowHint": "Tout le reste est refusé dans la famille revue. Ne listez que des serveurs qui n'écrivent pas.",
       "saved": "Enregistré",
-      "memoryDir": "Dossier mémoire / transcript"
+      "memoryDir": "Répertoire mémoire / transcript",
+      "codex": "Ce que rapporte Codex (app-server)",
+      "codexBin": "Binaire",
+      "codexAuth": "Connexion",
+      "codexConfig": "Config effective (avec couche)",
+      "codexSkills": "Skills",
+      "codexError": "Sondage Codex échoué : {msg}"
   },
   "dashboard": {
     "title": "Tableau de bord",

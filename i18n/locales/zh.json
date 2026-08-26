@@ -710,7 +710,13 @@
       "mcpAllow": "审核可调用的 MCP 服务（只读）",
       "mcpAllowHint": "审核家族里其余 MCP 全部拒绝；只列不会写入的服务。",
       "saved": "已保存",
-      "memoryDir": "记忆 / transcript 目录"
+      "memoryDir": "记忆 / transcript 目录",
+      "codex": "Codex 实际报告（app-server）",
+      "codexBin": "二进制",
+      "codexAuth": "登录",
+      "codexConfig": "生效配置（含来源层）",
+      "codexSkills": "Skills",
+      "codexError": "Codex 探测失败：{msg}"
   },
   "dashboard": {
     "title": "仪表盘",

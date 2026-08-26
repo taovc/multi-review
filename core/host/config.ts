@@ -1,3 +1,4 @@
+import { describeCodexConfig, type CodexConfigReport } from '../codex/describe'
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -43,6 +44,7 @@ export type AgentConfigReport = {
   files: ConfigFile[]
   settings: EffectiveSettings
   probe: ProbeReport | null
+  codex: CodexConfigReport | null // what the Codex app-server reports for this cwd (same probe switch)
   overrides: RunKindOverride[]
   agent: AgentSettings
 }
@@ -195,12 +197,14 @@ export async function probeAgent(cwd: string, chrome: boolean, refresh = false):
 
 export async function agentConfigReport(opts: { cwd: string; agent: AgentSettings; probe: boolean; refresh?: boolean }): Promise<AgentConfigReport> {
   const cwd = resolve(opts.cwd)
+  const [probe, codex] = opts.probe ? await Promise.all([probeAgent(cwd, opts.agent.chrome, opts.refresh), describeCodexConfig(cwd, opts.refresh)]) : [null, null]
   return {
     cwd,
     projectDirName: projectDirNameFor(cwd),
     files: listConfigFiles(cwd),
     settings: effectiveSettings(cwd),
-    probe: opts.probe ? await probeAgent(cwd, opts.agent.chrome, opts.refresh) : null,
+    probe,
+    codex,
     overrides: runKindOverrides(opts.agent),
     agent: opts.agent,
   }

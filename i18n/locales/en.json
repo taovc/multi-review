@@ -710,7 +710,13 @@
       "mcpAllow": "MCP servers reviews may call (read-only)",
       "mcpAllowHint": "Everything else is denied inside the review family. Only list servers that cannot write.",
       "saved": "Saved",
-      "memoryDir": "Memory / transcript directory"
+      "memoryDir": "Memory / transcript directory",
+      "codex": "What Codex reports (app-server)",
+      "codexBin": "Binary",
+      "codexAuth": "Login",
+      "codexConfig": "Effective config (with layer)",
+      "codexSkills": "Skills",
+      "codexError": "Codex probe failed: {msg}"
   },
   "dashboard": {
     "title": "Dashboard",
