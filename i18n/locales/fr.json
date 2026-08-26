@@ -18,6 +18,9 @@
   "layout": {
     "metaDescription": "Gestion locale des revues de PR en masse",
     "projectsTitle": "Projets",
+    "notifyHint": "Notifications de bureau quand un agent vous attend",
+    "notifyOn": "Notifications activées",
+    "notifyOff": "Notifications désactivées",
     "createProject": "Créer un projet",
     "create": "Créer",
     "creating": "Création…",
@@ -721,6 +724,7 @@
       "codexAuth": "Connexion",
       "codexConfig": "Config effective (avec couche)",
       "codexSkills": "Skills",
+      "codexRateLimits": "Limites de débit",
       "codexError": "Sondage Codex échoué : {msg}"
   },
   "dashboard": {

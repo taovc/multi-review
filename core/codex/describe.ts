@@ -14,6 +14,7 @@ export type CodexConfigReport = {
   configOrigins: Record<string, string> // key → layer that set it
   mcpServers: Array<{ name: string; authStatus: string; tools: number }>
   skills: Array<{ name: string; scope: string; enabled: boolean; path: string }>
+  rateLimits: { plan: string | null; primary: { usedPercent: number; windowMinutes: number; resetsAt: string | null } | null; secondary: { usedPercent: number; windowMinutes: number; resetsAt: string | null } | null } | null
   error?: string
   at: string
   ms: number
@@ -39,16 +40,17 @@ export async function describeCodexConfig(cwd: string, refresh = false): Promise
 
 async function build(cwd: string): Promise<CodexConfigReport> {
   const t0 = Date.now()
-  const base: CodexConfigReport = { bin: resolveCodexExecutable() ?? null, binSource: codexExecutableSource(), version: null, server: codexServerInfo(), auth: { method: null, requiresOpenaiAuth: null }, models: [], config: {}, configOrigins: {}, mcpServers: [], skills: [], at: new Date().toISOString(), ms: 0 }
+  const base: CodexConfigReport = { bin: resolveCodexExecutable() ?? null, binSource: codexExecutableSource(), version: null, server: codexServerInfo(), auth: { method: null, requiresOpenaiAuth: null }, models: [], config: {}, configOrigins: {}, mcpServers: [], skills: [], rateLimits: null, at: new Date().toISOString(), ms: 0 }
   try {
     const server = await getCodexServer()
     const rpc = server.rpc
-    const [auth, models, cfg, mcp, skills] = await Promise.all([
+    const [auth, models, cfg, mcp, skills, limits] = await Promise.all([
       rpc.request('getAuthStatus', { includeToken: false, refreshToken: false }).catch((e) => ({ _error: (e as Error).message })),
       rpc.request('model/list', { limit: 50, includeHidden: false }).catch((e) => ({ _error: (e as Error).message })),
       rpc.request('config/read', { cwd, includeLayers: false }).catch((e) => ({ _error: (e as Error).message })),
       rpc.request('mcpServerStatus/list', {}).catch((e) => ({ _error: (e as Error).message })),
       rpc.request('skills/list', { cwds: [cwd] }).catch((e) => ({ _error: (e as Error).message })),
+      rpc.request('account/rateLimits/read', {}).catch((e) => ({ _error: (e as Error).message })),
     ])
     const errors: string[] = []
     base.version = server.version
@@ -66,6 +68,11 @@ async function build(cwd: string): Promise<CodexConfigReport> {
     else base.mcpServers = (mcp?.data ?? []).map((s: any) => ({ name: String(s.name), authStatus: String(s.authStatus ?? 'unknown'), tools: Object.keys(s.tools ?? {}).length }))
     if (skills?._error) errors.push(`skills: ${skills._error}`)
     else base.skills = (skills?.data ?? []).flatMap((entry: any) => (entry.skills ?? []).map((s: any) => ({ name: String(s.name), scope: String(s.scope ?? ''), enabled: !!s.enabled, path: String(s.path ?? '') })))
+    if (!limits?._error) {
+      const rl = limits?.rateLimits ?? limits ?? {}
+      const win = (w: any) => (w && typeof w.usedPercent === 'number' ? { usedPercent: w.usedPercent, windowMinutes: Number(w.windowDurationMins ?? 0), resetsAt: typeof w.resetsAt === 'number' ? new Date(w.resetsAt * 1000).toISOString() : null } : null)
+      base.rateLimits = { plan: rl.planType ?? null, primary: win(rl.primary), secondary: win(rl.secondary) }
+    }
     if (errors.length) base.error = errors.join('; ')
   } catch (e) {
     base.error = (e as Error).message

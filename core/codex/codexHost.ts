@@ -150,9 +150,13 @@ class CodexHost implements SessionHost {
     })
     this.runs.set(spec.runId, live)
 
+    // Skills palette: what Codex would load for this cwd (best effort; the thread works without it).
+    const skills: string[] = spec.kind === 'session'
+      ? await server.rpc.request('skills/list', { cwds: [spec.cwd] }, 10_000).then((r: any) => (r?.data ?? []).flatMap((e: any) => (e.skills ?? []).filter((s: any) => s.enabled !== false).map((s: any) => String(s.name)))).catch(() => [])
+      : []
     live.init = {
       t: 'init', sessionId: threadId, model: live.model, permissionMode: spec.permissionMode ?? 'default',
-      slashCommands: ['/compact'], skills: [], mcpServers: [], tools: [], claudeCodeVersion: `codex ${server.version ?? '?'}`,
+      slashCommands: ['/compact'], skills, mcpServers: [], tools: [], claudeCodeVersion: `codex ${server.version ?? '?'}`,
     }
     if (spec.db && spec.schema) {
       setRunSession(spec.db, spec.schema, spec.runId, 'codex', threadId)

@@ -18,6 +18,9 @@
   "layout": {
     "metaDescription": "本地批量 PR 审核管理",
     "projectsTitle": "项目",
+    "notifyHint": "agent 等你时弹桌面通知",
+    "notifyOn": "通知已开",
+    "notifyOff": "通知已关",
     "createProject": "创建项目",
     "create": "创建",
     "creating": "创建中…",
@@ -721,6 +724,7 @@
       "codexAuth": "登录",
       "codexConfig": "生效配置（含来源层）",
       "codexSkills": "Skills",
+      "codexRateLimits": "用量窗口",
       "codexError": "Codex 探测失败：{msg}"
   },
   "dashboard": {

@@ -14,8 +14,16 @@ const route = useRoute()
 // Inbox badge: how many things wait for the human (polled; cheap read query).
 const inboxCount = ref(0)
 let inboxTimer: ReturnType<typeof setInterval> | null = null
+// Desktop notification when the number of prompts waiting on the human grows (opt-in, see useNotifications).
+const notifications = useNotifications()
+let lastPrompts = -1
 async function refreshInbox() {
-  try { inboxCount.value = (await $fetch<{ counts: { total: number } }>('/api/inbox')).counts.total } catch { /* keep the last count */ }
+  try {
+    const r = await $fetch<{ counts: { total: number; prompts: number } }>('/api/inbox')
+    inboxCount.value = r.counts.total
+    if (lastPrompts >= 0 && r.counts.prompts > lastPrompts) notifications.notify(t('layout.inbox'), t('inbox.prompts', { n: r.counts.prompts }), () => navigateTo('/inbox'))
+    lastPrompts = r.counts.prompts
+  } catch { /* keep the last count */ }
 }
 onMounted(() => { void refreshInbox(); inboxTimer = setInterval(() => { if (document.visibilityState !== 'hidden') void refreshInbox() }, 30_000) })
 onBeforeUnmount(() => { if (inboxTimer) clearInterval(inboxTimer) })
@@ -93,6 +101,15 @@ async function createProject() {
         <aside class="w-full md:w-60 shrink-0 border-b md:border-b-0 md:border-r border-default flex flex-col md:min-h-0 max-h-44 md:max-h-none">
           <div class="px-4 md:px-6 pt-4 md:pt-5 pb-3 flex items-center justify-between">
             <span class="text-xs font-medium uppercase tracking-[0.15em] text-muted">{{ $t('layout.projectsTitle') }}</span>
+            <button
+              v-if="notifications.supported"
+              class="mr-2 transition-colors text-sm leading-none"
+              :class="notifications.enabled.value ? 'text-highlighted' : 'text-dimmed hover:text-highlighted'"
+              :title="notifications.enabled.value ? $t('layout.notifyOn') : $t('layout.notifyHint')"
+              @click="notifications.toggle()"
+            >
+              {{ notifications.enabled.value ? '🔔' : '🔕' }}
+            </button>
             <button
               class="text-dimmed hover:text-highlighted transition-colors text-lg leading-none"
               :title="$t('layout.createProject')"

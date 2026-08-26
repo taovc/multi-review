@@ -18,6 +18,7 @@ import { loadMethodology } from '../core/methodology'
 import { getAgentSettings } from '../core/agent/settings'
 import { projectDirNameFor } from '../core/host/options'
 import { stopCodexServer } from '../core/codex/appServer'
+import { precisionBySkillVersion } from '../core/metrics/queries'
 
 function parseArgs(argv: string[]): { cmd: string; flags: Record<string, string | true> } {
   const [cmd = 'help', ...rest] = argv
@@ -35,8 +36,24 @@ function parseArgs(argv: string[]): { cmd: string; flags: Record<string, string 
 const { cmd, flags } = parseArgs(process.argv.slice(2))
 const str = (k: string): string | undefined => (typeof flags[k] === 'string' ? (flags[k] as string) : undefined)
 
+if (cmd === 'score-history') {
+  const dbPath0 = str('db') || process.env.NUXT_DB_PATH || process.env.DB_PATH || resolve('data', 'cockpit.db')
+  const d0 = getDb(dbPath0)
+  const ref = str('project')
+  const proj = ref ? (d0.select().from(schema.projects).all() as any[]).find((p) => p.id === ref || p.name === ref || p.slug === ref) : null
+  if (ref && !proj) { process.stderr.write(`project not found: ${ref}\n`); process.exit(1) }
+  const rows = precisionBySkillVersion(d0, { projectId: proj?.id ?? null, from: str('from') ?? null, to: str('to') ?? null }) as any[]
+  process.stdout.write('skill · version | reviews | findings | human accepted | precision | cost/accepted\n')
+  for (const r of rows) {
+    const precision = r.findings ? (Number(r.human_accepted) / Number(r.findings)) : null
+    const cpa = r.human_accepted && r.cost_usd != null ? Number(r.cost_usd) / Number(r.human_accepted) : null
+    process.stdout.write(`${r.skill_name ?? '(default)'} · v${r.version ?? '-'} | ${r.reviews} | ${r.findings} | ${r.human_accepted} | ${precision == null ? '—' : `${(precision * 100).toFixed(0)}%`} | ${cpa == null ? '—' : `$${cpa.toFixed(3)}`}\n`)
+  }
+  process.exit(0)
+}
+
 if (cmd !== 'run') {
-  process.stdout.write('usage: pnpm eval run --golden <file> [--project <id|name>] [--provider claude|codex] [--model a,b] [--effort e] [--skill-version id | --skill id | --methodology file] [--verify] [--lang en] [--db path]\n')
+  process.stdout.write('usage: pnpm eval run --golden <file> … | pnpm eval score-history [--project <id|name>] [--from iso] [--to iso]\n       pnpm eval run --golden <file> [--project <id|name>] [--provider claude|codex] [--model a,b] [--effort e] [--skill-version id | --skill id | --methodology file] [--verify] [--lang en] [--db path]\n')
   process.exit(cmd === 'help' ? 0 : 1)
 }
 

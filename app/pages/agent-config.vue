@@ -203,6 +203,10 @@ const contextTotal = computed(() => (data.value?.probe?.context ?? []).reduce((a
           <div class="font-mono break-all">{{ data.codex.bin || '—' }} <span class="text-dimmed">({{ data.codex.binSource || '?' }})</span></div>
           <div class="text-dimmed mt-2">{{ t('agentConfig.codexAuth') }}</div>
           <div>{{ data.codex.auth.method || t('agentConfig.none') }}</div>
+          <template v-if="data.codex.rateLimits">
+            <div class="text-dimmed mt-2">{{ t('agentConfig.codexRateLimits') }}<span v-if="data.codex.rateLimits.plan"> · {{ data.codex.rateLimits.plan }}</span></div>
+            <div v-for="(w, k) in { primary: data.codex.rateLimits.primary, secondary: data.codex.rateLimits.secondary }" :key="k" class="font-mono"><template v-if="w">{{ k }} · {{ w.usedPercent }}% of {{ Math.round(w.windowMinutes / 60) }}h<span v-if="w.resetsAt" class="text-dimmed"> · resets {{ new Date(w.resetsAt).toLocaleString() }}</span></template></div>
+          </template>
           <div class="text-dimmed mt-2">{{ t('agentConfig.mcp') }} ({{ data.codex.mcpServers.length }})</div>
           <div v-for="s in data.codex.mcpServers" :key="s.name" class="font-mono">{{ s.name }} · {{ s.authStatus }} · {{ s.tools }} tools</div>
           <div class="text-dimmed mt-2">{{ t('agentConfig.models') }} ({{ data.codex.models.length }})</div>

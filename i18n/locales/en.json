@@ -18,6 +18,9 @@
   "layout": {
     "metaDescription": "Local batch PR review management",
     "projectsTitle": "Projects",
+    "notifyHint": "Desktop notifications when an agent waits on you",
+    "notifyOn": "Notifications on",
+    "notifyOff": "Notifications off",
     "createProject": "Create project",
     "create": "Create",
     "creating": "Creating…",
@@ -721,6 +724,7 @@
       "codexAuth": "Login",
       "codexConfig": "Effective config (with layer)",
       "codexSkills": "Skills",
+      "codexRateLimits": "Rate limits",
       "codexError": "Codex probe failed: {msg}"
   },
   "dashboard": {
