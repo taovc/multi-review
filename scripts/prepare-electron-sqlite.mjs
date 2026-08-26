@@ -4,6 +4,8 @@
 // binary directly crashes on a NODE_MODULE_VERSION mismatch. This uses the prebuild-install that ships
 // with better-sqlite3 to download the prebuilt binary for the matching Electron version and overwrite
 // the one in .output.
+// From better-sqlite3 v13 on this is no longer needed: it ships Node-API binaries under prebuilds/
+// (<platform>-<arch>.node), which are ABI-stable across node and electron, so we bail out early there.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,6 +20,15 @@ function log(msg) {
 }
 
 const outputBs3 = path.join(root, '.output', 'server', 'node_modules', 'better-sqlite3')
+
+// better-sqlite3 >= 13: Node-API prebuild, same binary for node and electron — nothing to patch.
+const napiTarget = `${process.platform}-${process.arch}.node`
+const napiBinary = path.join(outputBs3, 'prebuilds', napiTarget)
+if (fs.existsSync(napiBinary)) {
+  log(`Node-API prebuild present (prebuilds/${napiTarget}); electron loads it as-is, skipping ABI patch.`)
+  process.exit(0)
+}
+
 const outputBinary = path.join(outputBs3, 'build', 'Release', 'better_sqlite3.node')
 if (!fs.existsSync(outputBinary)) {
   log(`No better-sqlite3 binary in .output (${outputBinary}). Run \`nuxt build\` first.`)
