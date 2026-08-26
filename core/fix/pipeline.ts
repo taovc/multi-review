@@ -6,8 +6,6 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fetchIssueContext } from '../github/issueAssets'
 import { prepareWorktree, removeWorktree } from '../git/worktree'
-import { claudeChatRunner } from '../agent/claudeRunners'
-import { codexChatRunner } from '../agent/codexChat'
 import { hasUploadable } from './changes'
 import { computeFixNextStatus } from './status'
 import { appendTurns } from '../db/turns'
@@ -16,12 +14,11 @@ import { sessionFields } from '../agent/session'
 import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchReviewsCount } from '../github/gh'
 import { ensureSessionRun, finishRun, recordRunUsage } from '../runs/store'
-import { claudeHost } from '../host/claudeHost'
+import { hostFor, hostOf } from '../host'
 import { runChannel } from '../host/recorder'
 import { fixSystemPrompt } from '../agent/fixer'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
-import type { ChildProcess } from 'node:child_process'
-import type { ChatRunner, ReviewProvider } from '../agent/runners'
+import type { ReviewProvider } from '../agent/runners'
 
 const pexec = promisify(execFile)
 const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024 })
@@ -29,47 +26,24 @@ const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { 
 // Fixing a PR = one always-on conversation: chat with the agent inside a git worktree of the PR branch and let it edit files directly (written to disk, not committed).
 // The commit + push only happens when the user clicks "commit and upload" in the UI (see push.post.ts). There are no verification / batch-fix / merge-default-branch / reply-to-author stages.
 
-export function selectChatRunner(provider?: ReviewProvider): ChatRunner {
-  return provider === 'codex' ? codexChatRunner : claudeChatRunner
-}
-
-// Concurrency lock: taken the moment a job enters (before spawn), released only when the whole job ends.
-// Use this to prevent concurrency rather than activeChats — the latter only exists once the child process is spawned and is emptied as soon as it exits, leaving a gap at both ends.
+// Concurrency lock: taken the moment a job enters (before the host turn), released only when the whole job ends.
 const chatLocks = new Set<string>()
-// The real child-process handle (only after spawn), used by the stop button to kill.
-const activeChats = new Map<string, ChildProcess>()
-// The SDK runner has no child-process handle; interrupt it via the stop callback the runner exposes.
-const activeChatStops = new Map<string, () => void>()
 const stopRequested = new Set<string>() // stopped by the user → the job marks that turn stopped (not error)
 export function isChatting(fixId: string): boolean {
-  return chatLocks.has(fixId) || claudeHost.isBusy(fixId)
+  return chatLocks.has(fixId) || hostOf(fixId).isBusy(fixId)
 }
 export function stopFixChat(fixId: string): boolean {
-  // Host-backed (claude) turn: interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
-  if (claudeHost.isBusy(fixId)) { stopRequested.add(fixId); void claudeHost.interrupt(fixId); return true }
-  if (chatLocks.has(fixId) && !activeChatStops.has(fixId) && !activeChats.has(fixId)) { stopRequested.add(fixId); return true }
-  const stop = activeChatStops.get(fixId)
-  if (stop) {
-    stopRequested.add(fixId)
-    stop()
-    return true
-  }
-  const cp = activeChats.get(fixId)
-  if (!cp || cp.pid == null) return false // still preparing the worktree (not spawned) or not running → no handle to kill
-  stopRequested.add(fixId)
-  const pid = cp.pid
-  // The child process is started detached as a process-group leader → send SIGINT to the "whole group" (including processes it spawned), same as Ctrl+C.
-  // Changes the agent already wrote to disk are kept, waiting for the user to upload.
-  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* already exited */ } }
-  // Fallback: force-kill the whole group if it hasn't exited after 1.5s
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* already exited */ } }, 1500)
-  return true
+  // Host-backed turn (Claude query / Codex thread): interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
+  const host = hostOf(fixId)
+  if (host.isBusy(fixId)) { stopRequested.add(fixId); void host.interrupt(fixId); return true }
+  if (chatLocks.has(fixId)) { stopRequested.add(fixId); return true }
+  return false
 }
 
-// On process exit (app closing) stop every running fix session (CLI process groups + SDK runners) so nothing is orphaned.
+// On process exit (app closing) stop every running fix turn so nothing is orphaned (the hosts close their own processes).
 export function stopAllFixChats(): boolean {
   let any = false
-  for (const id of new Set([...activeChats.keys(), ...activeChatStops.keys()])) any = stopFixChat(id) || any
+  for (const id of [...chatLocks]) any = stopFixChat(id) || any
   return any
 }
 
@@ -206,64 +180,29 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
         return undefined
       })
       try {
-        if (ctx.provider === 'claude') {
-          // Session host: one live query per fix; permission prompts / AskUserQuestion / plan approval surface as RunEvents.
-          const needsHandoff = !!fix?.codexSessionId && !resumeId
-          const text = `${ctx.ultracode ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
-          await claudeHost.ensure({
-            runId: fixId, kind: 'session', cwd: wt.path, model: ctx.model, effort: ctx.effort, resume: resumeId,
-            permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: fixSystemPrompt(ctx.lang, await conflictHint(wt.path)),
-            db, schema,
-          })
-          if (stopRequested.has(fixId)) throw new Error('stopped before the turn started')
-          const r = await claudeHost.send(fixId, text, {
-            turnId: asstId,
-            onSessionId: (sessionId) => {
-              newSessionId = sessionId
-              db.update(schema.fixes).set({ ...saveSession(sessionId), updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
-            },
-            onText: (t) => {
-              acc += t
-              const n = new Date().getTime()
-              if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') }
-              h.emit('text', t)
-            },
-          })
-          acc = r.text || acc
-          newSessionId = r.sessionId ?? newSessionId
-          recordRunUsage(db, schema, fixId, r.usage, asstId)
-          if (r.usage?.costUsd != null) {
-            const prev = h.row()?.costUsd ?? 0
-            db.update(schema.fixes).set({ costUsd: prev + r.usage.costUsd }).where(eq(schema.fixes.id, fixId)).run()
-          }
-          if (r.interrupted || stopRequested.has(fixId)) stopped = true
-          else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
-        } else {
-        const chatRunner = selectChatRunner(ctx.provider)
-        const r = await chatRunner.runChat({
-          cwd: wt.path,
-          model: ctx.model,
-          effort: ctx.effort,
-          codexServiceTier: ctx.codexServiceTier,
-          lang: ctx.lang,
-          sessionId: resumeId,
-          message: agentMessage,
-          historyAccess,
-          allowDanger: ctx.allowDanger,
-          ultracode: ctx.ultracode,
-          conflictHint: await conflictHint(wt.path),
-          onSpawn: (cp) => activeChats.set(fixId, cp),
-          onStop: (stop) => activeChatStops.set(fixId, stop),
+        // Session host (Claude SDK query / Codex app-server thread): permission prompts / questions / plan approval surface as RunEvents.
+        const host = hostFor(ctx.provider)
+        const otherSession = ctx.provider === 'codex' ? fix?.sessionId : fix?.codexSessionId
+        const needsHandoff = !!otherSession && !resumeId
+        const text = `${ctx.ultracode && ctx.provider !== 'codex' ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
+        await host.ensure({
+          runId: fixId, kind: 'session', cwd: wt.path, model: ctx.model, effort: ctx.effort, resume: resumeId,
+          permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: fixSystemPrompt(ctx.lang, await conflictHint(wt.path)),
+          codexServiceTier: ctx.codexServiceTier, ultracode: ctx.ultracode, guardScope: 'fix',
+          db, schema,
+        })
+        if (stopRequested.has(fixId)) throw new Error('stopped before the turn started')
+        const r = await host.send(fixId, text, {
+          turnId: asstId,
           onSessionId: (sessionId) => {
             newSessionId = sessionId
             db.update(schema.fixes).set({ ...saveSession(sessionId), updatedAt: h.now() }).where(eq(schema.fixes.id, fixId)).run()
           },
-          onTool: (name, info) => h.emit('tool', `${name} ${info}`), // tool call → tool event → live into the log + inline steps
           onText: (t) => {
             acc += t
             const n = new Date().getTime()
-            if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') } // throttled db writes
-            h.emit('text', t) // pushed in full to the frontend for live streaming assembly (not persisted, see the text exclusion in emit)
+            if (n - lastWrite > 400) { lastWrite = n; flushTurn('streaming') }
+            h.emit('text', t)
           },
         })
         acc = r.text || acc
@@ -273,19 +212,18 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
           const prev = h.row()?.costUsd ?? 0
           db.update(schema.fixes).set({ costUsd: prev + r.usage.costUsd }).where(eq(schema.fixes.id, fixId)).run()
         }
+        if (r.interrupted || stopRequested.has(fixId)) stopped = true
+        else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
         if (ctx.provider === 'codex' && headBeforeCodex) {
           const headAfterCodex = await currentHead(wt.path)
           if (headAfterCodex && headAfterCodex !== headBeforeCodex) {
             throw new Error('Codex chat changed git HEAD. Codex must leave commits to the existing upload path; inspect the worktree before retrying.')
           }
         }
-        }
       } catch (e) {
         if (stopRequested.has(fixId)) stopped = true // stopped by the user, not an error
         else throw e
       } finally {
-        activeChats.delete(fixId)
-        activeChatStops.delete(fixId)
         stopRequested.delete(fixId)
       }
 
@@ -301,8 +239,6 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
       finishRun(db, schema, fixId, { status: stopped ? 'stopped' : 'idle' })
       h.emit('chat', stopped ? 'stopped' : 'done')
     } catch (e) {
-      activeChats.delete(fixId)
-      activeChatStops.delete(fixId)
       stopRequested.delete(fixId)
       flushTurn('error')
       const errMsg = (e as Error).message
@@ -315,8 +251,6 @@ export async function runFixChatJob(ctx: FixJobCtx, message: string): Promise<vo
   } finally {
     // The concurrency lock is only released here (once the whole job, db wrap-up included, is done), so a second chat can never squeeze in during the wrap-up
     chatLocks.delete(fixId)
-    activeChats.delete(fixId)
-    activeChatStops.delete(fixId)
     stopRequested.delete(fixId)
   }
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
-import { claudeHost } from '~core/host/claudeHost'
+import { hostOf } from '~core/host'
 
 // Answer a pending permission / question / plan prompt of a live run.
 const Body = z.discriminatedUnion('behavior', [
@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
   const pid = getRouterParam(event, 'pid')!
   const parsed = Body.safeParse(await readBody(event))
   if (!parsed.success) throw createError({ statusCode: 400, statusMessage: parsed.error.issues.map((i) => i.message).join('; ') })
-  const ok = claudeHost.answerPrompt(id, pid, parsed.data)
+  const ok = hostOf(id).answerPrompt(id, pid, parsed.data)
   if (!ok) {
     // Not parked in this process: it was answered already, expired on restart, or belongs to a closed session.
     const row = db().select().from(schema.permissionRequests).where(and(eq(schema.permissionRequests.id, pid), eq(schema.permissionRequests.runId, id))).get()

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
-import { claudeHost } from '~core/host/claudeHost'
+import { hostOf } from '~core/host'
 import { removeWorktree } from '~core/git/worktree'
 import { isChatting } from '~core/fix/pipeline'
 import { optOutPr } from '~core/automation/state'
@@ -12,7 +12,7 @@ import { optOutPr } from '~core/automation/state'
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   // The worktree is going away: close the live host query so nothing keeps running (or resumes) inside it.
-  await claudeHost.close(id, 'discarded').catch(() => {})
+  await hostOf(id).close(id, 'discarded').catch(() => {})
   const cfg = useRuntimeConfig()
   const d = db()
   const fix = d.select().from(schema.fixes).where(eq(schema.fixes.id, id)).get()

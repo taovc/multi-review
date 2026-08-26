@@ -1,12 +1,9 @@
 import { runClaudeAgentChat, askUserClause } from './chat'
-import { runCodexChat } from './codexChat'
-import type { ReviewProvider } from './runners'
 import type { ChildProcess } from 'node:child_process'
 import type { ProviderUsage } from '../runs/types'
 
-// The global "can do anything" assistant, aligned with feature/fix: claude goes through the shared
-// runner (bypassPermissions + dangerous-command guard + ultracode + decision cards); codex goes
-// through runCodexChat (the 'global' prompt). --resume continues the session. Images are prefetched
+// The global "can do anything" assistant. Both providers now run on the session hosts (core/host, core/codex);
+// this legacy one-shot claude runner is kept for the tests/contracts that still exercise it. Images are prefetched
 // by the pipeline with fetchIssueContext.
 
 export type GlobalChatOptions = {
@@ -35,7 +32,7 @@ export function globalSystemPrompt(lang: string): string {
 ${askUserClause(lang)}`
 }
 
-function runGlobalClaudeChat(opts: GlobalChatOptions): Promise<GlobalChatResult> {
+export function runGlobalClaudeChat(opts: GlobalChatOptions): Promise<GlobalChatResult> {
   return runClaudeAgentChat({
     cwd: opts.cwd,
     model: opts.model,
@@ -51,21 +48,4 @@ function runGlobalClaudeChat(opts: GlobalChatOptions): Promise<GlobalChatResult>
     onText: opts.onText,
     onTool: opts.onTool,
   })
-}
-
-// The codex path: a free-form assistant whose network/sandbox settings follow allowDanger. The git
-// write/push gate only applies to fix/feature (which have an upload gate); global isn't blocked
-// (the sandbox = workspace-write/no network is the boundary, opened up when allowDanger is set, matching claude-global).
-function runGlobalCodexChat(opts: GlobalChatOptions): Promise<GlobalChatResult> {
-  return runCodexChat({
-    cwd: opts.cwd, model: opts.model, effort: opts.effort, lang: opts.lang,
-    codexServiceTier: opts.codexServiceTier,
-    sessionId: opts.sessionId, message: opts.message, historyAccess: opts.historyAccess,
-    promptKind: 'global', fullAccess: !!opts.allowDanger, networkAccess: !!opts.allowDanger, ultracode: opts.ultracode,
-    onSpawn: opts.onSpawn, onStop: opts.onStop, onSessionId: opts.onSessionId, onText: opts.onText, onTool: opts.onTool,
-  })
-}
-
-export function runGlobalChat(provider: ReviewProvider, opts: GlobalChatOptions): Promise<GlobalChatResult> {
-  return provider === 'codex' ? runGlobalCodexChat(opts) : runGlobalClaudeChat(opts)
 }

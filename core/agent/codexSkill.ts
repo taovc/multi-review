@@ -1,5 +1,5 @@
 import { withContract } from './guard'
-import { runCodexReadonly } from './codexAgent'
+import { runCodexReadonly } from '../codex/oneshot'
 import { normalizeCodexReviewError } from './codexReview'
 import { SKILL_SYSTEM, buildSkillPrompt, cleanSkillContent, type SkillGenOptions } from './skillgen'
 import type { ProviderUsage } from '../runs/types'

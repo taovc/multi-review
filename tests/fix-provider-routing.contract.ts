@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { claudeChatRunner } from '../core/agent/claudeRunners'
-import { codexChatRunner } from '../core/agent/codexChat'
-import { selectChatRunner } from '../core/fix/pipeline'
+import { claudeHost, codexHost, hostFor, hostOf } from '../core/host'
 
-assert.equal(selectChatRunner(), claudeChatRunner)
-assert.equal(selectChatRunner('claude'), claudeChatRunner)
-assert.equal(selectChatRunner('codex'), codexChatRunner)
+// Chat turns are routed to a session host by provider; an unknown/absent provider means Claude.
+assert.equal(hostFor(undefined), claudeHost)
+assert.equal(hostFor('claude'), claudeHost)
+assert.equal(hostFor('codex'), codexHost)
+// A run that is live on neither host resolves to the Claude host (whose close()/info() are harmless no-ops).
+assert.equal(hostOf('no-such-run'), claudeHost)

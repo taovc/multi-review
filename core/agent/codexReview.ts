@@ -1,6 +1,6 @@
 import { withContract } from './guard'
 import { formatCodexProviderError, previewRawOutput, rawCodexErrorMessage } from './codexErrors'
-import { runCodexReadonly } from './codexAgent'
+import { runCodexReadonly } from '../codex/oneshot'
 import {
   buildReviewPrompt,
   buildGuidedReviewPrompt,

@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { prepareFeatureWorktree } from '../git/worktree'
-import { runFeatureChat } from '../agent/featureChat'
 import { genFeatureTitle } from '../agent/featureTitle'
 import { appendTurns } from '../db/turns'
 import { makeEmit } from '../streaming/emit'
@@ -11,11 +10,10 @@ import { prepareAgentHistoryAccess } from '../agent/historyAccess'
 import { fetchIssueContext } from '../github/issueAssets'
 import { findPrByBranch } from '../github/gh'
 import { ensureSessionRun, finishRun, recordRunUsage } from '../runs/store'
-import { claudeHost } from '../host/claudeHost'
+import { hostFor, hostOf } from '../host'
 import { runChannel } from '../host/recorder'
 import { featureSystemPrompt } from '../agent/featureChat'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
-import type { ChildProcess } from 'node:child_process'
 import type { ReviewProvider } from '../agent/runners'
 
 // Feature development, single-phase (native agent): one task = a free-form development chat inside one
@@ -38,11 +36,8 @@ export function isFeatureBusy(id: string): boolean {
   return jobLocks.has(id)
 }
 
-// Stop state: featureStops = the abort callback exposed by the runner; activeFeatureChats = child process
-// handles (for kill); featureStopRequested = the user stopped on purpose → mark that turn stopped, not error.
-const activeFeatureChats = new Map<string, ChildProcess>()
+// Stop state: featureStopRequested = the user stopped on purpose → mark that turn stopped, not error.
 const featureStopRequested = new Set<string>()
-const featureStops = new Map<string, () => void>()
 
 function slugify(s: string): string {
   return (s || 'feature').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'feature'
@@ -77,24 +72,17 @@ async function ensureFeatureWorktree(p: {
 }
 
 export function stopFeatureImpl(taskId: string): boolean {
-  // Host-backed (claude) turn: interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
-  if (claudeHost.isBusy(taskId)) { featureStopRequested.add(taskId); void claudeHost.interrupt(taskId); return true }
-  if (jobLocks.has(taskId) && !featureStops.has(taskId) && !activeFeatureChats.has(taskId)) { featureStopRequested.add(taskId); return true }
-  const stop = featureStops.get(taskId)
-  if (stop) { featureStopRequested.add(taskId); stop(); return true }
-  const cp = activeFeatureChats.get(taskId)
-  if (!cp || cp.pid == null) return false
-  featureStopRequested.add(taskId)
-  const pid = cp.pid
-  try { process.kill(-pid, 'SIGINT') } catch { try { cp.kill('SIGINT') } catch { /* already exited */ } }
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL') } catch { /* already exited */ } }, 1500)
-  return true
+  // Host-backed turn (Claude query / Codex thread): interrupt it, keep the session alive. A job that has not reached send() yet remembers the stop.
+  const host = hostOf(taskId)
+  if (host.isBusy(taskId)) { featureStopRequested.add(taskId); void host.interrupt(taskId); return true }
+  if (jobLocks.has(taskId)) { featureStopRequested.add(taskId); return true }
+  return false
 }
 
-// On process exit (app close), stop every running feature development (child process groups) so none are orphaned.
+// On process exit (app close), stop every running feature turn so none are orphaned (the hosts close their own processes).
 export function stopAllFeatureImpl(): boolean {
   let any = false
-  for (const id of new Set([...activeFeatureChats.keys(), ...featureStops.keys()])) any = stopFeatureImpl(id) || any
+  for (const id of [...jobLocks]) any = stopFeatureImpl(id) || any
   return any
 }
 
@@ -191,56 +179,25 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     })
     try {
       const cur = task()
-      if (ctx.provider === 'claude') {
-        // Session host: one live query per task; permission prompts / AskUserQuestion / plan approval surface as RunEvents.
-        const resumeId = cur?.sessionId ?? null
-        const needsHandoff = !!cur?.codexSessionId && !resumeId
-        const text = `${ctx.ultracode ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
-        await claudeHost.ensure({
-          runId: taskId, kind: 'session', cwd: wtPath, model: ctx.model, effort: ctx.effort, resume: resumeId,
-          permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: featureSystemPrompt(ctx.lang, cur?.baseBranch || ctx.defaultBranch),
-          db, schema,
-        })
-        if (featureStopRequested.has(taskId)) throw new Error('stopped before the turn started')
-        const r = await claudeHost.send(taskId, text, {
-          turnId: asstId,
-          onSessionId: (sid) => {
-            newSessionId = sid
-            db.update(schema.featureTasks).set({ ...saveSession(sid), updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
-          },
-          onText: (t2) => {
-            acc += t2
-            const n = new Date().getTime()
-            if (n - lastWrite > 400) { lastWrite = n; flush('streaming') }
-            emit('text', t2)
-          },
-        })
-        acc = r.text || acc
-        newSessionId = r.sessionId ?? newSessionId
-        recordRunUsage(db, schema, taskId, r.usage, asstId)
-        if (r.interrupted || featureStopRequested.has(taskId)) stopped = true
-        else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
-      } else {
-      const r = await runFeatureChat(ctx.provider, {
-        cwd: wtPath,
-        model: ctx.model,
-        effort: ctx.effort,
-        codexServiceTier: ctx.codexServiceTier,
-        lang: ctx.lang,
-        sessionId: (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null,
-        message: agentMessage,
-        historyAccess,
-        allowDanger: ctx.allowDanger,
-        ultracode: ctx.ultracode, // the prefix is injected by the runner
-        baseBranch: cur?.baseBranch || ctx.defaultBranch, // used as gh pr create --base when opening the PR
-
-        onSpawn: (cp) => activeFeatureChats.set(taskId, cp),
-        onStop: (stop) => featureStops.set(taskId, stop),
+      // Session host (Claude SDK query / Codex app-server thread): permission prompts / questions / plan approval surface as RunEvents.
+      const host = hostFor(ctx.provider)
+      const resumeId = (ctx.provider === 'codex' ? cur?.codexSessionId : cur?.sessionId) ?? null
+      const otherSession = ctx.provider === 'codex' ? cur?.sessionId : cur?.codexSessionId
+      const needsHandoff = !!otherSession && !resumeId
+      const text = `${ctx.ultracode && ctx.provider !== 'codex' ? 'ultracode: ' : ''}${agentMessage}${needsHandoff && historyAccess ? `\n\n${historyAccess}` : ''}`
+      await host.ensure({
+        runId: taskId, kind: 'session', cwd: wtPath, model: ctx.model, effort: ctx.effort, resume: resumeId,
+        permissionMode: ctx.permissionMode ?? 'bypassPermissions', allowDanger: ctx.allowDanger, systemAppend: featureSystemPrompt(ctx.lang, cur?.baseBranch || ctx.defaultBranch),
+        codexServiceTier: ctx.codexServiceTier, ultracode: ctx.ultracode, guardScope: 'feature',
+        db, schema,
+      })
+      if (featureStopRequested.has(taskId)) throw new Error('stopped before the turn started')
+      const r = await host.send(taskId, text, {
+        turnId: asstId,
         onSessionId: (sid) => {
           newSessionId = sid
           db.update(schema.featureTasks).set({ ...saveSession(sid), updatedAt: now() }).where(eq(schema.featureTasks.id, taskId)).run()
         },
-        onTool: (n, i) => emit('tool', `${n} ${i}`),
         onText: (t2) => {
           acc += t2
           const n = new Date().getTime()
@@ -251,13 +208,12 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
       acc = r.text || acc
       newSessionId = r.sessionId ?? newSessionId
       recordRunUsage(db, schema, taskId, r.usage, asstId)
-      }
+      if (r.interrupted || featureStopRequested.has(taskId)) stopped = true
+      else if (r.isError) throw new Error(r.subtype === 'error_during_execution' ? (r.error || r.text || 'agent turn failed') : `agent turn ended: ${r.subtype}`)
     } catch (e) {
       if (featureStopRequested.has(taskId)) stopped = true
       else throw e
     } finally {
-      activeFeatureChats.delete(taskId)
-      featureStops.delete(taskId)
       featureStopRequested.delete(taskId)
     }
 
@@ -282,8 +238,6 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     finishRun(db, schema, taskId, { status: stopped ? 'stopped' : nextStatus === 'awaiting' ? 'awaiting_input' : 'idle' })
     emit('chat', stopped ? 'stopped' : 'done')
   } catch (e) {
-    activeFeatureChats.delete(taskId)
-    featureStops.delete(taskId)
     featureStopRequested.delete(taskId)
     flush('error')
     const errMsg = (e as Error).message
@@ -292,8 +246,6 @@ export async function runFeatureDevelopJob(ctx: FeatureDevelopJobCtx, message: s
     emit('error', errMsg)
   } finally {
     jobLocks.delete(taskId)
-    activeFeatureChats.delete(taskId)
-    featureStops.delete(taskId)
     featureStopRequested.delete(taskId)
   }
 }

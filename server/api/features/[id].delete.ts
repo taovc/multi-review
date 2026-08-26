@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { rm } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { schema } from '~core/db/client'
-import { claudeHost } from '~core/host/claudeHost'
+import { hostOf } from '~core/host'
 import { removeWorktree } from '~core/git/worktree'
 import { isFeatureBusy } from '~core/feature/pipeline'
 
@@ -10,7 +10,7 @@ import { isFeatureBusy } from '~core/feature/pipeline'
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   // The worktree is going away: close the live host query so nothing keeps running (or resumes) inside it.
-  await claudeHost.close(id, 'discarded').catch(() => {})
+  await hostOf(id).close(id, 'discarded').catch(() => {})
   const cfg = useRuntimeConfig()
   const d = db()
   const task = d.select().from(schema.featureTasks).where(eq(schema.featureTasks.id, id)).get()

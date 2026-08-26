@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { isGlobalChatting, isGlobalLive } from '~core/global/pipeline'
-import { claudeHost } from '~core/host/claudeHost'
+import { hostOf } from '~core/host'
 import { pendingPromptsFor } from '~core/host/pending'
 
 // Single-stage global session detail: the session row + its turns (ordered by ascending seq). Used when loading history / opening the drawer.
@@ -30,11 +30,11 @@ export default defineEventHandler((event) => {
   }
   // Host state: pending permission / question / plan prompts + the live session's mode and slash-command palette.
   const pending = pendingPromptsFor(d, schema, id)
-  const info = claudeHost.info(id)
+  const info = hostOf(id).info(id)
   const run = d.select().from(schema.runs).where(eq(schema.runs.id, id)).get()
   return {
     session, turns, chatting: isGlobalChatting(id) || isGlobalLive(id),
-    host: { live: claudeHost.status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
+    host: { live: hostOf(id).status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
     pending,
     run: run ? { costUsd: run.costUsd, costSource: run.costSource, inputTokens: run.inputTokens, outputTokens: run.outputTokens, numTurns: run.numTurns } : null,
   }

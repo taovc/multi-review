@@ -1,6 +1,4 @@
 import { runClaudeAgentChat, askUserClause } from './chat'
-import { runCodexChat } from './codexChat'
-import type { ReviewProvider } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
 
 // Feature development, single-stage (native agent): claude goes through the shared runner (chat.ts) — same
@@ -24,7 +22,7 @@ Keep PR title/body, commit messages, and code comments in English.
 ${askUserClause(lang)}`
 }
 
-async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatResult> {
+export async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatResult> {
   return runClaudeAgentChat({
     cwd: opts.cwd,
     model: opts.model,
@@ -40,14 +38,4 @@ async function runFeatureClaudeChat(opts: FeatureChatOptions): Promise<FixChatRe
     onText: opts.onText,
     onTool: opts.onTool,
   })
-}
-
-// codex path: reuse runCodexChat + the feature prompt; network access follows allowDanger (cutting the network is the
-// only reliable "don't auto-push" barrier for codex).
-function runFeatureCodexChat(opts: FeatureChatOptions): Promise<FixChatResult> {
-  return runCodexChat({ ...opts, promptKind: 'feature', fullAccess: !!opts.allowDanger, networkAccess: !!opts.allowDanger })
-}
-
-export function runFeatureChat(provider: ReviewProvider, opts: FeatureChatOptions): Promise<FixChatResult> {
-  return provider === 'codex' ? runFeatureCodexChat(opts) : runFeatureClaudeChat(opts)
 }

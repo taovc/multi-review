@@ -4,7 +4,7 @@ import { writeFile, rm, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runHelperText } from '../host/helpers'
-import { runCodexText } from '../agent/codexAgent'
+import { runCodexText } from '../codex/oneshot'
 import type { ReviewProvider } from '../agent/runners'
 
 const pexec = promisify(execFile)

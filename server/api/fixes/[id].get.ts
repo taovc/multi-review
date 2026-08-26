@@ -4,7 +4,7 @@ import { schema } from '~core/db/client'
 import { fixChangesStat, hasUploadable } from '~core/fix/changes'
 import { computeFixNextStatus } from '~core/fix/status'
 import { isChatting } from '~core/fix/pipeline'
-import { claudeHost } from '~core/host/claudeHost'
+import { hostOf } from '~core/host'
 import { pendingPromptsFor } from '~core/host/pending'
 
 // Fix task detail: the fix row + chat turns + event log + live change stats. Chat-only version (no findings).
@@ -64,13 +64,13 @@ export default defineEventHandler(async (event) => {
   const prUrl = project ? `https://github.com/${project.repo}/pull/${fix.prNumber}` : null
   // Host state: pending permission / question / plan prompts + the live session's mode and slash-command palette.
   const pending = pendingPromptsFor(d, schema, id)
-  const info = claudeHost.info(id)
+  const info = hostOf(id).info(id)
   const run = d.select().from(schema.runs).where(eq(schema.runs.id, id)).get()
   // Host-backed turns log their tool calls / prompts in run_events (RunEvents), not in the legacy event table.
   const hostEvents = d.select({ ts: schema.runEvents.ts, kind: schema.runEvents.kind, message: schema.runEvents.message }).from(schema.runEvents).where(eq(schema.runEvents.runId, id)).all().filter((e) => !!e.message)
   const events = [...legacyEvents, ...hostEvents].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
   return {
-    host: { live: claudeHost.status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
+    host: { live: hostOf(id).status(id), permissionMode: info.permissionMode ?? run?.permissionMode ?? null, allowDanger: run?.allowDanger ?? null, commands: info.init?.slashCommands ?? [], skills: info.init?.skills ?? [], model: info.init?.model ?? null },
     pending,
     run: run ? { costUsd: run.costUsd, costSource: run.costSource, inputTokens: run.inputTokens, outputTokens: run.outputTokens, numTurns: run.numTurns } : null,
     fix: { ...fix, ...stat }, // includes worktreePath / baseRef / lastPushSha / lastActionKind; the stats use the last-changes definition

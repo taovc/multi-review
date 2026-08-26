@@ -1,5 +1,5 @@
 import { runHelperText } from '../host/helpers'
-import { runCodexText } from './codexAgent'
+import { runCodexText } from '../codex/oneshot'
 import { langName } from './lang'
 import type { ReviewProvider } from './runners'
 
