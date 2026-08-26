@@ -1,0 +1,30 @@
+{
+  "name": "example",
+  "repo": "owner/repo",
+  "defaultBranch": "main",
+  "projectId": "optional-pr-cockpit-project-id-or-name",
+  "cases": [
+    {
+      "prNumber": 123,
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "branch": "feat/example",
+      "labels": [
+        {
+          "id": "L1",
+          "severity": "High",
+          "location": "src/payments/refund.ts:42",
+          "title": "Refund amount is not validated against the captured amount",
+          "problem": "A refund larger than the original capture is accepted and sent to the gateway.",
+          "mustFind": true
+        },
+        {
+          "id": "L2",
+          "severity": "Low",
+          "location": "src/payments/refund.ts",
+          "title": "Unused import of formatMoney",
+          "mustFind": false
+        }
+      ]
+    }
+  ]
+}

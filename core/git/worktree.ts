@@ -211,6 +211,10 @@ export async function prepareWorktree(opts: {
   // Review merges the default branch before looking at the diff; fix has to push, so pass false to
   // skip the merge → the commits that get pushed stay clean.
   mergeDefault?: boolean
+  // Eval replay: check out this exact commit instead of the branch tip (fetched via refs/pull/<prNumber>/head when the
+  // branch no longer carries it).
+  checkoutSha?: string | null
+  prNumber?: number | null
   location?: string | null
   onStep?: (msg: string) => void
 }): Promise<Worktree> {
@@ -246,6 +250,25 @@ export async function prepareWorktree(opts: {
       } catch {
         /* ignore */
       }
+    }
+    if (opts.checkoutSha) {
+      onStep?.(`fetch ${branch} @ ${opts.checkoutSha.slice(0, 7)}`)
+      try {
+        await git(localPath, ['fetch', 'origin', branch, defaultBranch])
+      } catch (e) {
+        if (!opts.prNumber) throw e
+        await git(localPath, ['fetch', 'origin', `refs/pull/${opts.prNumber}/head`, defaultBranch])
+      }
+      try {
+        await git(localPath, ['cat-file', '-e', `${opts.checkoutSha}^{commit}`])
+      } catch {
+        // The branch moved on (force-push / rebase) or was deleted: GitHub still serves the PR head ref.
+        if (opts.prNumber) await git(localPath, ['fetch', 'origin', `refs/pull/${opts.prNumber}/head`])
+      }
+      const sha = (await git(localPath, ['rev-parse', `${opts.checkoutSha}^{commit}`])).trim()
+      onStep?.('创建 worktree')
+      await git(localPath, ['worktree', 'add', '--detach', wtPath, sha])
+      return sha
     }
     onStep?.(`fetch origin ${branch}`)
     await git(localPath, ['fetch', 'origin', branch, defaultBranch])
