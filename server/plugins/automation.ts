@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { getDb, schema } from '~core/db/client'
 import { listPulls, getCurrentUserLogin } from '~core/github/gh'
 import { isChatting } from '~core/fix/pipeline'
@@ -51,7 +51,10 @@ export default defineNitroPlugin((nitroApp) => {
     // post again every round and loop forever on the same 400. Other errors (network/422) are propagated as before,
     // so the engine logs them and retries next round.
     dispatchPost: async (reviewId) => {
-      d.update(schema.findings).set({ checked: true }).where(eq(schema.findings.reviewId, reviewId)).run()
+      // Tick everything for auto-post, but never overwrite a human's own decision provenance.
+      d.update(schema.findings)
+        .set({ checked: true, checkedBy: sql`CASE WHEN ${schema.findings.checked} = 1 AND ${schema.findings.checkedBy} IS NOT NULL THEN ${schema.findings.checkedBy} ELSE 'engine' END`, checkedAt: now() })
+        .where(eq(schema.findings.reviewId, reviewId)).run()
       try {
         await $fetch(`/api/reviews/${reviewId}/post`, { method: 'POST', headers: cookieHeader, body: { dryRun: false } })
         return { posted: true }

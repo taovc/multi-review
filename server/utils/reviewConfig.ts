@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import type { ReviewProvider } from '~core/agent/runners'
 import { loadMethodology } from '~core/methodology'
+import { ensureSkillVersion } from '~core/skillVersions'
 
 // Resolve a project's review config: methodology (active skill wins), provider, model, effort.
 // Key constraint, "never mix": every stage runs on the same provider, and model is always "the real
@@ -15,9 +16,16 @@ export function resolveReviewConfig(d: any, project: any) {
   const cfg = useRuntimeConfig()
   const provider: ReviewProvider = project.provider === 'codex' ? 'codex' : 'claude'
   let methodology: string
+  // Which skill (and which immutable version of it) this run will be attributed to; null = the built-in default methodology.
+  let skillId: string | null = null
+  let skillVersionId: string | null = null
   if (project.activeSkillId) {
     const skill = d.select().from(schema.skills).where(eq(schema.skills.id, project.activeSkillId)).get()
     methodology = skill?.content || loadMethodology(project)
+    if (skill?.content) {
+      skillId = skill.id
+      try { skillVersionId = ensureSkillVersion(d, schema, skill) } catch { skillVersionId = skill.currentVersionId ?? null }
+    }
   } else {
     methodology = loadMethodology(project)
   }
@@ -29,6 +37,8 @@ export function resolveReviewConfig(d: any, project: any) {
   const codexServiceTier = provider === 'codex' && project.codexServiceTier === 'fast' ? 'fast' : null
   return {
     methodology,
+    skillId,
+    skillVersionId,
     provider,
     model,
     translateModel,

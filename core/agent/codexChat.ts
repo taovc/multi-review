@@ -6,6 +6,8 @@ import { shouldBlockCodexCommand, type CodexCommandGuardScope } from './commandG
 import { outputLangClause } from './lang'
 import { RECOMMENDED_MARKER } from './decisionCard'
 import { askUserClause } from './chat'
+import { usageFromCodexTurn } from './usage'
+import type { ProviderUsage } from '../runs/types'
 import type { ChatRunner } from './runners'
 import type { FixChatOptions, FixChatResult } from './fixer'
 
@@ -206,9 +208,11 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
     const controller = new AbortController()
     runOpts.onStop?.(() => controller.abort())
 
+    const startedAt = Date.now()
     const { events } = await thread.runStreamed(buildCodexChatPrompt(runOpts), { signal: controller.signal })
     const seenTextByItem = new Map<string, number>()
     let text = ''
+    let usage: ProviderUsage | null = null
     // Do not attach the command guard when the user explicitly allows dangerous commands.
     const commandGuard = runOpts.promptKind === 'global' || runOpts.allowDanger
       ? null
@@ -217,11 +221,13 @@ export async function runCodexChat(opts: FixChatOptions): Promise<FixChatResult>
         } as const
     for await (const event of events) {
       if (event.type === 'thread.started') runOpts.onSessionId?.(event.thread_id)
+      // Token usage for the run record (USD estimated from the local rate table, or null — never a fake 0).
+      if (event.type === 'turn.completed') usage = usageFromCodexTurn(event.usage, runOpts.model, { threadId: thread.id, durationMs: Date.now() - startedAt })
       const finalText = emitCodexChatEvent(event, seenTextByItem, commandGuard, runOpts.onTool, runOpts.onText)
       if (finalText != null) text = finalText
     }
 
-    return { costUsd: 0, sessionId: thread.id, text: text.trim() }
+    return { costUsd: usage?.costUsd ?? 0, sessionId: thread.id, text: text.trim(), usage }
   }
 
   try {

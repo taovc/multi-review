@@ -63,6 +63,7 @@ export default defineEventHandler(async (event) => {
     codexServiceTier: rc.codexServiceTier,
     lang: resolveLang(getCookie(event, 'mr-locale')),
     guided: !fresh,
+    projectId: project.id, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
   })
 
   return { ok: true, status: 'queued' }

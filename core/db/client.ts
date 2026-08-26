@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { mkdirSync, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
 import * as schema from './schema'
 
 let _db: ReturnType<typeof drizzle<typeof schema>> | null = null
@@ -21,7 +22,70 @@ export function getDb(dbPath: string) {
   // MVP: create the tables with CREATE TABLE IF NOT EXISTS, no formal migrations
   ensureSchema(sqlite)
   ensureColumns(sqlite)
+  backfillSkillVersions(sqlite)
+  backfillLegacyRunCosts(sqlite)
   return _db
+}
+
+// One-off: reviews finished before the runs table existed only left their cost inside the Chinese "done" event
+// string ("审核完成 · $1.364"). Turn each of those into a run row (cost only — model/effort/tokens are unknown,
+// so they stay null) so the dashboard starts with history. Guarded by a meta key → runs exactly once.
+function backfillLegacyRunCosts(sqlite: Database.Database) {
+  const KEY = 'legacy_run_cost_backfill_v1'
+  try {
+    if (sqlite.prepare(`SELECT value FROM meta WHERE key = ?`).get(KEY)) return
+    const events = sqlite.prepare(`
+      SELECT e.id, e.review_id, e.ts, e.message, r.project_id, r.pr_number, r.branch, r.title, p.provider
+      FROM events e JOIN reviews r ON r.id = e.review_id LEFT JOIN projects p ON p.id = r.project_id
+      WHERE e.kind = 'done' AND e.message LIKE '%$%'`).all() as
+      { id: string; review_id: string; ts: string; message: string; project_id: string; pr_number: number; branch: string | null; title: string | null; provider: string | null }[]
+    const fixes = sqlite.prepare(`SELECT f.id, f.project_id, f.pr_number, f.branch, f.title, f.cost_usd, f.created_at, f.updated_at, f.worktree_path, p.provider
+      FROM fixes f LEFT JOIN projects p ON p.id = f.project_id WHERE f.cost_usd IS NOT NULL AND f.cost_usd > 0`).all() as
+      { id: string; project_id: string; pr_number: number; branch: string; title: string | null; cost_usd: number; created_at: string; updated_at: string; worktree_path: string | null; provider: string | null }[]
+    const insert = sqlite.prepare(`INSERT OR IGNORE INTO runs (id, kind, subkind, project_id, review_id, workspace_type, workspace_path, pr_number, branch, provider, status, title, cost_usd, cost_source, created_at, started_at, ended_at, updated_at)
+      VALUES (?, 'review', ?, ?, ?, 'pr_worktree', NULL, ?, ?, ?, 'done', ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE 'reported' END, ?, ?, ?, ?)`)
+    const insertFix = sqlite.prepare(`INSERT OR IGNORE INTO runs (id, kind, subkind, project_id, review_id, workspace_type, workspace_path, pr_number, branch, provider, status, title, cost_usd, cost_source, created_at, started_at, ended_at, updated_at)
+      VALUES (?, 'session', 'session', ?, NULL, 'pr_worktree', ?, ?, ?, ?, 'idle', ?, ?, 'reported', ?, ?, ?, ?)`)
+    const tx = sqlite.transaction(() => {
+      for (const e of events) {
+        const m = /\$(\d+(?:\.\d+)?)/.exec(e.message || '')
+        if (!m) continue
+        const subkind = /^复审/.test(e.message) ? 'guided' : 'review'
+        // Codex reviews used to log a hard-coded "$0.000": that is an unknown cost, not a free run → NULL, never 0.
+        const cost = Number(m[1])
+        insert.run(`legacy-${e.id}`, subkind, e.project_id, e.review_id, e.pr_number, e.branch, e.provider === 'codex' ? 'codex' : 'claude', e.title, cost > 0 ? cost : null, cost > 0 ? cost : null, e.ts, e.ts, e.ts, e.ts)
+      }
+      for (const f of fixes) {
+        insertFix.run(f.id, f.project_id, f.worktree_path, f.pr_number, f.branch, f.provider === 'codex' ? 'codex' : 'claude', f.title, f.cost_usd, f.created_at, f.created_at, f.updated_at, f.updated_at)
+      }
+      // Ticks made before check provenance existed were human decisions (the drawer's auto-adjust also existed, but a
+      // NULL provenance must not read as "machine" and zero out precision).
+      sqlite.exec(`UPDATE findings SET checked_by = 'human' WHERE checked = 1 AND checked_by IS NULL`)
+      sqlite.exec(`UPDATE findings SET human_accepted_at = COALESCE(checked_at, created_at) WHERE human_accepted_at IS NULL AND (posted_post_id IS NOT NULL OR (checked = 1 AND checked_by = 'human'))`)
+      sqlite.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(KEY, new Date().toISOString())
+    })
+    tx()
+  } catch { /* best effort: a DB that predates the events table simply has no history to backfill */ }
+}
+
+// Every skill gets an immutable version-1 snapshot of its current content (skills created before versioning
+// existed). Idempotent: only rows with current_version_id IS NULL are touched, so later startups are no-ops.
+function backfillSkillVersions(sqlite: Database.Database) {
+  try {
+    const rows = sqlite.prepare(`SELECT id, name, content, source, created_at FROM skills WHERE current_version_id IS NULL`).all() as
+      { id: string; name: string; content: string; source: string; created_at: string }[]
+    if (!rows.length) return
+    const insert = sqlite.prepare(`INSERT INTO skill_versions (id, skill_id, skill_name, version, content, content_sha, source, created_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`)
+    const link = sqlite.prepare(`UPDATE skills SET current_version_id = ? WHERE id = ?`)
+    const tx = sqlite.transaction(() => {
+      for (const r of rows) {
+        const id = randomBytes(12).toString('base64url')
+        insert.run(id, r.id, r.name, r.content, createHash('sha256').update(r.content).digest('hex'), r.source || 'manual', r.created_at)
+        link.run(id, r.id)
+      }
+    })
+    tx()
+  } catch { /* an old DB missing the tables is created by ensureSchema first; ignore */ }
 }
 
 // Add missing columns to existing old tables (CREATE IF NOT EXISTS won't alter a table that already exists)
@@ -57,6 +121,21 @@ function ensureColumns(sqlite: Database.Database) {
     ['fixes', 'reviews_at_push', 'INTEGER'],
     // the assistant (global) stores effort per session (symmetric with model/provider); add the column to old DBs
     ['global_sessions', 'effort', 'TEXT'],
+    // observability (phase 0): skill versioning + run attribution + human-vs-machine check provenance
+    ['skills', 'current_version_id', 'TEXT'],
+    ['reviews', 'last_run_id', 'TEXT'],
+    ['reviews', 'skill_version_id', 'TEXT'],
+    ['findings', 'checked_by', 'TEXT'],
+    ['findings', 'checked_at', 'TEXT'],
+    ['findings', 'posted_post_id', 'TEXT'],
+    ['findings', 'human_accepted_at', 'TEXT'],
+    ['skill_versions', 'skill_name', 'TEXT'],
+    ['runs', 'unpriced_turns', 'INTEGER NOT NULL DEFAULT 0'],
+    // session host (phase 1): runs created by phase 0 predate these columns
+    ['runs', 'permission_mode', 'TEXT'],
+    ['runs', 'allow_danger', 'INTEGER NOT NULL DEFAULT 0'],
+    ['runs', 'network_access', 'INTEGER NOT NULL DEFAULT 0'],
+    ['runs', 'allow_rules', 'TEXT'],
   ]
   for (const [table, col, type] of adds) {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -358,6 +437,116 @@ function ensureSchema(sqlite: Database.Database) {
       message TEXT
     );
     CREATE INDEX IF NOT EXISTS automation_events_pr_idx ON automation_events(project_id, pr_number);
+
+    CREATE TABLE IF NOT EXISTS skill_versions (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      skill_name TEXT,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      content_sha TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS skill_versions_skill_idx ON skill_versions(skill_id, version);
+
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      subkind TEXT NOT NULL,
+      project_id TEXT,
+      review_id TEXT,
+      workspace_type TEXT,
+      workspace_path TEXT,
+      pr_number INTEGER,
+      branch TEXT,
+      provider TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      codex_service_tier TEXT,
+      skill_id TEXT,
+      skill_version_id TEXT,
+      claude_session_id TEXT,
+      codex_thread_id TEXT,
+      permission_mode TEXT,
+      allow_danger INTEGER NOT NULL DEFAULT 0,
+      network_access INTEGER NOT NULL DEFAULT 0,
+      allow_rules TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      title TEXT,
+      lang TEXT,
+      error TEXT,
+      cost_usd REAL,
+      cost_source TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      num_turns INTEGER NOT NULL DEFAULT 0,
+      unpriced_turns INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      ended_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS runs_project_idx ON runs(project_id, created_at);
+    CREATE INDEX IF NOT EXISTS runs_review_idx ON runs(review_id);
+    CREATE INDEX IF NOT EXISTS runs_kind_status_idx ON runs(kind, status);
+
+    CREATE TABLE IF NOT EXISTS run_usage (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      turn_id TEXT,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL,
+      cost_source TEXT,
+      at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS run_usage_run_idx ON run_usage(run_id);
+
+    CREATE TABLE IF NOT EXISTS run_events (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      turn_id TEXT,
+      ts TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      message TEXT,
+      data TEXT,
+      tool_use_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS run_events_run_seq_idx ON run_events(run_id, seq);
+
+    CREATE TABLE IF NOT EXISTS permission_requests (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      turn_id TEXT,
+      tool_use_id TEXT,
+      provider_request_id TEXT,
+      kind TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      input TEXT,
+      suggestions TEXT,
+      title TEXT,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      answer TEXT,
+      always INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS permission_requests_run_idx ON permission_requests(run_id);
+    CREATE INDEX IF NOT EXISTS permission_requests_status_idx ON permission_requests(status);
+
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `)
 }
 

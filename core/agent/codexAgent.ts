@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process'
 import { Codex, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import { shouldBlockCodexCommand } from './commandGuard'
 import { extractCodexErrorMessage } from './codexErrors'
+import { usageFromCodexTurn } from './usage'
+import type { ProviderUsage } from '../runs/types'
 
 export { isForbiddenRemoteOrGitMutation } from './commandGuard'
 
@@ -187,7 +189,8 @@ export async function runCodexReadonly(opts: {
   label: string
   onTool?: (name: string, info: string) => void
   onStop?: (stop: () => void) => void // expose an abort callback: it sets a flag on stop, and the event loop aborts consumption once it notices (used by the stop button in the feature analysis stage)
-}): Promise<string> {
+}): Promise<{ raw: string; usage: ProviderUsage | null }> {
+  const startedAt = Date.now()
   const effort = toCodexEffort(opts.effort)
   const codex = newCodex({
     ...('serviceTier' in opts ? { serviceTier: opts.serviceTier } : {}),
@@ -210,14 +213,17 @@ export async function runCodexReadonly(opts: {
 
   const { events } = await thread.runStreamed(opts.prompt, opts.outputSchema ? { outputSchema: opts.outputSchema } : {})
   let raw = ''
+  let usage: ProviderUsage | null = null
   for await (const event of events) {
     if (aborted) throw new Error(`Codex ${opts.label} 已被用户停止`)
+    // Token usage arrives on turn.completed (no USD from Codex → estimated from the local rate table or null).
+    if (event.type === 'turn.completed') usage = usageFromCodexTurn(event.usage, opts.model, { threadId: thread.id, durationMs: Date.now() - startedAt })
     const text = emitReadonlyEvent(event, opts.label, opts.onTool)
     if (text != null) raw = text
   }
   if (aborted) throw new Error(`Codex ${opts.label} 已被用户停止`)
   if (!raw.trim()) throw new Error(`Codex ${opts.label} returned no final response.`)
-  return raw
+  return { raw, usage }
 }
 
 // One-shot text generation (translating comments before posting): read-only, no network, no need for streamed tool progress. Returns the final text.

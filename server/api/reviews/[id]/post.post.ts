@@ -124,9 +124,15 @@ export default defineEventHandler(async (event) => {
 
     const now = new Date().toISOString()
     const round = d.select().from(schema.posts).where(eq(schema.posts.reviewId, id)).all().length + 1
+    const postId = nanoid()
     d.insert(schema.posts).values({
-      id: nanoid(), reviewId: id, round, url, sha: headSha, mode: assembled.mode, body: assembled.body, at: now,
+      id: postId, reviewId: id, round, url, sha: headSha, mode: assembled.mode, body: assembled.body, at: now,
     }).run()
+    // Which post each checked finding went out with (publish yield / "posted then retracted" metrics) — minus the ones the
+    // assembler skipped because of their recheck status (they never reached GitHub).
+    const skippedFids = new Set<string>((assembled.skipped ?? []).map((s: any) => String(s.fid)))
+    const postedIds = checked.filter((f) => !skippedFids.has(f.fid)).map((f) => f.id)
+    if (postedIds.length) d.update(schema.findings).set({ postedPostId: postId }).where(inArray(schema.findings.id, postedIds)).run()
     // The claimed 'posting' → 'posted' (wrap-up). Since 'posting' was held for the whole window, we can settle it directly here.
     d.update(schema.reviews)
       .set({ status: 'posted', lastPostSha: headSha, lastPostUrl: url, authorUpdated: false, updatedAt: now })

@@ -43,6 +43,7 @@ export default defineEventHandler(async (event) => {
     defaultBranch: project.defaultBranch, localPath: project.localPath,
     methodology: rc.methodology,
     reposDir: cfg.reposDir as string, worktreeLocation: cfg.worktreeLocation as string, provider: rc.provider, model: rc.model, effort: rc.effort, codexServiceTier: rc.codexServiceTier, lang: resolveLang(getCookie(event, 'mr-locale')),
+    projectId: project.id, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
   })
   return { ok: true, status: 'recheck_requested' }
 })
