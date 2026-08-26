@@ -30,7 +30,7 @@ export type ProbeReport = {
   at: string
   ms: number
   error: string | null
-  commands: { name: string; description: string; origin: 'plugin' | 'custom' | 'builtin' }[]
+  commands: { name: string; description: string; argumentHint: string; aliases: string[]; origin: 'plugin' | 'custom' | 'builtin' }[]
   agents: { name: string; description: string; model?: string }[]
   models: { value: string; displayName: string }[]
   account: { subscriptionType?: string; apiProvider?: string; organization?: string }
@@ -151,9 +151,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise((res, rej) => { const t = setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms); p.then(v => { clearTimeout(t); res(v) }, e => { clearTimeout(t); rej(e) }) })
 }
 
-function commandOrigin(name: string): ProbeReport['commands'][number]['origin'] {
-  if (name.includes(':')) return 'plugin'
-  return 'custom'
+function commandOrigin(name: string, description = ''): ProbeReport['commands'][number]['origin'] {
+  if (name.includes(':') || name.startsWith('mcp__plugin_')) return 'plugin'
+  return /\((user|project)\)\s*$/.test(description) ? 'custom' : 'builtin' // the CLI suffixes user/project skills; built-ins carry no suffix
 }
 
 // Start the CLI exactly like a session would, ask it what it loaded, never run a turn. Cached per cwd+chrome.
@@ -172,7 +172,7 @@ export async function probeAgent(cwd: string, chrome: boolean, refresh = false):
     try {
       q = query({ prompt: never as any, options: buildProbeOptions({ cwd, chrome, projectDirName: projectDirNameFor(cwd), abort }) })
       const init = await withTimeout(q.initializationResult(), 60_000, 'initialization')
-      report.commands = (init.commands ?? []).map(c => ({ name: c.name, description: c.description, origin: commandOrigin(c.name) }))
+      report.commands = (init.commands ?? []).map((c: any) => ({ name: c.name, description: c.description, argumentHint: String(c.argumentHint ?? ''), aliases: Array.isArray(c.aliases) ? c.aliases : [], origin: commandOrigin(c.name, c.description) }))
       report.agents = (init.agents ?? []).map(a => ({ name: a.name, description: a.description, ...(a.model ? { model: a.model } : {}) }))
       report.models = (init.models ?? []).map(m => ({ value: m.value, displayName: m.displayName }))
       report.account = { subscriptionType: init.account?.subscriptionType, apiProvider: init.account?.apiProvider, organization: init.account?.organization }

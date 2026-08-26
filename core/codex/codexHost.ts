@@ -50,6 +50,7 @@ type LiveThread = {
   policy: CodexPolicy
   mapper: CodexEventMapper
   model: string
+  skills: Array<{ name: string; path: string }> // Codex skills for this cwd (the palette lists them; `/name args` becomes a skill input item)
   busy: boolean
   turn: LiveTurn | null
   prompts: Map<string, PendingPrompt>
@@ -141,7 +142,7 @@ class CodexHost implements SessionHost {
     if (!threadId) throw new Error('codex thread/start returned no thread id')
 
     const live: LiveThread = {
-      spec, threadId, server, unregister: () => {}, policy, mapper: new CodexEventMapper(), model: String(resp?.model ?? spec.model ?? ''),
+      spec, threadId, server, unregister: () => {}, policy, mapper: new CodexEventMapper(), model: String(resp?.model ?? spec.model ?? ''), skills: [],
       busy: false, turn: null, prompts: new Map(), promptMeta: new Map(), promptTimers: new Map(), idleTimer: null, closed: false, lastUsedAt: Date.now(), init: null,
       emit: () => {},
     }
@@ -155,9 +156,10 @@ class CodexHost implements SessionHost {
     this.runs.set(spec.runId, live)
 
     // Skills palette: what Codex would load for this cwd (best effort; the thread works without it).
-    const skills: string[] = spec.kind === 'session'
-      ? await server.rpc.request('skills/list', { cwds: [spec.cwd] }, 10_000).then((r: any) => (r?.data ?? []).flatMap((e: any) => (e.skills ?? []).filter((s: any) => s.enabled !== false).map((s: any) => String(s.name)))).catch(() => [])
+    live.skills = spec.kind === 'session'
+      ? await server.rpc.request('skills/list', { cwds: [spec.cwd] }, 10_000).then((r: any) => (r?.data ?? []).flatMap((e: any) => (e.skills ?? []).filter((s: any) => s.enabled !== false).map((s: any) => ({ name: String(s.name), path: String(s.path ?? '') })))).catch(() => [])
       : []
+    const skills = live.skills.map((s) => s.name)
     live.init = {
       t: 'init', sessionId: threadId, model: live.model, permissionMode: spec.permissionMode ?? 'default',
       slashCommands: ['/compact'], skills, mcpServers: [], tools: [], claudeCodeVersion: `codex ${server.version ?? '?'}`,
@@ -430,9 +432,15 @@ class CodexHost implements SessionHost {
       // Sandbox / approvals follow the CURRENT mode and danger switch (both can change between turns).
       live.policy = policyFor(live.spec)
       const effort = await effortFor(live.spec)
+      // `/skill args` → the app-server's skill input item (Codex has no slash commands of its own).
+      const m = /^\/(\S+)\s*([\s\S]*)$/.exec(text)
+      const skill = m ? live.skills.find((s) => s.name === m[1]) : undefined
+      const input: TurnStartParams['input'] = skill
+        ? [{ type: 'skill', name: skill.name, path: skill.path }, ...(m![2]!.trim() ? [{ type: 'text' as const, text: m![2]!.trim(), text_elements: [] }] : [])]
+        : [{ type: 'text', text, text_elements: [] }]
       const params: TurnStartParams = {
         threadId: live.threadId,
-        input: [{ type: 'text', text, text_elements: [] }],
+        input,
         sandboxPolicy: live.policy.sandbox,
         approvalPolicy: live.policy.approval,
         ...(live.model ? { model: live.model } : {}),
@@ -474,6 +482,19 @@ class CodexHost implements SessionHost {
   setAllowDanger(runId: string, allow: boolean): void {
     const live = this.runs.get(runId)
     if (live) live.spec.allowDanger = allow
+  }
+
+  async rewindFiles(): Promise<{ canRewind: boolean; error?: string }> {
+    return { canRewind: false, error: 'file rewind is a Claude Code feature; Codex has no per-message file checkpoints' }
+  }
+
+  // Model / effort are per-turn overrides on Codex: remembered on the thread, applied by the next turn/start.
+  async setModel(runId: string, model?: string | null, effort?: string | null): Promise<boolean> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    if (model !== undefined) { live.model = model ?? ''; live.spec.model = model ?? undefined; if (live.init && model) live.init = { ...live.init, model } }
+    if (effort !== undefined) live.spec.effort = effort ?? undefined
+    return true
   }
 
   answerPrompt(runId: string, promptId: string, a: PromptAnswer): boolean {

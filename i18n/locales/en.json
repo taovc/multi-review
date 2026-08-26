@@ -728,11 +728,38 @@
       "codexError": "Codex probe failed: {msg}"
   },
   "session": {
+    "palette": {
+      "title": "Commands",
+      "local": "PR Cockpit",
+      "skills": "Your skills",
+      "skill": "skill",
+      "codexSkills": "Codex skills",
+      "plugin": "Plugin",
+      "builtin": "Built-in",
+      "showAll": "{n} more built-in commands hidden — show all",
+      "showAllToggle": "show all",
+      "button": "Commands"
+    },
+    "cmdModel": "Switch model (persists on this session)",
+    "cmdEffort": "Set reasoning effort",
+    "cmdStop": "Stop the running turn",
+    "cmdPush": "Commit & upload (PR sessions)",
+    "cmdPr": "Ask the agent to open / update the PR",
+    "cmdNew": "Start a new session",
+    "modelSet": "Model set to {model}",
+    "effortSet": "Effort set to {effort}",
     "cwdHint": "Working directory",
     "terminal": "Terminal",
     "fork": "Fork",
     "forkHint": "Start a new session that continues from this one",
     "automationPaused": "Turn stopped — automation for this PR is paused (you took over)",
+    "queued": "queued — runs when the current turn ends",
+    "cancelQueued": "withdraw",
+    "queue": "Queue",
+    "rewind": "rewind files",
+    "rewindHint": "Restore the workspace files to their state before this message (the conversation is kept)",
+    "rewindConfirm": "Restore files to before this message?",
+    "rewound": "Files restored ({n} changed)",
     "forked": "Forked into a new session"
   },
   "dashboard": {

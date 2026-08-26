@@ -22,7 +22,8 @@ export type RunEvent =
   | { t: 'local_command'; content: string }
   | { t: 'reset'; sessionId: string | null } // the CLI cleared the conversation (/clear): new transcript, cost baseline resets
   | { t: 'turn_done'; subtype: string; isError: boolean; resultText: string; costUsd: number | null; durationMs: number; numTurns: number; usage: ProviderUsage | null }
-  | { t: 'note'; text: string } // provider-side notices that are neither errors nor output (Codex warnings, plan updates, hooks)
+  | { t: 'note'; text: string }
+  | { t: 'commands'; commands: Array<{ name: string; description: string; argumentHint: string; aliases?: string[] }> } // the CLI replaced its slash-command list mid-session // provider-side notices that are neither errors nor output (Codex warnings, plan updates, hooks)
   | { t: 'error'; message: string }
 
 export type PromptKind = 'tool' | 'question' | 'plan'
@@ -65,6 +66,8 @@ export interface SessionHost {
   interrupt(runId: string): Promise<boolean>
   setMode(runId: string, mode: PermissionMode): Promise<boolean>
   setAllowDanger(runId: string, allow: boolean): void
+  setModel(runId: string, model?: string | null, effort?: string | null): Promise<boolean> // applied to the live session; false when not live
+  rewindFiles(runId: string, userMessageUuid: string, dryRun?: boolean): Promise<{ canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number }>
   answerPrompt(runId: string, promptId: string, a: PromptAnswer): boolean
   pendingPrompts(runId: string): Array<{ id: string; kind: PromptKind; toolName: string; input: Record<string, unknown> }>
   status(runId: string): 'busy' | 'waiting_prompt' | 'idle' | 'closed'
@@ -80,6 +83,7 @@ export type TurnCallbacks = {
   onText?: (delta: string) => void
   onTool?: (name: string, info: string) => void
   onSessionId?: (sessionId: string) => void
+  onUserUuid?: (uuid: string) => void // the SDK user-message uuid of this turn (rewind anchor; Claude only)
   onEvent?: (e: RunEvent) => void
 }
 
@@ -113,6 +117,7 @@ export function eventMessage(e: RunEvent): string | null {
     case 'local_command': return e.content.slice(0, 160)
     case 'reset': return 'conversation cleared'
     case 'note': return e.text.slice(0, 160)
+    case 'commands': return `commands updated (${e.commands.length})`
     default: return null
   }
 }

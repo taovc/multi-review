@@ -176,6 +176,9 @@ class ClaudeHost {
           setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, live.busy ? 'running' : 'idle', { claudeSessionId: e.sessionId })
         }
         break
+      case 'commands':
+        if (live.init) live.init = { ...live.init, slashCommands: e.commands.map((c) => c.name) }
+        break
       case 'local_command':
         // /compact, /context, /cost … print through the CLI's local command output — show it as the assistant's reply.
         if (live.turn) live.turn.text += (live.turn.text ? '\n' : '') + e.content
@@ -246,7 +249,9 @@ class ClaudeHost {
     return new Promise<TurnResult>((resolve) => {
       live.turn = { turnId: cb.turnId ?? null, cb, text: '', resolve, interrupted: false }
       // uuid lets results/stream events be bound back to this send (user_message_uuid); the CLI stamps session_id itself.
-      const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: randomUUID() as SDKUserMessage['uuid'] } as SDKUserMessage
+      const uuid = randomUUID()
+      try { cb.onUserUuid?.(uuid) } catch { /* ignore */ }
+      const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: uuid as SDKUserMessage['uuid'] } as SDKUserMessage
       live.input.push(msg)
     })
   }
@@ -270,6 +275,25 @@ class ClaudeHost {
   setAllowDanger(runId: string, allow: boolean): void {
     const live = this.runs.get(runId)
     if (live) live.spec.allowDanger = allow
+  }
+
+  // Restore the tracked files to their state at a user message (needs the live query; the caller ensure()s first).
+  async rewindFiles(runId: string, userMessageUuid: string, dryRun = false): Promise<{ canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number }> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return { canRewind: false, error: 'session is not live' }
+    if (live.busy) return { canRewind: false, error: 'a turn is running' }
+    const r: any = await live.q.rewindFiles(userMessageUuid, { dryRun })
+    return { canRewind: !!r?.canRewind, error: r?.error, filesChanged: r?.filesChanged, insertions: r?.insertions, deletions: r?.deletions }
+  }
+
+  // Model switches on the live query; effort is fixed for the life of a query, so a change is remembered on the spec
+  // and applied by the next ensure() (which restarts the query on the same native session).
+  async setModel(runId: string, model?: string | null, effort?: string | null): Promise<boolean> {
+    const live = this.runs.get(runId)
+    if (!live || live.closed) return false
+    if (model !== undefined) { live.spec.model = model ?? undefined; await live.q.setModel(model ?? undefined); if (live.init && model) live.init = { ...live.init, model } }
+    if (effort !== undefined) live.spec.effort = effort ?? undefined
+    return true
   }
 
   answerPrompt(runId: string, promptId: string, a: PromptAnswer): boolean {

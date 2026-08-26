@@ -728,11 +728,38 @@
       "codexError": "Sondage Codex échoué : {msg}"
   },
   "session": {
+    "palette": {
+      "title": "Commandes",
+      "local": "PR Cockpit",
+      "skills": "Vos skills",
+      "skill": "skill",
+      "codexSkills": "Skills Codex",
+      "plugin": "Plugin",
+      "builtin": "Intégrées",
+      "showAll": "{n} commandes intégrées masquées — tout afficher",
+      "showAllToggle": "tout afficher",
+      "button": "Commandes"
+    },
+    "cmdModel": "Changer de modèle (mémorisé sur cette session)",
+    "cmdEffort": "Régler l'effort de raisonnement",
+    "cmdStop": "Arrêter le tour en cours",
+    "cmdPush": "Commit & upload (sessions PR)",
+    "cmdPr": "Demander à l'agent d'ouvrir / mettre à jour la PR",
+    "cmdNew": "Nouvelle session",
+    "modelSet": "Modèle : {model}",
+    "effortSet": "Effort : {effort}",
     "cwdHint": "Répertoire de travail",
     "terminal": "Terminal",
     "fork": "Fork",
     "forkHint": "Démarrer une nouvelle session qui continue celle-ci",
     "automationPaused": "Tour arrêté — l’automatisation de cette PR est en pause (vous avez repris la main)",
+    "queued": "en file — démarre à la fin du tour en cours",
+    "cancelQueued": "retirer",
+    "queue": "Mettre en file",
+    "rewind": "restaurer les fichiers",
+    "rewindHint": "Remettre les fichiers de l'espace de travail dans leur état d'avant ce message (la conversation est conservée)",
+    "rewindConfirm": "Restaurer les fichiers d'avant ce message ?",
+    "rewound": "Fichiers restaurés ({n} modifiés)",
     "forked": "Nouvelle session créée par fork"
   },
   "dashboard": {

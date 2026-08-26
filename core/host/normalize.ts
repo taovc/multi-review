@@ -27,6 +27,8 @@ export function normalize(msg: SDKMessage | any): RunEvent[] {
         out.push({ t: 'task', status: msg.status ?? 'completed', taskId: String(msg.task_id ?? ''), summary: msg.summary })
       } else if (msg.subtype === 'task_started') {
         out.push({ t: 'task', status: 'started', taskId: String(msg.task_id ?? ''), description: msg.description })
+      } else if (msg.subtype === 'commands_changed') {
+        out.push({ t: 'commands', commands: (Array.isArray(msg.commands) ? msg.commands : []).map((c: any) => ({ name: String(c.name ?? ''), description: String(c.description ?? ''), argumentHint: String(c.argumentHint ?? ''), aliases: Array.isArray(c.aliases) ? c.aliases : [] })) })
       } else if (msg.subtype === 'local_command_output') {
         out.push({ t: 'local_command', content: String(msg.content ?? '') })
       }

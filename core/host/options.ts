@@ -24,6 +24,7 @@ export function buildOptions(spec: RunSpec, hooks: { canUseTool: CanUseTool; dan
     canUseTool: hooks.canUseTool,
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hooks.dangerHook] }] },
     toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+    ...(spec.kind === 'session' ? { enableFileCheckpointing: true } : {}), // per-message file snapshots → "rewind to here" in the UI
     env,
     ...(spec.chrome ? { extraArgs: { chrome: null } } : {}),
     ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),

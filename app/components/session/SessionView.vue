@@ -7,6 +7,8 @@
 import { stripRecommendedMarker } from '~core/agent/decisionCard'
 import { useRunHost, PERMISSION_MODES, type Pending, type HostInfo, type PermissionMode, type RunSummary } from '../../composables/useRunHost'
 import RunEventCard, { type StreamEvent } from './RunEventCard.vue' // explicit: the auto-import name of a nested component is prefixed (SessionRunEventCard)
+import CommandPalette from './CommandPalette.vue'
+import { classifyCommands, type CommandEntry } from '~core/host/commands'
 
 type WorkspaceType = 'pr_worktree' | 'branch_worktree' | 'cwd'
 const props = withDefaults(defineProps<{
@@ -20,7 +22,7 @@ const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: str
 const { t, te, locale } = useI18n()
 const toast = useToast()
 
-type Turn = { id: string; seq: number; role: 'user' | 'assistant'; content: string; status: string }
+type Turn = { id: string; seq: number; role: 'user' | 'assistant'; content: string; status: string; messageUuid?: string | null }
 type Detail = {
   run: any
   project: { id: string; name: string; repo: string; defaultBranch: string } | null
@@ -55,7 +57,7 @@ function addCard(kind: string, data: any, turnId: string | null, ts = new Date()
 }
 function cardsFor(turnId: string): StreamEvent[] { return cards.value.filter((c) => (c as any).turnId === turnId) }
 const streamingTurnId = computed(() => { const ts = data.value?.turns ?? []; const last = ts[ts.length - 1]; return last && last.role === 'assistant' && last.status === 'streaming' ? last.id : null })
-const busy = ref('') // '' | 'delete' | 'rmwt' | 'upload' | 'send'
+const busy = ref('') // '' | 'delete' | 'rmwt' | 'upload' | 'send' | 'rewind'
 const pendingCwd = ref<string | null>(null)
 const { confirming } = useInlineConfirm() // '' | 'delete' | 'rmwt'
 let es: EventSource | null = null
@@ -69,7 +71,7 @@ function notify(msg: string, ok = false) { toast.add({ title: msg, color: ok ? '
 function hhmmss(iso?: string) { return new Date(iso ?? new Date().toISOString()).toLocaleTimeString(locale.value, { hour12: false }) }
 
 const host = useRunHost(currentRunId, { pushLog, notify })
-const { mode, liveStatus, hostCommands, pending } = host
+const { mode, liveStatus, pending } = host
 
 // ── switches remembered per workspace kind (mode / danger / ultracode) ──
 const wt = computed(() => props.workspaceType)
@@ -104,7 +106,7 @@ const chatting = computed(() => {
   return !!data.value?.busy || (ts.length > 0 && ts[ts.length - 1]!.role === 'assistant' && ts[ts.length - 1]!.status === 'streaming')
 })
 const pushing = computed(() => run.value?.busyAction === 'pushing')
-const canChat = computed(() => !chatting.value && !pushing.value && !busy.value)
+const canChat = computed(() => !pushing.value && !busy.value) // a running turn no longer blocks: the message queues
 const isPr = computed(() => wt.value === 'pr_worktree')
 const isBranch = computed(() => wt.value === 'branch_worktree')
 const isCwd = computed(() => wt.value === 'cwd')
@@ -217,21 +219,49 @@ watch([chatting, pushing, () => props.active], ([c, p, on]) => {
 })
 
 // ── send ──
-const LOCAL_COMMANDS = [
-  { cmd: '/clear', desc: () => t('global.cmd.clear'), only: 'cwd' },
-  { cmd: '/resume', desc: () => t('global.cmd.resume'), only: 'cwd' },
-  { cmd: '/copy', desc: () => t('global.cmd.copy'), only: null },
-  { cmd: '/fork', desc: () => t('session.forkHint'), only: 'cwd' },
-  { cmd: '/cd', desc: () => t('global.cmd.cd'), only: 'cwd' },
-] as const
-const slashOpen = computed(() => input.value.startsWith('/') && !input.value.includes('\n'))
-const slashMatches = computed(() => {
-  if (!slashOpen.value) return []
-  const head = input.value.split(/\s/)[0]!.toLowerCase()
-  const local = LOCAL_COMMANDS.filter((c) => (!c.only || c.only === wt.value) && c.cmd.startsWith(head)).map((c) => ({ cmd: c.cmd, desc: c.desc(), local: true }))
-  const remote = hostCommands.value.filter((c) => `/${c}`.toLowerCase().startsWith(head)).slice(0, 12).map((c) => ({ cmd: `/${c}`, desc: '', local: false }))
-  return [...local, ...remote]
-})
+// ── "/" palette: cockpit-side commands + the CLI's catalogue for this workspace (probe cache; a live commands_changed push replaces it) ──
+type LocalCmd = { name: string; desc: () => string; hint?: string; only?: WorkspaceType | null }
+const LOCAL_COMMANDS: LocalCmd[] = [
+  { name: 'clear', desc: () => t('global.cmd.clear'), only: 'cwd' },
+  { name: 'new', desc: () => t('session.cmdNew'), only: 'cwd' },
+  { name: 'resume', desc: () => t('global.cmd.resume'), only: 'cwd' },
+  { name: 'fork', desc: () => t('session.forkHint'), only: 'cwd' },
+  { name: 'cd', desc: () => t('global.cmd.cd'), hint: '<path>', only: 'cwd' },
+  { name: 'copy', desc: () => t('global.cmd.copy') },
+  { name: 'model', desc: () => t('session.cmdModel'), hint: '<model>' },
+  { name: 'effort', desc: () => t('session.cmdEffort'), hint: '<low|medium|high|xhigh|max>' },
+  { name: 'stop', desc: () => t('session.cmdStop') },
+  { name: 'push', desc: () => t('session.cmdPush'), only: 'pr_worktree' },
+  { name: 'pr', desc: () => t('session.cmdPr'), only: 'branch_worktree' },
+]
+const localEntries = computed<CommandEntry[]>(() => LOCAL_COMMANDS.filter((c) => !c.only || c.only === wt.value).map((c) => ({ name: c.name, description: c.desc(), argumentHint: c.hint ?? '', aliases: [], origin: 'local', shortName: c.name, curated: true })))
+const catalogue = ref<CommandEntry[]>([])
+const catalogueKey = ref('')
+async function loadCatalogue(force = false) {
+  const provider = (run.value?.provider as string | undefined) ?? 'claude'
+  const cwd = data.value?.workspace.path ?? null
+  const key = `${provider}|${cwd ?? ''}|${props.projectId ?? ''}`
+  if (!force && key === catalogueKey.value) return
+  catalogueKey.value = key
+  try {
+    const r = await $fetch<{ commands: CommandEntry[] }>('/api/agent/commands', { query: { provider, cwd: cwd ?? undefined, projectId: props.projectId ?? undefined } })
+    if (key === catalogueKey.value) catalogue.value = r.commands
+  } catch { /* the palette just stays empty */ }
+}
+watch(() => [run.value?.provider, data.value?.workspace.path, props.projectId], () => { void loadCatalogue() }, { immediate: true })
+// A live session pushed its own list (skills discovered mid-session) → replace the catalogue's CLI entries.
+watch(host.hostCommandEntries, (list) => { if (list.length) catalogue.value = classifyCommands(list) })
+const slashHead = computed<string | null>(() => (input.value.startsWith('/') && !/[\s\n]/.test(input.value) ? input.value.slice(1) : null))
+const paletteHighlight = ref(0)
+const browse = ref(false)
+const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
+watch(slashHead, () => { paletteHighlight.value = 0 })
+function pickCommand(c: CommandEntry) {
+  input.value = `/${c.name} `
+  browse.value = false
+  nextTick(() => composerEl.value?.focus())
+}
+const composerEl = ref<HTMLTextAreaElement | null>(null)
 function lastAssistantText(): string {
   const ts = data.value?.turns ?? []
   for (let i = ts.length - 1; i >= 0; i--) if (ts[i]!.role === 'assistant') return ts[i]!.content
@@ -242,7 +272,22 @@ async function handleSlash(raw: string): Promise<boolean> {
   const [cmd, ...rest] = raw.trim().split(/\s+/)
   const arg = rest.join(' ')
   switch (cmd) {
-    case '/clear': if (!isCwd.value) return false; input.value = ''; emit('clear'); return true
+    case '/clear': case '/new': if (!isCwd.value) return false; input.value = ''; emit('clear'); return true
+    case '/stop': input.value = ''; await stop(); return true
+    case '/push': if (!isPr.value || !currentRunId.value) return false; input.value = ''; await openPreview(); return true
+    case '/pr': if (!isBranch.value || !currentRunId.value) return false; input.value = ''; openPr(); return true
+    case '/model': case '/effort': {
+      if (!arg) return false
+      if (!currentRunId.value) { notify(t('common.failed')); return true }
+      input.value = ''
+      const body = cmd === '/model' ? { model: arg } : { effort: arg }
+      try {
+        await $fetch(`/api/runs/${currentRunId.value}/settings`, { method: 'POST', body })
+        notify(cmd === '/model' ? t('session.modelSet', { model: arg }) : t('session.effortSet', { effort: arg }), true)
+        await load()
+      } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+      return true
+    }
     case '/resume': if (!isCwd.value) return false; input.value = ''; emit('history'); return true
     case '/fork': if (!isCwd.value) return false; input.value = ''; emit('fork'); return true
     case '/copy': {
@@ -295,7 +340,34 @@ async function send(overrideMsg?: string, opts: { allowDanger?: boolean } = {}):
   } finally { busy.value = '' }
 }
 function onComposerKey(e: KeyboardEvent) {
+  const list = paletteRef.value?.filtered ?? []
+  if (slashHead.value != null && list.length) {
+    // The palette owns the keyboard while it is open: ↑ ↓ move, Enter / Tab pick, Esc closes.
+    if (e.key === 'ArrowDown') { e.preventDefault(); paletteHighlight.value = (paletteHighlight.value + 1) % list.length; return }
+    if (e.key === 'ArrowUp') { e.preventDefault(); paletteHighlight.value = (paletteHighlight.value - 1 + list.length) % list.length; return }
+    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { if (!e.isComposing) { e.preventDefault(); pickCommand(list[paletteHighlight.value] ?? list[0]!) } return }
+    if (e.key === 'Escape') { e.preventDefault(); input.value = input.value + ' '; return }
+  }
+  if (e.key === 'Escape' && browse.value) { browse.value = false; return }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send() }
+}
+async function cancelQueued(turnId: string) {
+  if (!currentRunId.value) return
+  try { await $fetch(`/api/runs/${currentRunId.value}/queue/${turnId}`, { method: 'DELETE' }); await load() }
+  catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+}
+// Files only: the conversation keeps its history, the workspace goes back to how it was before that message.
+async function rewindTo(turnId: string) {
+  confirming.value = ''
+  if (!currentRunId.value) return
+  busy.value = 'rewind'
+  try {
+    const r = await $fetch<{ filesChanged: string[]; insertions: number; deletions: number }>(`/api/runs/${currentRunId.value}/rewind`, { method: 'POST', body: { turnId } })
+    notify(t('session.rewound', { n: r.filesChanged.length }), true)
+    await load()
+    emit('changed')
+  } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+  finally { busy.value = '' }
 }
 async function stop() {
   if (!currentRunId.value) return
@@ -440,7 +512,16 @@ const canOpenIde = computed(() => !!data.value?.workspace.exists)
       <div ref="scrollEl" class="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
         <p v-if="!data || !data.turns.length" class="text-sm text-dimmed py-8 text-center whitespace-pre-line">{{ isPr ? $t('fix.chatHint') : isBranch ? $t('feature.newHint') : $t('global.empty') }}</p>
         <div v-for="(turn, ti) in data?.turns ?? []" :key="turn.id" :class="turn.role === 'user' ? 'text-right' : ''">
-          <div v-if="turn.role === 'user'" class="inline-block max-w-[92%] text-left text-sm rounded-lg px-3 py-2 whitespace-pre-wrap break-words bg-inverted text-inverted">{{ turn.content }}</div>
+          <div v-if="turn.role === 'user'" class="inline-block max-w-[92%] text-left">
+            <div class="text-sm rounded-lg px-3 py-2 whitespace-pre-wrap break-words" :class="turn.status === 'queued' ? 'bg-muted text-dimmed border border-dashed border-default' : 'bg-inverted text-inverted'">{{ turn.content }}</div>
+            <div class="text-[10px] text-dimmed mt-0.5 flex gap-2 justify-end">
+              <template v-if="turn.status === 'queued'"><span>{{ $t('session.queued') }}</span><button class="underline hover:text-highlighted" @click="cancelQueued(turn.id)">{{ $t('session.cancelQueued') }}</button></template>
+              <template v-else-if="turn.messageUuid && run?.provider === 'claude'">
+                <template v-if="confirming === `rewind:${turn.id}`"><span>{{ $t('session.rewindConfirm') }}</span><button class="text-error underline" :disabled="!!busy || chatting" @click="rewindTo(turn.id)">{{ $t('session.rewind') }}</button><button class="underline" @click="confirming = ''">{{ $t('common.cancel') }}</button></template>
+                <button v-else class="underline hover:text-highlighted" :title="$t('session.rewindHint')" @click="confirming = `rewind:${turn.id}`">↶ {{ $t('session.rewind') }}</button>
+              </template>
+            </div>
+          </div>
           <div v-else class="inline-block max-w-[92%] text-left text-sm rounded-lg px-3 py-2 break-words bg-muted">
             <MarkdownBody :text="turn.status === 'streaming' && ti === (data?.turns.length ?? 0) - 1 && liveAssistant.length >= turn.content.length ? liveAssistant : displayText(turn.content, !!askCard && ti === (data?.turns.length ?? 0) - 1)" />
             <span v-if="turn.status === 'streaming'" class="animate-pulse">▍</span>
@@ -474,12 +555,7 @@ const canOpenIde = computed(() => !!data.value?.workspace.exists)
 
       <!-- Composer -->
       <div class="shrink-0 relative border-t border-default pt-3 mt-2 space-y-2">
-        <div v-if="slashMatches.length" class="absolute bottom-full left-0 mb-1 w-full max-h-64 overflow-y-auto bg-default border border-default rounded shadow-lg z-10">
-          <div v-for="c in slashMatches" :key="c.cmd" class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs hover:bg-muted cursor-pointer" @click="input = c.cmd + ' '">
-            <span class="font-mono text-highlighted">{{ c.cmd }}</span>
-            <span class="text-dimmed truncate">{{ c.desc || (c.local ? '' : $t('global.commandsHint')) }}</span>
-          </div>
-        </div>
+        <CommandPalette ref="paletteRef" v-model:highlight="paletteHighlight" :entries="catalogue" :local="localEntries" :head="slashHead" :browse="browse" @pick="pickCommand" @close="browse = false" />
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
           <label class="flex items-center gap-2 cursor-pointer">
             <input v-model="allowDanger" type="checkbox" class="accent-error" />
@@ -489,12 +565,14 @@ const canOpenIde = computed(() => !!data.value?.workspace.exists)
         </div>
         <span v-if="pendingCwd" class="block text-[11px] text-dimmed">{{ $t('global.cdPending', { path: pendingCwd }) }}</span>
         <textarea
+          ref="composerEl"
           v-model="input" rows="2"
           :placeholder="isPr ? $t('fix.chatPlaceholder') : isBranch ? (currentRunId ? $t('feature.chatPlaceholder') : $t('feature.composerPlaceholder')) : $t('global.placeholder')"
           class="w-full text-sm bg-muted border border-default rounded px-2 py-1.5 resize-y outline-none focus:border-accented disabled:opacity-50"
-          :disabled="chatting" @keydown="onComposerKey"
+          :disabled="!!busy" @keydown="onComposerKey"
         />
         <div class="flex items-center gap-3 flex-wrap">
+          <button type="button" class="shrink-0 text-xs rounded border border-default px-2 py-1.5 font-mono hover:bg-muted" :class="browse ? 'bg-muted text-highlighted' : 'text-dimmed'" :title="$t('session.palette.button')" @click="browse = !browse">/</button>
           <button
             type="button"
             class="ultra-btn relative overflow-hidden shrink-0 text-xs rounded px-2.5 py-1.5 font-medium text-white shadow-sm transition"
@@ -510,9 +588,9 @@ const canOpenIde = computed(() => !!data.value?.workspace.exists)
             {{ busy === 'upload' ? $t('common.loading') : $t('fix.commitAndUpload') }}
           </button>
           <button v-if="isBranch && currentRunId" class="text-sm bg-inverted text-inverted px-4 py-1.5 rounded hover:bg-inverted/90 disabled:opacity-40" :disabled="!canChat" @click="openPr">{{ run?.prUrl ? $t('feature.updatePr') : $t('feature.openPr') }}</button>
-          <div class="ml-auto">
+          <div class="ml-auto flex items-center gap-2">
             <button v-if="chatting" class="w-24 text-sm border border-accented rounded py-1.5 hover:bg-muted" @click="stop">{{ $t('fix.stop') }}</button>
-            <button v-else class="w-24 text-sm bg-inverted text-inverted rounded py-1.5 hover:bg-inverted/90 disabled:opacity-40" :disabled="!input.trim() || !canChat" @click="send()">{{ busy === 'send' && !currentRunId ? $t('feature.creating') : $t('global.send') }}</button>
+            <button class="w-24 text-sm bg-inverted text-inverted rounded py-1.5 hover:bg-inverted/90 disabled:opacity-40" :disabled="!input.trim() || !canChat" @click="send()">{{ busy === 'send' && !currentRunId ? $t('feature.creating') : chatting ? $t('session.queue') : $t('global.send') }}</button>
           </div>
         </div>
         <!-- Workspace tools: path, copy, open in, delete worktree -->

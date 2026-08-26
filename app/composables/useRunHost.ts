@@ -11,6 +11,7 @@ export function useRunHost(runId: Ref<string | null>, opts: { pushLog: (line: st
   const pending = ref<Pending[]>([])
   const liveStatus = ref<string>('closed')
   const hostCommands = ref<string[]>([])
+  const hostCommandEntries = ref<Array<{ name: string; description: string; argumentHint: string; aliases?: string[] }>>([]) // full entries from a commands_changed push
   const contextUse = ref<{ pct: number; total: number; max: number } | null>(null)
   const lastTurnCost = ref<number | null>(null)
   const sessionCost = ref<number | null>(null)
@@ -38,6 +39,7 @@ export function useRunHost(runId: Ref<string | null>, opts: { pushLog: (line: st
   function onRunEvent(ev: any) {
     switch (ev.t) {
       case 'init': hostCommands.value = ev.slashCommands ?? []; break
+      case 'commands': hostCommands.value = (ev.commands ?? []).map((c: any) => c.name); hostCommandEntries.value = ev.commands ?? []; break
       case 'status': liveStatus.value = ev.status; break
       case 'mode': if (PERMISSION_MODES.includes(ev.permissionMode)) mode.value = ev.permissionMode; break
       case 'tool_use': {
@@ -136,6 +138,6 @@ export function useRunHost(runId: Ref<string | null>, opts: { pushLog: (line: st
     await $fetch(`/api/runs/${runId.value}/mode`, { method: 'POST', body: { allowDanger: v } }).catch(() => {})
   }
 
-  return { pending, liveStatus, hostCommands, contextUse, lastTurnCost, sessionCost, mode, busy, denyNote, otherAnswer, denying, reset, applyDetail, onRunEvent, promptPreview, planText, answerPrompt, pickOption, isPicked, submitQuestion, questionReady, setMode, setAllowDanger }
+  return { pending, liveStatus, hostCommands, hostCommandEntries, contextUse, lastTurnCost, sessionCost, mode, busy, denyNote, otherAnswer, denying, reset, applyDetail, onRunEvent, promptPreview, planText, answerPrompt, pickOption, isPicked, submitQuestion, questionReady, setMode, setAllowDanger }
 }
 export type RunHost = ReturnType<typeof useRunHost>

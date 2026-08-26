@@ -728,11 +728,38 @@
       "codexError": "Codex 探测失败：{msg}"
   },
   "session": {
+    "palette": {
+      "title": "命令",
+      "local": "PR Cockpit",
+      "skills": "我的 skills",
+      "skill": "skill",
+      "codexSkills": "Codex skills",
+      "plugin": "插件",
+      "builtin": "内建",
+      "showAll": "还有 {n} 条内建命令被隐藏 — 显示全部",
+      "showAllToggle": "显示全部",
+      "button": "命令"
+    },
+    "cmdModel": "切换模型（保存在这个会话上）",
+    "cmdEffort": "设置推理强度",
+    "cmdStop": "停止当前回合",
+    "cmdPush": "提交并上传（PR 会话）",
+    "cmdPr": "让 agent 开 / 更新 PR",
+    "cmdNew": "新开一个会话",
+    "modelSet": "模型已切到 {model}",
+    "effortSet": "推理强度已设为 {effort}",
     "cwdHint": "工作目录",
     "terminal": "终端",
     "fork": "Fork",
     "forkHint": "以这个会话为起点开一个新会话",
     "automationPaused": "已停止——这个 PR 的自动化已暂停（你接管了）",
+    "queued": "排队中——当前回合结束后执行",
+    "cancelQueued": "撤回",
+    "queue": "排队",
+    "rewind": "回退文件",
+    "rewindHint": "把工作目录里的文件恢复到这条消息之前的状态（对话保留）",
+    "rewindConfirm": "把文件恢复到这条消息之前？",
+    "rewound": "文件已恢复（{n} 个有变化）",
     "forked": "已 fork 出新会话"
   },
   "dashboard": {
