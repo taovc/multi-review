@@ -361,6 +361,8 @@
     },
     "autoMaxRounds": "Limite de tours d'auto-correction",
     "autoMaxRoundsHint": "Tours correction↔re-revue max, puis pause",
+    "verifyBeforePost": "Vérifier avant publication",
+    "verifyBeforePostHint": "Après une revue, une seconde passe en lecture seule tente de réfuter chaque finding ; les réfutés restent visibles mais décochés.",
     "autoCooldown": "Délai d'automatisation (min)",
     "autoCooldownHint": "Délai après un nouveau commit, 0 = off"
   },
@@ -394,6 +396,9 @@
     "testPath": "Parcours de test manuel",
     "findings": "Findings ({count})",
     "preExisting": "· préexistant",
+    "verifyRefuted": "réfuté par la vérification",
+    "verifyConfirmed": "vérifié",
+    "verifyUnsure": "non vérifié",
     "detailFix": "Détails / Correctif",
     "recheckRound": "Recontrôle R{round}",
     "notePlaceholder": "Réponse / retour (pour l'IA : pas valable ? complément ? revérifier ? Avec « Recontrôler selon mes retours », l'IA répond. Coché à la publication, traduit en anglais dans le commentaire)",

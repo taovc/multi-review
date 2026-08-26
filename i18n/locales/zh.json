@@ -361,6 +361,8 @@
     },
     "autoMaxRounds": "自动修复回合上限",
     "autoMaxRoundsHint": "修复↔复查最多几轮，到顶暂停",
+    "verifyBeforePost": "发前验证",
+    "verifyBeforePostHint": "首次审核后再跑一遍只读反驳；被反驳的 finding 保留可见但不勾选。",
     "autoCooldown": "自动化冷却期(分钟)",
     "autoCooldownHint": "新提交后等待再动手，0=不冷却"
   },
@@ -394,6 +396,9 @@
     "testPath": "手动测试路径",
     "findings": "Findings ({count})",
     "preExisting": "· 历史遗留",
+    "verifyRefuted": "验证反驳",
+    "verifyConfirmed": "已验证",
+    "verifyUnsure": "未能验证",
     "detailFix": "详情 / 修复",
     "recheckRound": "复审 R{round}",
     "notePlaceholder": "回复 / 反馈（写给 AI：不成立？补充？让它重查？「按我反馈复审」时 AI 会回应。勾选发布时翻英文进评论）",

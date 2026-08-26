@@ -2,7 +2,7 @@
 // A "run" is one agent execution we can attribute cost / tokens / model / skill version to.
 
 export type RunKind = 'review' | 'session'
-export type RunSubkind = 'review' | 'guided' | 'recheck' | 'skillgen' | 'session' | 'helper' | 'eval'
+export type RunSubkind = 'review' | 'guided' | 'recheck' | 'skillgen' | 'session' | 'helper' | 'eval' | 'verify'
 export type RunStatus = 'queued' | 'running' | 'awaiting_input' | 'idle' | 'stopped' | 'done' | 'error'
 export type CostSource = 'reported' | 'estimated'
 

@@ -8,7 +8,7 @@ const { t, locale } = useI18n()
 type Finding = {
   id: string; fid: string; severity: 'High' | 'Medium' | 'Low'; title: string
   location: string | null; problem: string | null; detail: string | null; fix: string | null
-  introducedByPr: boolean; checked: boolean; notes: string | null
+  introducedByPr: boolean; checked: boolean; notes: string | null; verifyStatus?: 'confirmed' | 'refuted' | 'unsure' | null; verifyNote?: string | null
   rechecks: { round: number; status: string; text: string | null; at: string }[]
 }
 type RunInfo = { id: string; subkind: string; provider: string; model: string | null; effort: string | null; status: string; costUsd: number | null; costSource: string | null; inputTokens: number; outputTokens: number; durationMs: number; skillVersion: number | null; skillName: string | null } | null
@@ -346,7 +346,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
             <div class="text-sm">
               <span class="text-xs mr-1" :class="sevCls[f.severity]">[{{ f.severity }}]</span>{{ f.title }}
             </div>
-            <div class="text-xs text-dimmed mt-0.5">{{ f.location }}<span v-if="!f.introducedByPr"> {{ $t('review.preExisting') }}</span></div>
+            <div class="text-xs text-dimmed mt-0.5">{{ f.location }}<span v-if="!f.introducedByPr"> {{ $t('review.preExisting') }}</span><span v-if="f.verifyStatus === 'refuted'" class="ml-1 text-highlighted" :title="f.verifyNote || ''">⊘ {{ $t('review.verifyRefuted') }}</span><span v-else-if="f.verifyStatus === 'confirmed'" class="ml-1" :title="f.verifyNote || ''">✓ {{ $t('review.verifyConfirmed') }}</span><span v-else-if="f.verifyStatus === 'unsure'" class="ml-1" :title="f.verifyNote || ''">? {{ $t('review.verifyUnsure') }}</span></div>
             <p v-if="f.problem" class="text-sm text-toned mt-1">{{ f.problem }}</p>
             <details v-if="f.detail || f.fix" class="mt-1">
               <summary class="text-xs text-dimmed cursor-pointer">{{ $t('review.detailFix') }}</summary>

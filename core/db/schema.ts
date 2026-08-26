@@ -20,6 +20,8 @@ export const projects = sqliteTable('projects', {
   // Automation cooldown (minutes): after a PR's head is first seen, wait this long before acting,
   // giving the user time to go in and turn off the ones they don't want run. 0 = no cooldown.
   autoCooldownMinutes: integer('auto_cooldown_minutes').notNull().default(5),
+  // Verify-before-post: after a fresh review, a second read-only pass tries to refute every finding (core/agent/verify.ts).
+  verifyBeforePost: integer('verify_before_post', { mode: 'boolean' }).notNull().default(false),
   defaultBranch: text('default_branch').notNull().default('dev'),
   createdAt: text('created_at').notNull(),
 })
@@ -141,6 +143,9 @@ export const findings = sqliteTable('findings', {
   // and the automation engine never touch it, so precision metrics survive "fixed → auto-unchecked".
   humanAcceptedAt: text('human_accepted_at'),
   postedPostId: text('posted_post_id'), // the posts row this finding went out with (null = never posted)
+  // Verify-before-post verdict of the second pass (null = not verified). Refuted findings stay visible but unchecked.
+  verifyStatus: text('verify_status', { enum: ['confirmed', 'refuted', 'unsure'] }),
+  verifyNote: text('verify_note'),
   notes: text('notes'),
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: text('created_at').notNull(),
@@ -507,6 +512,62 @@ export const permissionRequests = sqliteTable('permission_requests', {
   resolvedAt: text('resolved_at'),
 })
 
+// Eval replay (phase 5): a golden set scored against one provider/model/skill version, with and without the verify pass.
+export const evalRuns = sqliteTable('eval_runs', {
+  id: text('id').primaryKey(),
+  golden: text('golden').notNull(),
+  projectId: text('project_id'),
+  provider: text('provider').notNull(),
+  model: text('model'),
+  effort: text('effort'),
+  skillVersionId: text('skill_version_id'),
+  methodologySha: text('methodology_sha').notNull(),
+  verify: integer('verify', { mode: 'boolean' }).notNull().default(false),
+  cases: integer('cases').notNull().default(0),
+  tp: integer('tp'),
+  fp: integer('fp'),
+  fn: integer('fn'),
+  precision: real('precision'),
+  recall: real('recall'),
+  f1: real('f1'),
+  verifiedTp: integer('verified_tp'),
+  verifiedFp: integer('verified_fp'),
+  verifiedFn: integer('verified_fn'),
+  costUsd: real('cost_usd'),
+  durationMs: integer('duration_ms'),
+  reportPath: text('report_path'),
+  status: text('status').notNull().default('running'), // running | done | partial
+  createdAt: text('created_at').notNull(),
+  endedAt: text('ended_at'),
+})
+
+export const evalCases = sqliteTable('eval_cases', {
+  id: text('id').primaryKey(),
+  evalRunId: text('eval_run_id').notNull().references(() => evalRuns.id, { onDelete: 'cascade' }),
+  prNumber: integer('pr_number').notNull(),
+  headSha: text('head_sha').notNull(),
+  status: text('status').notNull().default('running'), // running | done | error
+  tp: integer('tp'),
+  fp: integer('fp'),
+  fn: integer('fn'),
+  costUsd: real('cost_usd'),
+  durationMs: integer('duration_ms'),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+})
+
+export const evalFindings = sqliteTable('eval_findings', {
+  id: text('id').primaryKey(),
+  evalCaseId: text('eval_case_id').notNull().references(() => evalCases.id, { onDelete: 'cascade' }),
+  fid: text('fid').notNull(),
+  severity: text('severity').notNull(),
+  title: text('title').notNull(),
+  location: text('location'),
+  matchedLabelId: text('matched_label_id'),
+  verifyStatus: text('verify_status'),
+  createdAt: text('created_at').notNull(),
+})
+
 // Key/value store for one-off migration markers and similar bookkeeping.
 export const meta = sqliteTable('meta', {
   key: text('key').primaryKey(),
@@ -536,3 +597,6 @@ export type Run = typeof runs.$inferSelect
 export type RunUsage = typeof runUsage.$inferSelect
 export type RunEventRow = typeof runEvents.$inferSelect
 export type PermissionRequest = typeof permissionRequests.$inferSelect
+export type EvalRun = typeof evalRuns.$inferSelect
+export type EvalCase = typeof evalCases.$inferSelect
+export type EvalFinding = typeof evalFindings.$inferSelect

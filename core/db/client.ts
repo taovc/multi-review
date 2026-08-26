@@ -136,6 +136,10 @@ function ensureColumns(sqlite: Database.Database) {
     ['runs', 'allow_danger', 'INTEGER NOT NULL DEFAULT 0'],
     ['runs', 'network_access', 'INTEGER NOT NULL DEFAULT 0'],
     ['runs', 'allow_rules', 'TEXT'],
+    // verify-before-post (phase 5)
+    ['projects', 'verify_before_post', 'INTEGER NOT NULL DEFAULT 0'],
+    ['findings', 'verify_status', 'TEXT'],
+    ['findings', 'verify_note', 'TEXT'],
   ]
   for (const [table, col, type] of adds) {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -542,6 +546,53 @@ function ensureSchema(sqlite: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS permission_requests_run_idx ON permission_requests(run_id);
     CREATE INDEX IF NOT EXISTS permission_requests_status_idx ON permission_requests(status);
+
+    CREATE TABLE IF NOT EXISTS eval_runs (
+      id TEXT PRIMARY KEY,
+      golden TEXT NOT NULL,
+      project_id TEXT,
+      provider TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      skill_version_id TEXT,
+      methodology_sha TEXT NOT NULL,
+      verify INTEGER NOT NULL DEFAULT 0,
+      cases INTEGER NOT NULL DEFAULT 0,
+      tp INTEGER, fp INTEGER, fn INTEGER,
+      precision REAL, recall REAL, f1 REAL,
+      verified_tp INTEGER, verified_fp INTEGER, verified_fn INTEGER,
+      cost_usd REAL,
+      duration_ms INTEGER,
+      report_path TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      created_at TEXT NOT NULL,
+      ended_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS eval_cases (
+      id TEXT PRIMARY KEY,
+      eval_run_id TEXT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+      pr_number INTEGER NOT NULL,
+      head_sha TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      tp INTEGER, fp INTEGER, fn INTEGER,
+      cost_usd REAL,
+      duration_ms INTEGER,
+      error TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS eval_findings (
+      id TEXT PRIMARY KEY,
+      eval_case_id TEXT NOT NULL REFERENCES eval_cases(id) ON DELETE CASCADE,
+      fid TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      title TEXT NOT NULL,
+      location TEXT,
+      matched_label_id TEXT,
+      verify_status TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS eval_cases_run_idx ON eval_cases(eval_run_id);
+    CREATE INDEX IF NOT EXISTS eval_findings_case_idx ON eval_findings(eval_case_id);
 
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,

@@ -6,6 +6,7 @@ import { prepareWorktree } from './git/worktree'
 import { fetchPrMergeable } from './github/gh'
 import { claudeReviewRunner } from './agent/claudeRunners'
 import { codexReviewRunner } from './agent/codexReview'
+import { runVerifyAgent, verdictMap } from './agent/verify'
 import { pickByLang } from './agent/lang'
 import { createRun, finishRun, recordRunUsage } from './runs/store'
 import { formatUsageLabel } from './runs/format'
@@ -65,6 +66,14 @@ export type ReviewJobCtx = {
   projectId?: string | null
   skillId?: string | null
   skillVersionId?: string | null
+  verifyBeforePost?: boolean // fresh reviews: run the refute pass and store a verdict per finding
+}
+
+type VerifyCounts = { confirmed: number; refuted: number; unsure: number }
+const VERIFY_STAGE = {
+  zh: { start: '发前验证：第二遍尝试反驳每条 finding…', done: (c: VerifyCounts) => `验证完成：确认 ${c.confirmed} · 反驳 ${c.refuted} · 不确定 ${c.unsure}`, failed: (m: string) => `验证失败（findings 保留，未标注）：${m}` },
+  en: { start: 'Verify before post: a second pass tries to refute each finding…', done: (c: VerifyCounts) => `Verified: ${c.confirmed} confirmed · ${c.refuted} refuted · ${c.unsure} unsure`, failed: (m: string) => `Verify failed (findings kept, unlabelled): ${m}` },
+  fr: { start: 'Vérification avant publication : une seconde passe tente de réfuter chaque finding…', done: (c: VerifyCounts) => `Vérifié : ${c.confirmed} confirmés · ${c.refuted} réfutés · ${c.unsure} incertains`, failed: (m: string) => `Vérification échouée (findings conservés, non annotés) : ${m}` },
 }
 
 export function enqueueReview(ctx: ReviewJobCtx) {
@@ -207,6 +216,42 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           }).run()
         })
       })
+
+      // Verify-before-post: a second read-only pass tries to refute every finding; verdicts are stored on the findings
+      // (refuted ones stay visible but unchecked). A failed verify pass never fails the review.
+      if (ctx.verifyBeforePost && result.findings.length && !taskGone()) {
+        emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).start)
+        const verifyRunId = createRun(db, schema, {
+          kind: 'review', subkind: 'verify', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+          projectId: ctx.projectId ?? review?.projectId ?? null, reviewId, workspaceType: 'pr_worktree', workspacePath: wt.path,
+          prNumber: ctx.prNumber, branch: ctx.branch, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier,
+          skillId: ctx.skillId ?? null, skillVersionId: ctx.skillVersionId ?? null, lang: ctx.lang ?? null, title: review?.title ?? null,
+        })
+        try {
+          const rows = db.select().from(schema.findings).where(eq(schema.findings.reviewId, reviewId)).all() as any[]
+          const v = await runVerifyAgent({
+            cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch, defaultBranch: ctx.defaultBranch,
+            provider: ctx.provider, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, methodology: ctx.methodology,
+            findings: rows.map((f) => ({ fid: f.fid, severity: f.severity, title: f.title, location: f.location, problem: f.problem, detail: f.detail })),
+            onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
+          })
+          recordRunUsage(db, schema, verifyRunId, v.usage)
+          costUsd += v.costUsd
+          const verdicts = verdictMap(v.result, rows.map((f) => f.fid))
+          const counts = { confirmed: 0, refuted: 0, unsure: 0 }
+          for (const f of rows) {
+            const x = verdicts.get(f.fid)!
+            counts[x.verdict]++
+            db.update(schema.findings).set({ verifyStatus: x.verdict, verifyNote: x.reason || null }).where(eq(schema.findings.id, f.id)).run()
+          }
+          finishRun(db, schema, verifyRunId, { status: 'done' })
+          emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).done(counts))
+        } catch (e) {
+          if (abort.signal.aborted) throw e
+          finishRun(db, schema, verifyRunId, { status: 'error', error: (e as Error).message })
+          emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).failed((e as Error).message))
+        }
+      }
 
       // Merge conflict detection: the PR conflicts with its base branch → append a High "resolve merge conflicts" finding (auto-fix will try to resolve them).
       // A failed / UNKNOWN GitHub mergeable lookup never raises a false alarm.

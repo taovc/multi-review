@@ -29,6 +29,7 @@ const form = reactive({
   effort: props.project.effort || '',
   codexFast: ((props.project as Project & { codexServiceTier?: string | null }).codexServiceTier || '') === 'fast',
   autoMaxRounds: (props.project as Project & { autoMaxRounds?: number }).autoMaxRounds ?? 2,
+  verifyBeforePost: !!(props.project as Project & { verifyBeforePost?: boolean }).verifyBeforePost,
   autoCooldownMinutes: (props.project as Project & { autoCooldownMinutes?: number }).autoCooldownMinutes ?? 5,
 })
 const savingInfo = ref(false)
@@ -100,6 +101,7 @@ async function saveInfo() {
         defaultBranch: form.defaultBranch, provider: form.provider, model: form.model || null, effort: form.effort || null,
         codexServiceTier: form.codexFast ? 'fast' : null,
         autoMaxRounds: Math.min(10, Math.max(1, Number(form.autoMaxRounds) || 2)),
+        verifyBeforePost: !!form.verifyBeforePost,
         autoCooldownMinutes: Math.min(120, Math.max(0, Number(form.autoCooldownMinutes) ?? 5)),
       },
     })
@@ -324,6 +326,12 @@ function codexAuthClass(status: CodexSdkStatus | null) {
             v-model.number="form.autoMaxRounds" type="number" min="1" max="10"
             class="w-16 text-sm border-b border-default py-1 bg-transparent outline-none focus:border-inverted mt-2"
           />
+        </div>
+        <!-- Verify before post -->
+        <div class="flex flex-col">
+          <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed">{{ $t('config.verifyBeforePost') }}</div>
+          <p class="text-xs text-dimmed mt-1">{{ $t('config.verifyBeforePostHint') }}</p>
+          <div class="mt-2"><USwitch v-model="form.verifyBeforePost" /></div>
         </div>
         <!-- Automation cooldown (minutes) -->
         <div class="flex flex-col">

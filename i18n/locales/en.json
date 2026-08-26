@@ -361,6 +361,8 @@
     },
     "autoMaxRounds": "Auto-fix round limit",
     "autoMaxRoundsHint": "Max fix↔re-review rounds, then pause",
+    "verifyBeforePost": "Verify before post",
+    "verifyBeforePostHint": "After a fresh review, a second read-only pass tries to refute each finding; refuted ones stay visible but unchecked.",
     "autoCooldown": "Automation cooldown (min)",
     "autoCooldownHint": "Delay after a new commit, 0 = off"
   },
@@ -394,6 +396,9 @@
     "testPath": "Manual test path",
     "findings": "Findings ({count})",
     "preExisting": "· pre-existing",
+    "verifyRefuted": "refuted by verify",
+    "verifyConfirmed": "verified",
+    "verifyUnsure": "unverified",
     "detailFix": "Details / Fix",
     "recheckRound": "Recheck R{round}",
     "notePlaceholder": "Reply / feedback (to the AI: invalid? add context? have it recheck? With “Recheck per my feedback”, the AI responds. When checked, translated to English in the posted comment)",
