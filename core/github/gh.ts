@@ -180,6 +180,7 @@ export type PrDetail = {
   author: string
   createdAt: string
   state: PrMeta['state']
+  reviewDecision: string // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' (GitHub's aggregate)
   branch: string
   headSha: string
   additions: number
@@ -191,7 +192,7 @@ export type PrDetail = {
 }
 
 const DETAIL_FIELDS = [
-  'number', 'title', 'body', 'author', 'createdAt', 'state', 'isDraft', 'headRefName', 'headRefOid',
+  'number', 'title', 'body', 'author', 'createdAt', 'state', 'isDraft', 'reviewDecision', 'headRefName', 'headRefOid',
   'additions', 'deletions', 'changedFiles', 'url', 'files', 'commits',
 ].join(',')
 
@@ -205,6 +206,7 @@ export async function fetchPrDetail(repo: string, prNumber: number): Promise<PrD
     author: j.author?.login ?? j.author?.name ?? 'unknown',
     createdAt: j.createdAt ?? '',
     state: normState(j.state, !!j.isDraft),
+    reviewDecision: String(j.reviewDecision ?? ''),
     branch: j.headRefName ?? '',
     headSha: j.headRefOid ?? '',
     additions: j.additions ?? 0,

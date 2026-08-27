@@ -7,6 +7,15 @@ const props = defineProps<{
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ taskCreated: [] }>()
 const { t, te, locale } = useI18n()
+// The PR's GitHub lifecycle is the first thing to read when the drawer opens: same badge styling as the PR list.
+const PR_STATE: Record<string, { label: string; cls: string }> = {
+  open: { label: 'status.pr.open', cls: 'text-default border-accented' },
+  merged: { label: 'status.pr.merged', cls: 'text-highlighted border-accented' },
+  closed: { label: 'status.pr.closed', cls: 'text-dimmed border-default' },
+  draft: { label: 'status.pr.draft', cls: 'text-dimmed border-default' },
+}
+const prBadge = (state: string) => PR_STATE[state] ?? { label: 'status.pr.unknown', cls: 'text-dimmed border-default' }
+const reviewBadge = (decision: string) => (decision === 'APPROVED' ? { label: 'status.pr.approved', cls: 'text-highlighted border-accented' } : decision === 'CHANGES_REQUESTED' ? { label: 'status.pr.changes', cls: 'text-default border-accented' } : null)
 
 // The two per-instance automation switches (auto review / auto fix). Optimistic local state: the switch
 // moves immediately instead of waiting for the 8s poll (feels smooth); on failure, or on the next poll,
@@ -44,7 +53,7 @@ const coolingMinLeft = computed(() => {
 
 type Detail = {
   number: number; title: string; body: string; author: string; createdAt: string
-  state: string; branch: string; additions: number; deletions: number; changedFiles: number
+  state: string; reviewDecision: string; branch: string; additions: number; deletions: number; changedFiles: number
   url: string; files: { path: string; additions: number; deletions: number }[]
   commits: { oid: string; headline: string; date: string; author: string }[]
 }
@@ -223,6 +232,8 @@ const lineCls: Record<DiffLine['t'], string> = {
           <div v-if="detail" class="flex items-start justify-between gap-4">
             <div class="min-w-0">
               <div class="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-dimmed">
+                <span class="inline-block whitespace-nowrap text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="prBadge(detail.state).cls">{{ $t(prBadge(detail.state).label) }}</span>
+                <span v-if="reviewBadge(detail.reviewDecision)" class="inline-block whitespace-nowrap text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full" :class="reviewBadge(detail.reviewDecision)!.cls">{{ $t(reviewBadge(detail.reviewDecision)!.label) }}</span>
                 <span class="tabular-nums">#{{ detail.number }}</span>
                 <span>·</span><span>{{ detail.author }}</span>
                 <span>·</span><span class="font-mono break-all">{{ detail.branch }}</span>
