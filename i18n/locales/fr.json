@@ -665,7 +665,19 @@
       },
       "findings": "{n} findings · {u} non cochés",
       "session": "session",
-      "since": "depuis {t}"
+      "since": "depuis {t}",
+      "where": {
+        "review": "revue · pas d'espace de travail local",
+        "pr": "worktree PR #{n}",
+        "branch": "worktree de branche",
+        "cwd": "session de répertoire"
+      },
+      "hint": {
+        "prompts": "Sessions bloquées sur une permission, une question ou l'approbation d'un plan. « Ouvrir » suit l'espace de travail : worktree PR → onglet correction du tiroir PR ; worktree de branche → liste des sessions du projet ; session de répertoire → tiroir global (en bas à droite).",
+        "drafts": "Revues ayant produit des findings que personne n'a encore cochés ni publiés. Une revue tourne dans un worktree jetable supprimé juste après, donc le filtre « espace de travail » de la liste des PR ne les trouve jamais — « Ouvrir » mène à l'onglet revue du tiroir PR.",
+        "errors": "Exécutions terminées en erreur ces dernières 24 heures (revues, re-vérifications, génération de skill et sessions) ; la seconde ligne est le texte de l'erreur.",
+        "automation": "Ce que le moteur d'automatisation a fait ces dernières 24 heures et pourquoi il s'est retenu (ignoré, refroidissement, limite de tours). Journal en lecture seule."
+      }
   },
   "agentConfig": {
       "title": "Configuration de l'agent",

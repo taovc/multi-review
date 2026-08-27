@@ -665,7 +665,19 @@
       },
       "findings": "{n} 条 findings · {u} 条未勾选",
       "session": "会话",
-      "since": "{t} 起"
+      "since": "{t} 起",
+      "where": {
+        "review": "审核 · 无本地工作区",
+        "pr": "PR #{n} worktree",
+        "branch": "分支 worktree",
+        "cwd": "目录会话"
+      },
+      "hint": {
+        "prompts": "会话卡在权限确认、提问或 plan 审批上。「打开」按工作区跳转：PR worktree → PR 抽屉的修复 tab；分支 worktree → 项目的会话列表；目录会话 → 右下角全局抽屉。",
+        "drafts": "审核已产出 findings，还没人勾选或发布。审核在临时 worktree 里跑完即删，所以 PR 列表的「工作区」过滤不会命中它们——「打开」进入 PR 抽屉的审核 tab。",
+        "errors": "最近 24 小时内以 error 结束的运行（审核、复查、skill 生成、会话都算），错误原文见第二行。",
+        "automation": "自动化引擎最近 24 小时做了什么、为什么没做（跳过、冷却、回合上限）。只读记录。"
+      }
   },
   "agentConfig": {
       "title": "Agent 配置透视",

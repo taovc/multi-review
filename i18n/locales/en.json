@@ -665,7 +665,19 @@
       },
       "findings": "{n} findings · {u} unchecked",
       "session": "session",
-      "since": "since {t}"
+      "since": "since {t}",
+      "where": {
+        "review": "review · no local workspace",
+        "pr": "PR #{n} worktree",
+        "branch": "branch worktree",
+        "cwd": "directory session"
+      },
+      "hint": {
+        "prompts": "Sessions blocked on a permission, a question or a plan approval. \"Open\" follows the workspace: PR worktree → the fix tab of the PR drawer; branch worktree → the project's session list; directory session → the global drawer (bottom right).",
+        "drafts": "Reviews that produced findings nobody has ticked or posted yet. A review runs in a throw-away worktree that is deleted right after, so the PR list's \"worktree\" filter never matches them — \"Open\" goes to the review tab of the PR drawer.",
+        "errors": "Runs that ended in error during the last 24 hours (reviews, rechecks, skill generation and sessions alike); the second line is the error text.",
+        "automation": "What the automation engine did in the last 24 hours and why it held back (skipped, cooling down, round limit). Read-only log."
+      }
   },
   "agentConfig": {
       "title": "Agent configuration",
