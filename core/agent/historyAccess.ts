@@ -4,16 +4,12 @@ import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { asc, eq } from 'drizzle-orm'
 
+// Read-only handoff of a session's history to the agent when the other provider starts fresh on the same run:
+// a short-lived token → GET /api/agent/history/run/:id → markdown with the run's context, git snapshot and last turns.
+
 const pexec = promisify(execFile)
 
-export type AgentHistoryScope = 'fix' | 'feature' | 'global'
-
-type TokenRecord = {
-  scope: AgentHistoryScope
-  id: string
-  expiresAt: number
-}
-
+type TokenRecord = { id: string; expiresAt: number }
 const tokens = new Map<string, TokenRecord>()
 
 function pruneTokens(now = Date.now()) {
@@ -22,18 +18,18 @@ function pruneTokens(now = Date.now()) {
   }
 }
 
-export function registerAgentHistoryToken(scope: AgentHistoryScope, id: string, ttlMs = 60 * 60 * 1000): string {
+export function registerAgentHistoryToken(id: string, ttlMs = 60 * 60 * 1000): string {
   pruneTokens()
   const token = randomBytes(18).toString('base64url')
-  tokens.set(token, { scope, id, expiresAt: Date.now() + ttlMs })
+  tokens.set(token, { id, expiresAt: Date.now() + ttlMs })
   return token
 }
 
-export function validateAgentHistoryToken(scope: AgentHistoryScope, id: string, token: string | undefined): boolean {
+export function validateAgentHistoryToken(id: string, token: string | undefined): boolean {
   pruneTokens()
   if (!token) return false
   const record = tokens.get(token)
-  return !!record && record.scope === scope && record.id === id
+  return !!record && record.id === id
 }
 
 function asLimit(value?: number): number {
@@ -59,132 +55,40 @@ async function gitSnapshot(cwd?: string): Promise<string> {
     git(cwd, ['status', '--short']).catch(() => ''),
     git(cwd, ['diff', '--stat']).catch(() => ''),
   ])
-  const parts: string[] = []
-  if (head) parts.push(`- HEAD: ${head}`)
-  if (status) parts.push(`- Git status:\n\`\`\`text\n${truncate(status, 4000)}\n\`\`\``)
-  if (stat) parts.push(`- Uncommitted diff stat:\n\`\`\`text\n${truncate(stat, 4000)}\n\`\`\``)
-  return parts.length ? parts.join('\n') : '- No git status available or no visible local changes.'
-}
-
-function turnRows(db: any, table: any, column: any, id: string, limit: number): any[] {
-  const rows = db.select().from(table).where(eq(column, id)).orderBy(asc(table.seq)).all() as any[]
-  if (rows.length <= limit) return rows
-  return rows.slice(rows.length - limit)
-}
-
-function eventRows(db: any, table: any, column: any, id: string, limit = 20): any[] {
-  try {
-    const rows = db.select().from(table).where(eq(column, id)).all() as any[]
-    return rows.slice(Math.max(0, rows.length - limit))
-  } catch {
-    return []
-  }
+  const lines = [
+    head ? `- HEAD: ${head}` : '',
+    status ? `- Status:\n\`\`\`\n${truncate(status, 4000)}\n\`\`\`` : '',
+    stat ? `- Diff stat:\n\`\`\`\n${truncate(stat, 4000)}\n\`\`\`` : '',
+  ].filter(Boolean)
+  return lines.length ? lines.join('\n') : '- No git status available for this workspace.'
 }
 
 function renderTurns(turns: any[], omitted: number): string {
-  const out: string[] = []
-  if (omitted > 0) out.push(`_Omitted ${omitted} older turns._`)
-  for (const turn of turns) {
-    out.push(`### #${turn.seq} ${turn.role} · ${turn.status || 'done'} · ${turn.createdAt || ''}`)
-    out.push(truncate(turn.content || '', 16_000) || '(empty)')
-  }
-  return out.join('\n\n')
+  const head = omitted > 0 ? `_Omitted ${omitted} older turns._\n\n` : ''
+  if (!turns.length) return `${head}(no turns yet)`
+  return head + turns.map((t) => `### #${t.seq} ${t.role} · ${t.status} · ${t.createdAt}\n${truncate(t.content, 16_000) || '(empty)'}`).join('\n\n')
 }
 
 function renderEvents(events: any[]): string {
-  if (!events.length) return ''
-  return events
-    .map((event) => `- ${event.ts || ''} ${event.kind || ''}${event.message ? `: ${event.message}` : ''}`)
-    .join('\n')
+  return events.map((e) => `- ${e.ts} ${e.kind}: ${truncate(e.message, 500)}`).join('\n')
 }
 
-export async function buildAgentHistoryMarkdown(opts: {
-  db: any
-  schema: any
-  scope: AgentHistoryScope
-  id: string
-  cwd?: string
-  limit?: number
-}): Promise<string> {
+export async function buildAgentHistoryMarkdown(opts: { db: any; schema: any; id: string; cwd?: string; limit?: number }): Promise<string> {
   const limit = asLimit(opts.limit)
   const generatedAt = new Date().toISOString()
-
-  if (opts.scope === 'fix') {
-    const row = opts.db.select().from(opts.schema.fixes).where(eq(opts.schema.fixes.id, opts.id)).get()
-    if (!row) throw new Error('fix history target not found')
-    const allTurns = opts.db.select().from(opts.schema.fixTurns).where(eq(opts.schema.fixTurns.fixId, opts.id)).all() as any[]
-    const turns = turnRows(opts.db, opts.schema.fixTurns, opts.schema.fixTurns.fixId, opts.id, limit)
-    const events = eventRows(opts.db, opts.schema.fixEvents, opts.schema.fixEvents.fixId, opts.id)
-    return `# Agent Conversation History
-
-Scope: fix
-ID: ${opts.id}
-Generated at: ${generatedAt}
-
-This is a read-only handoff snapshot for switching or resuming model providers. Use it only when you need prior conversation context.
-
-## Task
-- PR: #${row.prNumber ?? ''}
-- Branch: ${row.branch ?? ''}
-- Status: ${row.status ?? ''}
-- Worktree: ${row.worktreePath || opts.cwd || ''}
-- Claude session: ${row.sessionId ? 'present' : 'none'}
-- Codex thread: ${row.codexSessionId ? 'present' : 'none'}
-- Error: ${row.error || 'none'}
-
-## Workspace
-${await gitSnapshot(opts.cwd || row.worktreePath || undefined)}
-
-${events.length ? `## Recent Events\n${renderEvents(events)}\n` : ''}
-## Turns
-${renderTurns(turns, Math.max(0, allTurns.length - turns.length))}
-`
-  }
-
-  if (opts.scope === 'feature') {
-    const row = opts.db.select().from(opts.schema.featureTasks).where(eq(opts.schema.featureTasks.id, opts.id)).get()
-    if (!row) throw new Error('feature history target not found')
-    const allTurns = opts.db.select().from(opts.schema.featureTurns).where(eq(opts.schema.featureTurns.taskId, opts.id)).all() as any[]
-    const turns = turnRows(opts.db, opts.schema.featureTurns, opts.schema.featureTurns.taskId, opts.id, limit)
-    const events = eventRows(opts.db, opts.schema.featureEvents, opts.schema.featureEvents.taskId, opts.id)
-    return `# Agent Conversation History
-
-Scope: feature
-ID: ${opts.id}
-Generated at: ${generatedAt}
-
-This is a read-only handoff snapshot for switching or resuming model providers. Use it only when you need prior conversation context.
-
-## Task
-- Title: ${row.title || '(untitled)'}
-- Status: ${row.status ?? ''}
-- Branch: ${row.branch || 'not created yet'}
-- Base branch: ${row.baseBranch || ''}
-- Worktree: ${row.worktreePath || opts.cwd || ''}
-- PR: ${row.prUrl || 'not opened'}
-- Claude session: ${row.sessionId ? 'present' : 'none'}
-- Codex thread: ${row.codexSessionId ? 'present' : 'none'}
-- Error: ${row.error || 'none'}
-
-## Original Description
-${truncate(row.description || '', 10_000) || '(empty)'}
-
-## Workspace
-${await gitSnapshot(opts.cwd || row.worktreePath || undefined)}
-
-${events.length ? `## Recent Events\n${renderEvents(events)}\n` : ''}
-## Turns
-${renderTurns(turns, Math.max(0, allTurns.length - turns.length))}
-`
-  }
-
-  const row = opts.db.select().from(opts.schema.globalSessions).where(eq(opts.schema.globalSessions.id, opts.id)).get()
-  if (!row) throw new Error('global history target not found')
-  const allTurns = opts.db.select().from(opts.schema.globalTurns).where(eq(opts.schema.globalTurns.sessionId, opts.id)).all() as any[]
-  const turns = turnRows(opts.db, opts.schema.globalTurns, opts.schema.globalTurns.sessionId, opts.id, limit)
+  const row = opts.db.select().from(opts.schema.runs).where(eq(opts.schema.runs.id, opts.id)).get()
+  if (!row) throw new Error('history target not found')
+  const allTurns = opts.db.select().from(opts.schema.runTurns).where(eq(opts.schema.runTurns.runId, opts.id)).orderBy(asc(opts.schema.runTurns.seq)).all() as any[]
+  const turns = allTurns.slice(-limit)
+  let events: any[] = []
+  try {
+    events = (opts.db.select().from(opts.schema.runEvents).where(eq(opts.schema.runEvents.runId, opts.id)).all() as any[]).filter((e) => e.message).slice(-20)
+  } catch { events = [] }
+  const workspace = opts.cwd || row.workspacePath || undefined
+  const kind = row.workspaceType === 'pr_worktree' ? 'PR fix session' : row.workspaceType === 'branch_worktree' ? 'feature branch session' : 'working-directory session'
   return `# Agent Conversation History
 
-Scope: global
+Scope: ${kind}
 ID: ${opts.id}
 Generated at: ${generatedAt}
 
@@ -193,15 +97,16 @@ This is a read-only handoff snapshot for switching or resuming model providers. 
 ## Session
 - Title: ${row.title || '(untitled)'}
 - Provider: ${row.provider || ''}
-- CWD: ${row.cwd || opts.cwd || ''}
 - Status: ${row.status || ''}
-- Claude session: ${row.sessionId ? 'present' : 'none'}
-- Codex thread: ${row.codexSessionId ? 'present' : 'none'}
+${row.prNumber ? `- PR: #${row.prNumber}${row.prUrl ? ` (${row.prUrl})` : ''}\n` : ''}${row.branch ? `- Branch: ${row.branch}\n` : ''}${row.baseBranch ? `- Base branch: ${row.baseBranch}\n` : ''}- Workspace: ${workspace || ''}
+- Claude session: ${row.claudeSessionId ? 'present' : 'none'}
+- Codex thread: ${row.codexThreadId ? 'present' : 'none'}
 - Error: ${row.error || 'none'}
-
+${row.description ? `\n## Original Description\n${truncate(row.description, 10_000)}\n` : ''}
 ## Workspace
-${await gitSnapshot(opts.cwd || row.cwd || undefined)}
+${await gitSnapshot(workspace)}
 
+${events.length ? `## Recent Events\n${renderEvents(events)}\n` : ''}
 ## Turns
 ${renderTurns(turns, Math.max(0, allTurns.length - turns.length))}
 `
@@ -211,16 +116,9 @@ function historyBaseUrl(): string {
   return (process.env.AGENT_HISTORY_BASE_URL || `http://127.0.0.1:${process.env.PORT || '3001'}`).replace(/\/+$/, '')
 }
 
-export async function prepareAgentHistoryAccess(opts: {
-  db: any
-  schema: any
-  scope: AgentHistoryScope
-  id: string
-  cwd?: string
-  limit?: number
-}): Promise<string> {
-  const token = registerAgentHistoryToken(opts.scope, opts.id)
-  const endpointPath = `/api/agent/history/${opts.scope}/${encodeURIComponent(opts.id)}?token=${encodeURIComponent(token)}&format=md&limit=${asLimit(opts.limit)}`
+export async function prepareAgentHistoryAccess(opts: { db: any; schema: any; id: string; cwd?: string; limit?: number }): Promise<string> {
+  const token = registerAgentHistoryToken(opts.id)
+  const endpointPath = `/api/agent/history/run/${encodeURIComponent(opts.id)}?token=${encodeURIComponent(token)}&format=md&limit=${asLimit(opts.limit)}`
   const url = `${historyBaseUrl()}${endpointPath}`
 
   return `Controlled previous-conversation history is available read-only for this turn.

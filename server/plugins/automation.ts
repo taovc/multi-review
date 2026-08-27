@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql, and, or, isNull, ne } from 'drizzle-orm'
 import { getDb, schema } from '~core/db/client'
 import { listPulls, getCurrentUserLogin } from '~core/github/gh'
-import { isChatting } from '~core/fix/pipeline'
+import { isRunBusy } from '~core/runs/session'
 import { runAutomationTick, type EngineDeps } from '~core/automation/engine'
 import { buildAutoFixMessage } from '~core/automation/fixprompt'
 import { resolveLang } from '~core/agent/lang'
@@ -32,7 +32,7 @@ export default defineNitroPlugin((nitroApp) => {
 
   const deps: EngineDeps = {
     now,
-    isChatting,
+    isChatting: isRunBusy,
     get currentUser() { return currentUser },
     log: (msg) => console.log(`[automation] ${msg}`),
     listPulls: (repo, state, first) => listPulls(repo, state, first),
@@ -51,7 +51,10 @@ export default defineNitroPlugin((nitroApp) => {
     // post again every round and loop forever on the same 400. Other errors (network/422) are propagated as before,
     // so the engine logs them and retries next round.
     dispatchPost: async (reviewId) => {
-      d.update(schema.findings).set({ checked: true }).where(eq(schema.findings.reviewId, reviewId)).run()
+      // Tick everything for auto-post, but never overwrite a human's own decision provenance.
+      d.update(schema.findings)
+        .set({ checked: true, checkedBy: sql`CASE WHEN ${schema.findings.checked} = 1 AND ${schema.findings.checkedBy} IS NOT NULL THEN ${schema.findings.checkedBy} ELSE 'engine' END`, checkedAt: now() })
+        .where(and(eq(schema.findings.reviewId, reviewId), or(isNull(schema.findings.verifyStatus), ne(schema.findings.verifyStatus, 'refuted')))).run() // never auto-post what the verify pass refuted
       try {
         await $fetch(`/api/reviews/${reviewId}/post`, { method: 'POST', headers: cookieHeader, body: { dryRun: false } })
         return { posted: true }
@@ -74,15 +77,16 @@ export default defineNitroPlugin((nitroApp) => {
     },
     // Auto-fix: create/reuse the fix task → build the default instruction from the review findings → start a chat that edits the code (no commit)
     dispatchFix: async (projectId, prNumber, reviewId) => {
-      const created = await $fetch<{ id: string }>(`/api/projects/${projectId}/pulls/${prNumber}/fix`, { method: 'POST', headers: cookieHeader })
-      const fixRow = d.select().from(schema.fixes).where(eq(schema.fixes.id, created.id)).get() as any
-      const message = buildAutoFixMessage(d, schema, reviewId, fixRow?.lang || lang)
+      const created = await $fetch<{ id: string }>('/api/runs', { method: 'POST', headers: cookieHeader, body: { workspaceType: 'pr_worktree', projectId, prNumber } })
+      const runRow = d.select().from(schema.runs).where(eq(schema.runs.id, created.id)).get() as any
+      const message = buildAutoFixMessage(d, schema, reviewId, runRow?.lang || lang)
       if (!message) return // no finding left to fix (decide should already have filtered this out) → do not start a chat
-      await $fetch(`/api/fixes/${created.id}/chat`, { method: 'POST', headers: cookieHeader, body: { message } })
+      // Unattended: the danger guard stays on and the session runs in its default mode.
+      await $fetch(`/api/runs/${created.id}/messages`, { method: 'POST', headers: cookieHeader, body: { message, allowDanger: false } })
     },
     // Upload the fix (commit + push, reusing all of the push endpoint's safety checks)
     dispatchPush: async (fixId) => {
-      await $fetch(`/api/fixes/${fixId}/push`, { method: 'POST', headers: cookieHeader, body: { dryRun: false } })
+      await $fetch(`/api/runs/${fixId}/push`, { method: 'POST', headers: cookieHeader, body: { dryRun: false } })
     },
   }
 

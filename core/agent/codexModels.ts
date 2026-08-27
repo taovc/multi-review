@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process'
-import { resolveCodexExecutable } from './codexAgent'
+import { getCodexServer } from '../codex/appServer'
 
-// Read the models "actually available to the current account" from `codex debug models` (including the reasoning effort levels each model supports).
-// Not hardcoded: a ChatGPT login and an API key can use different models, and only the CLI knows the truth.
+// The models "actually available to the current account", read from the app-server's `model/list` (including the
+// reasoning effort levels each model supports). Not hardcoded: a ChatGPT login and an API key can use different
+// models, and only Codex knows the truth.
 export type CodexModel = {
-  value: string // slug, passed as -m / the SDK's model
+  value: string // slug, passed as the thread/turn model
   displayName: string
   description: string
   supportsEffort: boolean
@@ -22,12 +22,29 @@ export async function getCodexModels(force = false): Promise<CodexModel[]> {
 }
 
 async function resolveCodexModels(): Promise<CodexModel[]> {
-  const bin = resolveCodexExecutable()
-  if (!bin) return []
-  const raw = await runDebugModels(bin).catch(() => '')
-  return parseCodexModels(raw)
+  try {
+    const server = await getCodexServer()
+    const res = await server.rpc.request('model/list', { limit: 100, includeHidden: false })
+    return modelsFromAppServer(res?.data)
+  } catch {
+    return []
+  }
 }
 
+// app-server `model/list` entries → the UI's model list (visible models only, catalog order).
+export function modelsFromAppServer(data: unknown): CodexModel[] {
+  if (!Array.isArray(data)) return []
+  return (data as Array<Record<string, any>>)
+    .filter((m) => m && !m.hidden && typeof (m.model ?? m.id) === 'string')
+    .map((m): CodexModel => {
+      const effortLevels = Array.isArray(m.supportedReasoningEfforts)
+        ? (m.supportedReasoningEfforts as Array<any>).map((e) => (typeof e === 'string' ? e : e?.reasoningEffort)).filter((e): e is string => typeof e === 'string')
+        : []
+      return { value: String(m.model ?? m.id), displayName: m.displayName || String(m.model ?? m.id), description: m.description || '', supportsEffort: effortLevels.length > 0, effortLevels }
+    })
+}
+
+// Legacy `codex debug models` JSON → the same shape (kept for callers/tests that still hold that output).
 export function parseCodexModels(raw: string): CodexModel[] {
   if (!raw.trim()) return []
   let parsed: { models?: unknown }
@@ -65,24 +82,4 @@ export function codexUltracodeEffort(models: CodexModel[], model?: string): 'ult
       || (model === 'gpt-5.6' ? models.find((m) => m.value === 'gpt-5.6-sol') : undefined)
     : models[0]
   return selected?.effortLevels.includes('ultra') ? 'ultra' : 'xhigh'
-}
-
-function runDebugModels(bin: string): Promise<string> {
-  return new Promise((resolve) => {
-    const child = spawn(bin, ['debug', 'models'], { stdio: ['ignore', 'pipe', 'pipe'], env: process.env })
-    const chunks: Buffer[] = []
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL')
-      resolve('')
-    }, 10_000)
-    child.stdout?.on('data', (c) => chunks.push(Buffer.from(c)))
-    child.once('error', () => {
-      clearTimeout(timer)
-      resolve('')
-    })
-    child.once('close', (code) => {
-      clearTimeout(timer)
-      resolve(code === 0 ? Buffer.concat(chunks).toString('utf8') : '')
-    })
-  })
 }

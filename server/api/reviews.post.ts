@@ -118,6 +118,8 @@ export default defineEventHandler(async (event) => {
         effort: rc.effort,
         codexServiceTier: rc.codexServiceTier,
         lang: resolveLang(getCookie(event, 'mr-locale')),
+        verifyBeforePost: !!project.verifyBeforePost,
+        projectId, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
       })
     }
   }

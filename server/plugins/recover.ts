@@ -1,16 +1,17 @@
-import { inArray, eq } from 'drizzle-orm'
+import { inArray, eq, and, lt } from 'drizzle-orm'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { getDb, schema } from '~core/db/client'
 import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
+import { recoverHostState } from '~core/host/recover'
 
 const pexec = promisify(execFile)
 
 // Startup recovery: tasks that were "running" in the previous process die with it. As soon as the server starts,
 // bring anything stuck back to a consistent state.
 // - Review tasks (agent running): reset to error + clean the worktree.
-// - Fix tasks: the chat-only version has no agent stage state (an in-flight chat is held by an in-memory lock, released
+// - Session runs (PR / feature / cwd): a chat turn has no persistent stage state (an in-flight chat is held by an in-memory lock, released
 //   on restart); the only thing to reconcile is pushing (a crash midway through commit-and-push, where the push may
 //   already have reached GitHub). Interrupted chat turns are just marked stopped, and the changes stay in the worktree
 //   waiting for the user to upload them (no automatic commit).
@@ -20,6 +21,7 @@ export default defineNitroPlugin(async () => {
   const cfg = useRuntimeConfig()
   const d = getDb(cfg.dbPath as string)
   const now = () => new Date().toISOString()
+  const bootAt = now() // rows created after this instant belong to the live server, not to a dead process
   const git = (wt: string, args: string[]) => pexec('git', ['-C', wt, ...args], { maxBuffer: 64 * 1024 * 1024, timeout: 15000 })
 
   // 0) By default migrate into .pr-cockpit-worktrees/ inside the project repo.
@@ -28,19 +30,15 @@ export default defineNitroPlugin(async () => {
     const projects = new Map(d.select().from(schema.projects).all().map((p: any) => [p.id, p]))
     let moved = 0
     let cleared = 0
-    const writePath = (kind: 'fix' | 'feature', id: string, worktreePath: string | null) => {
-      if (kind === 'fix') {
-        d.update(schema.fixes).set({ worktreePath, updatedAt: now() }).where(eq(schema.fixes.id, id)).run()
-      } else {
-        d.update(schema.featureTasks).set({ worktreePath, updatedAt: now() }).where(eq(schema.featureTasks.id, id)).run()
-      }
+    const writePath = (id: string, worktreePath: string | null) => {
+      d.update(schema.runs).set({ workspacePath: worktreePath, updatedAt: now() }).where(eq(schema.runs.id, id)).run()
     }
-    const moveOne = async (kind: 'fix' | 'feature', row: any) => {
+    const moveOne = async (row: any) => {
       // The directory is long gone (cleaned on restart / deleted by hand) but the path to the old central directory is
       // still recorded: migration can't move it, and keeping it makes "upload" fail outright with worktree gone.
-      // Clearing it → the next chat takes the existsSync rebuild branch and recreates it at the new location on the same branch.
-      if (!existsSync(row.worktreePath)) {
-        writePath(kind, row.id, null)
+      // Clearing it → the next turn recreates the worktree at the new location on the same branch.
+      if (!existsSync(row.workspacePath)) {
+        writePath(row.id, null)
         cleared++
         return
       }
@@ -49,22 +47,18 @@ export default defineNitroPlugin(async () => {
         localPath: proj?.localPath ?? null,
         reposDir: cfg.reposDir as string,
         taskId: row.id,
-        currentPath: row.worktreePath ?? null,
+        currentPath: row.workspacePath ?? null,
         location: cfg.worktreeLocation as string,
       })
       if (!nextPath) return
-      writePath(kind, row.id, nextPath)
+      writePath(row.id, nextPath)
       moved++
     }
 
-    for (const f of d.select().from(schema.fixes).all() as any[]) {
-      if (f.worktreePath) {
-        try { await moveOne('fix', f) } catch (e) { console.error(`[recover] fix worktree 迁移失败 ${f.id}`, e) }
-      }
-    }
-    for (const t of d.select().from(schema.featureTasks).all() as any[]) {
-      if (t.worktreePath) {
-        try { await moveOne('feature', t) } catch (e) { console.error(`[recover] feature worktree 迁移失败 ${t.id}`, e) }
+    const sessions = d.select().from(schema.runs).where(and(eq(schema.runs.kind, 'session'), inArray(schema.runs.workspaceType, ['pr_worktree', 'branch_worktree']))).all() as any[]
+    for (const r of sessions) {
+      if (r.workspacePath) {
+        try { await moveOne(r) } catch (e) { console.error(`[recover] session worktree 迁移失败 ${r.id}`, e) }
       }
     }
     if (moved) console.log(`[recover] 迁移了 ${moved} 个持久 worktree 到项目 repo 内`)
@@ -105,34 +99,31 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] posting 启动恢复失败', e)
   }
 
-  // 2) Interrupted pushing: the push may already have reached GitHub (it just wasn't written back to the DB).
-  // Reconcile origin/<branch> against fixHeadSha: equal = it succeeded → pushed; otherwise → error (the user re-uploads;
-  // push is idempotent and has no side effects).
+  // 2) Interrupted upload (busy_action = pushing): the push may already have reached GitHub (it just wasn't written back).
+  // Reconcile origin/<branch> against the worktree's real HEAD: equal = it succeeded → pushed; otherwise → error (the user
+  // re-uploads; push is idempotent and has no side effects).
   try {
-    const stuck = d.select().from(schema.fixes).where(eq(schema.fixes.status, 'pushing' as any)).all()
+    const stuck = d.select().from(schema.runs).where(eq(schema.runs.busyAction, 'pushing')).all()
     for (const f of stuck as any[]) {
       let pushed = false
-      // Compare against the worktree's real HEAD rather than fixHeadSha from the DB: when the commit finished but the
-      // crash came before writing it back, the DB value is stale, and reconciling with the stale value would read
-      // "new commit locally, remote still old" as already pushed and thus lose that local commit.
-      let localHead: string = f.fixHeadSha
-      if (f.worktreePath && existsSync(f.worktreePath) && f.branch) {
-        try { localHead = (await git(f.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim() || f.fixHeadSha } catch { /* fall back to the DB value */ }
+      let localHead: string | null = f.fixHeadSha
+      if (f.workspacePath && existsSync(f.workspacePath) && f.branch) {
+        try { localHead = (await git(f.workspacePath, ['rev-parse', 'HEAD'])).stdout.trim() || f.fixHeadSha } catch { /* fall back to the DB value */ }
         try {
-          const { stdout } = await git(f.worktreePath, ['ls-remote', 'origin', f.branch])
+          const { stdout } = await git(f.workspacePath, ['ls-remote', 'origin', f.branch])
           const remoteSha = stdout.trim().split(/\s+/)[0] || ''
           pushed = !!remoteSha && !!localHead && remoteSha === localHead
         } catch { /* network/remote unreachable → treat as not pushed */ }
       }
       if (pushed) {
-        d.update(schema.fixes)
-          .set({ status: 'pushed', error: null, fixHeadSha: localHead, lastPushSha: localHead, lastActionKind: 'pushed', pushedAt: f.pushedAt || now(), lastUploadAt: now(), updatedAt: now() })
-          .where(eq(schema.fixes.id, f.id))
+        d.update(schema.runs)
+          .set({ busyAction: null, error: null, fixHeadSha: localHead, lastPushSha: localHead, uploadState: 'pushed', pushedAt: f.pushedAt || now(), updatedAt: now() })
+          .where(eq(schema.runs.id, f.id))
           .run()
       } else {
-        d.update(schema.fixes)
-          .set({ status: 'error', error: '上传中断，请重新上传', updatedAt: now() })
-          .where(eq(schema.fixes.id, f.id))
+        d.update(schema.runs)
+          .set({ busyAction: null, status: 'error', error: '上传中断，请重新上传', updatedAt: now() })
+          .where(eq(schema.runs.id, f.id))
           .run()
       }
     }
@@ -141,12 +132,20 @@ export default defineNitroPlugin(async () => {
     console.error('[recover] 上传启动恢复失败', e)
   }
 
+  // 2.5) Session host: prompts parked in the dead process expire, runs it left running/awaiting → stopped (core/host/recover.ts).
+  try {
+    const r = recoverHostState(d, schema, bootAt, now())
+    if (r.expiredPrompts || r.stoppedRuns) console.log(`[recover] 会话宿主：${r.expiredPrompts} 个待回答的权限请求已过期，${r.stoppedRuns} 个运行标记为 stopped`)
+  } catch (e) {
+    console.error('[recover] 会话宿主启动恢复失败', e)
+  }
+
   // 3) Interrupted chat turns: assistant turns still streaming → stopped. The changes stay in the worktree (uncommitted),
   // and next time it's opened the dirty check makes the upload button appear.
   try {
-    const streaming = d.select().from(schema.fixTurns).where(eq(schema.fixTurns.status, 'streaming' as any)).all()
+    const streaming = d.select().from(schema.runTurns).where(inArray(schema.runTurns.status, ['streaming', 'queued'] as any)).all() // queued messages died with the process too
     for (const tn of streaming as any[]) {
-      d.update(schema.fixTurns).set({ status: 'stopped' }).where(eq(schema.fixTurns.id, tn.id)).run()
+      d.update(schema.runTurns).set({ status: 'stopped', endedAt: now() }).where(eq(schema.runTurns.id, tn.id)).run()
     }
     if (streaming.length) console.log(`[recover] 重置了 ${streaming.length} 个中断的对话轮`)
   } catch (e) {

@@ -1,5 +1,6 @@
+import { fixStatusOf, isRunBusy } from '~core/runs/session'
 import { existsSync } from 'node:fs'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { listPulls, getCurrentUserLogin } from '~core/github/gh'
 import { getProjectAutomation, getPrAutomationMap, pullStatusKey } from '~core/automation/state'
@@ -47,37 +48,19 @@ export default defineEventHandler(async (event) => {
 
   // Fix tasks: take the latest non-discarded one per PR; carry pushedAt + reviewsAtPush → derive
   // "reviewer updated"
+  // PR sessions (workspace pr_worktree): the latest one per PR; its legacy "fix status" is derived from upload_state / busy_action.
   const fixRows = d
     .select({
-      id: schema.fixes.id,
-      prNumber: schema.fixes.prNumber,
-      status: schema.fixes.status,
-      createdAt: schema.fixes.createdAt,
-      updatedAt: schema.fixes.updatedAt,
-      pushedAt: schema.fixes.pushedAt,
-      reviewsAtPush: schema.fixes.reviewsAtPush,
-      worktreePath: schema.fixes.worktreePath,
+      id: schema.runs.id, prNumber: schema.runs.prNumber, status: schema.runs.status, uploadState: schema.runs.uploadState, busyAction: schema.runs.busyAction,
+      createdAt: schema.runs.createdAt, updatedAt: schema.runs.updatedAt, pushedAt: schema.runs.pushedAt, reviewsAtPush: schema.runs.reviewsAtPush, worktreePath: schema.runs.workspacePath,
     })
-    .from(schema.fixes)
-    .where(eq(schema.fixes.projectId, id))
+    .from(schema.runs)
+    .where(and(eq(schema.runs.kind, 'session'), eq(schema.runs.workspaceType, 'pr_worktree'), eq(schema.runs.projectId, id)))
     .all()
   const fixByPr = new Map<number, (typeof fixRows)[number]>()
   for (const f of fixRows.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-    if (f.status === 'discarded') continue
-    fixByPr.set(f.prNumber, f) // later writes overwrite → the latest one wins
+    if (f.prNumber != null) fixByPr.set(f.prNumber, f) // later writes overwrite → the latest one wins
   }
-  // "Conversation in progress": the most recent assistant turn is still streaming = the AI is working.
-  // This sits outside the state machine (chat never changes fixes.status), so the list derives the
-  // "chatting" badge from it.
-  // On restart the recover plugin resets streaming turns to stopped, so no stale streaming shows up
-  // here.
-  const chattingFixIds = new Set<string>(
-    d.select({ fixId: schema.fixTurns.fixId })
-      .from(schema.fixTurns)
-      .where(eq(schema.fixTurns.status, 'streaming' as any))
-      .all()
-      .map((r: any) => r.fixId),
-  )
 
   // Automation: project-level config + each PR's effective switches / runtime state (feeds the two
   // switches in the PR drawer and the list's "paused" hint)
@@ -131,8 +114,8 @@ export default defineEventHandler(async (event) => {
       return {
         ...p,
         hasTask: !!task, taskId: task?.id ?? null, taskStatus: task?.status ?? null,
-        fixId: fix?.id ?? null, fixStatus: fix?.status ?? null,
-        fixChatting: fix ? chattingFixIds.has(fix.id) : false,
+        fixId: fix?.id ?? null, fixStatus: fix ? fixStatusOf(fix) : null,
+        fixChatting: fix ? isRunBusy(fix.id) : false,
         authorUpdated, reviewerUpdated, hasWorktree, worktreeStale,
         autoReviewOn, autoFixOn, autoNote: autoRow?.note ?? null, autoRound: autoRow?.round ?? 0, autoMaxRounds, autoCoolingUntil,
       }

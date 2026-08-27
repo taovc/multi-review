@@ -1,6 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import { withContract, reviewCanUseTool, ISOLATED } from './guard'
+import { withContract } from './guard'
+import { buildReviewOptions } from '../host/options'
+import type { ReviewHostOptions } from './review'
 import { langName } from './lang'
+import { usageFromClaudeResult } from './usage'
+import type { ProviderUsage } from '../runs/types'
 
 export const SKILL_SYSTEM = `You are a senior architect and code review lead. Your task is to tailor a "code review methodology" (review skill) to one specific project, to be used later as the system prompt when an AI reviews that project's PRs.`
 const SYSTEM = SKILL_SYSTEM
@@ -12,7 +16,7 @@ The methodology you produce will later be used as the criteria by a review agent
 - ❌ Never write any "operating procedure": no commit/push/any git write operation, no "create/skip a worktree", no "fix the bug / patch it along the way", no "post a comment / merge". Those are controlled centrally by the PR Cockpit engine; writing them into the skill only gets them ignored and blocked, and pollutes the methodology.`
 const BOUNDARY = SKILL_BOUNDARY
 
-export type SkillGenOptions = {
+export type SkillGenOptions = ReviewHostOptions & {
   cwd: string
   model: string
   effort?: string
@@ -66,24 +70,15 @@ export function cleanSkillContent(text: string): string {
 }
 
 // Let the agent read the local project and produce/improve a review methodology (markdown body).
-export async function generateSkill(opts: SkillGenOptions): Promise<{ content: string; costUsd: number }> {
+export async function generateSkill(opts: SkillGenOptions): Promise<{ content: string; costUsd: number; usage: ProviderUsage | null }> {
   const prompt = buildSkillPrompt(opts)
   const stream = query({
     prompt,
-    options: {
-      model: opts.model,
-      // effort: from the project config; defaults to high when empty, to guarantee "deep thinking"
-      effort: (opts.effort || 'high') as any,
-      systemPrompt: withContract(SYSTEM),
-      cwd: opts.cwd,
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      canUseTool: reviewCanUseTool,
-      ...ISOLATED,
-      maxTurns: 80,
-    },
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(SYSTEM), maxTurns: 80, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort }),
   })
   let text = ''
   let costUsd = 0
+  let usage: ProviderUsage | null = null
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
@@ -96,7 +91,8 @@ export async function generateSkill(opts: SkillGenOptions): Promise<{ content: s
     } else if (msg.type === 'result') {
       const c = (msg as any).total_cost_usd
       if (typeof c === 'number') costUsd += c
+      usage = usageFromClaudeResult(msg, opts.model)
     }
   }
-  return { content: cleanSkillContent(text), costUsd }
+  return { content: cleanSkillContent(text), costUsd, usage }
 }

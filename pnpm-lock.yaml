@@ -17,7 +17,7 @@ importers:
       '@nuxtjs/i18n':
         specifier: ^10.6.0
         version: 10.6.0(@vue/compiler-dom@3.5.41)(db0@0.3.4(better-sqlite3@13.0.3)(drizzle-orm@0.45.2(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)))(esbuild@0.28.2)(eslint@10.9.1(jiti@2.7.0))(ioredis@5.11.1)(magicast@0.5.4)(rolldown@1.2.5)(rollup@4.63.0)(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))(vue@3.5.41(typescript@5.9.3))
-      '@openai/codex-sdk':
+      '@openai/codex':
         specifier: 0.149.1
         version: 0.149.1
       better-sqlite3:
@@ -1471,10 +1471,6 @@ packages:
   '@nuxtjs/i18n@10.6.0':
     resolution: {integrity: sha512-20YXYOcc8cSh/pSpNgj+MHAn11qUbsFR1IBJh6qYtRPVhUUmgqJ1DyMu39MB+uEYYL/fsberL2ByMYrFaROslw==}
     engines: {node: '>=20.11.1'}
-
-  '@openai/codex-sdk@0.149.1':
-    resolution: {integrity: sha512-R00Rz5327LefZggAxl28r7vFQq1vxa91OxtjZJOsQfAM/MyH8InW5qwwRu6pzUmRGp1E29XrOzm7u1TeV5Yz2A==}
-    engines: {node: '>=18'}
 
   '@openai/codex@0.149.1':
     resolution: {integrity: sha512-6q5pbcpFbJbqOpkubSDBwXmktQ55aD8eUzGzBF1zASob2DjwhBKDSNGtdZKalfrNJUdTDTPDMmzCXEXs5tMBYA==}
@@ -8590,10 +8586,6 @@ snapshots:
       - vite
       - vue
       - webpack
-
-  '@openai/codex-sdk@0.149.1':
-    dependencies:
-      '@openai/codex': 0.149.1
 
   '@openai/codex@0.149.1':
     optionalDependencies:

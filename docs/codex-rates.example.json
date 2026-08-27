@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to data/codex-rates.json and fill in the USD-per-1M-token prices from your OpenAI plan. Keys are model-name prefixes (longest prefix wins; use 'codex-default' for runs on the SDK default model). All-zero entries are ignored, so nothing is ever priced as free by mistake.",
+  "asOf": "2026-08-01",
+  "rates": {
+    "gpt-5": { "input": 0, "cachedInput": 0, "output": 0 },
+    "codex-default": { "input": 0, "cachedInput": 0, "output": 0 }
+  }
+}

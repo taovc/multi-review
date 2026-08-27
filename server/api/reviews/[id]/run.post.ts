@@ -62,7 +62,9 @@ export default defineEventHandler(async (event) => {
     effort: rc.effort,
     codexServiceTier: rc.codexServiceTier,
     lang: resolveLang(getCookie(event, 'mr-locale')),
+    verifyBeforePost: !!project.verifyBeforePost,
     guided: !fresh,
+    projectId: project.id, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
   })
 
   return { ok: true, status: 'queued' }

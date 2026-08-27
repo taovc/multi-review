@@ -1,5 +1,5 @@
-import { runClaude } from './claudeCli'
-import { runCodexText } from './codexAgent'
+import { runHelperText } from '../host/helpers'
+import { runCodexText } from '../codex/oneshot'
 import { langName } from './lang'
 import type { ReviewProvider } from './runners'
 
@@ -25,7 +25,7 @@ ${clipped}`
   try {
     const out = opts.provider === 'codex'
       ? await runCodexText({ prompt, model: opts.model || undefined, cwd: opts.cwd })
-      : await runClaude(['--print', '--model', opts.model || 'sonnet', '--effort', 'low'], { input: prompt, timeout: 60_000 })
+      : await runHelperText({ prompt, cwd: opts.cwd || process.cwd(), model: opts.model || 'sonnet', effort: 'low', timeoutMs: 60_000 })
     return (out || '').trim().split('\n')[0]?.replace(/^["'`]+|["'`]+$/g, '').replace(/[。.]\s*$/, '').slice(0, 80).trim() || ''
   } catch {
     return ''

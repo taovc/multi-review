@@ -20,6 +20,8 @@ export const projects = sqliteTable('projects', {
   // Automation cooldown (minutes): after a PR's head is first seen, wait this long before acting,
   // giving the user time to go in and turn off the ones they don't want run. 0 = no cooldown.
   autoCooldownMinutes: integer('auto_cooldown_minutes').notNull().default(5),
+  // Verify-before-post: after a fresh review, a second read-only pass tries to refute every finding (core/agent/verify.ts).
+  verifyBeforePost: integer('verify_before_post', { mode: 'boolean' }).notNull().default(false),
   defaultBranch: text('default_branch').notNull().default('dev'),
   createdAt: text('created_at').notNull(),
 })
@@ -33,6 +35,21 @@ export const skills = sqliteTable('skills', {
   name: text('name').notNull(),
   content: text('content').notNull(), // methodology body (markdown)
   source: text('source', { enum: ['manual', 'file', 'ai', 'optimized'] }).notNull().default('manual'),
+  currentVersionId: text('current_version_id'), // the immutable skill_versions row that `content` mirrors; reviews record which version ran
+  createdAt: text('created_at').notNull(),
+})
+
+// Immutable snapshots of a skill's content. Every edit / AI generation inserts a new row instead of overwriting,
+// so a past review can always be attributed to the exact methodology text it ran with (A/B across versions).
+// Deliberately NO foreign key: deleting a skill must not erase the attribution of past reviews; the name is snapshotted.
+export const skillVersions = sqliteTable('skill_versions', {
+  id: text('id').primaryKey(),
+  skillId: text('skill_id').notNull(),
+  skillName: text('skill_name'), // name at snapshot time (survives rename / delete)
+  version: integer('version').notNull(), // 1, 2, 3 … per skill
+  content: text('content').notNull(),
+  contentSha: text('content_sha').notNull(), // sha256 of content, lets identical re-saves be detected
+  source: text('source').notNull().default('manual'), // manual | file | ai | optimized (mirrors skills.source at the time)
   createdAt: text('created_at').notNull(),
 })
 
@@ -95,6 +112,9 @@ export const reviews = sqliteTable('reviews', {
   // (regenerated only when the signature changes)
   previewJson: text('preview_json'),
   previewSig: text('preview_sig'),
+  // Observability: the most recent agent run (review / guided / recheck) and the skill version it used.
+  lastRunId: text('last_run_id'),
+  skillVersionId: text('skill_version_id'),
   error: text('error'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -115,6 +135,17 @@ export const findings = sqliteTable('findings', {
   fix: text('fix'),
   introducedByPr: integer('introduced_by_pr', { mode: 'boolean' }).notNull().default(true),
   checked: integer('checked', { mode: 'boolean' }).notNull().default(false), // include in the PR comment
+  // Who last set `checked`: human (the reviewer clicked) / auto (the drawer's recheck-status adjustment) / engine (automation bulk-check).
+  // Precision metrics only count human decisions.
+  checkedBy: text('checked_by', { enum: ['human', 'auto', 'engine'] }),
+  checkedAt: text('checked_at'),
+  // Sticky: set when a human ticks the finding, cleared only when a human unticks it. The drawer's recheck auto-adjust
+  // and the automation engine never touch it, so precision metrics survive "fixed → auto-unchecked".
+  humanAcceptedAt: text('human_accepted_at'),
+  postedPostId: text('posted_post_id'), // the posts row this finding went out with (null = never posted)
+  // Verify-before-post verdict of the second pass (null = not verified). Refuted findings stay visible but unchecked.
+  verifyStatus: text('verify_status', { enum: ['confirmed', 'refuted', 'unsure'] }),
+  verifyNote: text('verify_note'),
   notes: text('notes'),
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: text('created_at').notNull(),
@@ -379,8 +410,203 @@ export const prAutomation = sqliteTable('pr_automation', {
   updatedAt: text('updated_at').notNull(),
 })
 
+// ── Agent runs (observability). One row per agent execution: a review / guided review / recheck / skill
+// generation, or one chat session (fix / feature / global — the row id equals the entity id so the later
+// session unification keeps the same ids). Cost and token totals are accumulated from run_usage.
+export const runs = sqliteTable('runs', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['review', 'session'] }).notNull(),
+  subkind: text('subkind', { enum: ['review', 'guided', 'recheck', 'skillgen', 'session', 'helper', 'eval', 'verify'] }).notNull(),
+  projectId: text('project_id'), // no FK: a run record must survive project deletion for the dashboard
+  reviewId: text('review_id'),
+  workspaceType: text('workspace_type', { enum: ['pr_worktree', 'branch_worktree', 'cwd'] }),
+  workspacePath: text('workspace_path'),
+  prNumber: integer('pr_number'),
+  branch: text('branch'),
+  provider: text('provider', { enum: ['claude', 'codex'] }).notNull(),
+  model: text('model'),
+  effort: text('effort'),
+  codexServiceTier: text('codex_service_tier'),
+  skillId: text('skill_id'),
+  skillVersionId: text('skill_version_id'),
+  claudeSessionId: text('claude_session_id'),
+  codexThreadId: text('codex_thread_id'),
+  // Session host state: the permission mode the session runs in, the dangerous-command switch, network access (Codex) and per-run "always allow" rules (JSON).
+  permissionMode: text('permission_mode'),
+  allowDanger: integer('allow_danger', { mode: 'boolean' }).notNull().default(false),
+  networkAccess: integer('network_access', { mode: 'boolean' }).notNull().default(false),
+  allowRules: text('allow_rules'),
+  status: text('status', { enum: ['queued', 'running', 'awaiting_input', 'idle', 'stopped', 'done', 'error'] }).notNull().default('running'),
+  title: text('title'),
+  lang: text('lang'),
+  error: text('error'),
+  // ── Session workspace state (the unified replacement of fixes / feature_tasks / global_sessions) ──
+  description: text('description'), // branch_worktree: the requirement the session started from; pr_worktree: the reviewer's instruction
+  baseBranch: text('base_branch'), // pr_worktree: the PR's target branch; branch_worktree: the branch the new branch was cut from
+  baseHeadSha: text('base_head_sha'), // head when the worktree was created (diff baseline)
+  fixHeadSha: text('fix_head_sha'), // pr_worktree: head after the last local commit
+  lastPushSha: text('last_push_sha'), // pr_worktree: last commit pushed (≠ fix_head_sha → changes not uploaded yet)
+  pushedAt: text('pushed_at'),
+  reviewsAtPush: integer('reviews_at_push'), // pr_worktree: PR review count at push time ("reviewer updated" baseline)
+  prUrl: text('pr_url'), // branch_worktree: the PR the agent opened
+  prAuthor: text('pr_author'),
+  uploadState: text('upload_state', { enum: ['none', 'ready', 'pushed'] }).notNull().default('none'), // pr_worktree: uncommitted/unpushed work → ready; uploaded → pushed
+  busyAction: text('busy_action'), // 'pushing' while the upload path holds the worktree
+  forkedFrom: text('forked_from'), // run this session was forked from (native session forked on the first turn)
+  costUsd: real('cost_usd'), // null = unknown (never 0 as a placeholder)
+  costSource: text('cost_source', { enum: ['reported', 'estimated'] }),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+  cacheCreateTokens: integer('cache_create_tokens').notNull().default(0),
+  numTurns: integer('num_turns').notNull().default(0),
+  unpricedTurns: integer('unpriced_turns').notNull().default(0), // executions whose cost was unknown → the total is a lower bound
+  durationMs: integer('duration_ms').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  startedAt: text('started_at'),
+  endedAt: text('ended_at'),
+  updatedAt: text('updated_at').notNull(),
+})
+
+// Chat turns of a session run (the unified replacement of fix_turns / feature_turns / global_turns): a user turn plus
+// an assistant placeholder that streams in, appended per message. Turn ids double as run_usage.turn_id and as the
+// host's turnId.
+export const runTurns = sqliteTable('run_turns', {
+  id: text('id').primaryKey(),
+  runId: text('run_id')
+    .notNull()
+    .references(() => runs.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+  content: text('content').notNull().default(''),
+  status: text('status', { enum: ['queued', 'streaming', 'done', 'error', 'stopped'] }).notNull().default('done'), // queued = a user message waiting for the running turn to finish
+  messageUuid: text('message_uuid'), // user turns: the SDK user-message uuid (file checkpoint anchor for rewind)
+  createdAt: text('created_at').notNull(),
+  endedAt: text('ended_at'),
+})
+
+// Per-model usage rows, one per result message (Claude) / turn (Codex). Written as deltas so a session that spans
+// many turns can be summed per model, per turn, per day.
+export const runUsage = sqliteTable('run_usage', {
+  id: text('id').primaryKey(),
+  runId: text('run_id')
+    .notNull()
+    .references(() => runs.id, { onDelete: 'cascade' }),
+  turnId: text('turn_id'),
+  model: text('model').notNull(),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+  cacheCreateTokens: integer('cache_create_tokens').notNull().default(0),
+  costUsd: real('cost_usd'),
+  costSource: text('cost_source', { enum: ['reported', 'estimated'] }),
+  at: text('at').notNull(),
+})
+
+// Structured event stream of a run (the session host writes these; text deltas are live-only and never stored).
+// `data` holds the RunEvent JSON (tool input/output, permission request, compaction numbers, usage …).
+export const runEvents = sqliteTable('run_events', {
+  id: text('id').primaryKey(),
+  runId: text('run_id')
+    .notNull()
+    .references(() => runs.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(), // monotonic per run
+  turnId: text('turn_id'),
+  ts: text('ts').notNull(),
+  kind: text('kind').notNull(), // RunEvent.t
+  message: text('message'), // short human-readable line for logs
+  data: text('data'), // JSON
+  toolUseId: text('tool_use_id'),
+})
+
+// A permission / question / plan-approval request the agent is blocked on. Pending rows are what the inbox shows;
+// the host parks the SDK callback until the row is answered (or the server restarts → expired).
+export const permissionRequests = sqliteTable('permission_requests', {
+  id: text('id').primaryKey(),
+  runId: text('run_id')
+    .notNull()
+    .references(() => runs.id, { onDelete: 'cascade' }),
+  turnId: text('turn_id'),
+  toolUseId: text('tool_use_id'),
+  providerRequestId: text('provider_request_id'), // Codex app-server JSON-RPC id (phase 4)
+  kind: text('kind', { enum: ['tool', 'question', 'plan'] }).notNull(),
+  toolName: text('tool_name').notNull(),
+  input: text('input'), // JSON tool input (AskUserQuestion: the questions)
+  suggestions: text('suggestions'), // JSON PermissionUpdate[] the SDK offered for "always allow"
+  title: text('title'),
+  description: text('description'),
+  status: text('status', { enum: ['pending', 'allowed', 'denied', 'answered', 'expired', 'cancelled'] }).notNull().default('pending'),
+  answer: text('answer'), // JSON: { behavior, answers?, message?, always? }
+  always: integer('always', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull(),
+  resolvedAt: text('resolved_at'),
+})
+
+// Eval replay (phase 5): a golden set scored against one provider/model/skill version, with and without the verify pass.
+export const evalRuns = sqliteTable('eval_runs', {
+  id: text('id').primaryKey(),
+  golden: text('golden').notNull(),
+  projectId: text('project_id'),
+  provider: text('provider').notNull(),
+  model: text('model'),
+  effort: text('effort'),
+  skillVersionId: text('skill_version_id'),
+  methodologySha: text('methodology_sha').notNull(),
+  verify: integer('verify', { mode: 'boolean' }).notNull().default(false),
+  cases: integer('cases').notNull().default(0),
+  tp: integer('tp'),
+  fp: integer('fp'),
+  fn: integer('fn'),
+  precision: real('precision'),
+  recall: real('recall'),
+  f1: real('f1'),
+  verifiedTp: integer('verified_tp'),
+  verifiedFp: integer('verified_fp'),
+  verifiedFn: integer('verified_fn'),
+  costUsd: real('cost_usd'),
+  durationMs: integer('duration_ms'),
+  reportPath: text('report_path'),
+  status: text('status').notNull().default('running'), // running | done | partial
+  createdAt: text('created_at').notNull(),
+  endedAt: text('ended_at'),
+})
+
+export const evalCases = sqliteTable('eval_cases', {
+  id: text('id').primaryKey(),
+  evalRunId: text('eval_run_id').notNull().references(() => evalRuns.id, { onDelete: 'cascade' }),
+  prNumber: integer('pr_number').notNull(),
+  headSha: text('head_sha').notNull(),
+  status: text('status').notNull().default('running'), // running | done | error
+  tp: integer('tp'),
+  fp: integer('fp'),
+  fn: integer('fn'),
+  costUsd: real('cost_usd'),
+  durationMs: integer('duration_ms'),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+})
+
+export const evalFindings = sqliteTable('eval_findings', {
+  id: text('id').primaryKey(),
+  evalCaseId: text('eval_case_id').notNull().references(() => evalCases.id, { onDelete: 'cascade' }),
+  fid: text('fid').notNull(),
+  severity: text('severity').notNull(),
+  title: text('title').notNull(),
+  location: text('location'),
+  matchedLabelId: text('matched_label_id'),
+  verifyStatus: text('verify_status'),
+  createdAt: text('created_at').notNull(),
+})
+
+// Key/value store for one-off migration markers and similar bookkeeping.
+export const meta = sqliteTable('meta', {
+  key: text('key').primaryKey(),
+  value: text('value'),
+})
+
 export type Project = typeof projects.$inferSelect
 export type Skill = typeof skills.$inferSelect
+export type SkillVersion = typeof skillVersions.$inferSelect
 export type Review = typeof reviews.$inferSelect
 export type Finding = typeof findings.$inferSelect
 export type FindingRecheck = typeof findingRechecks.$inferSelect
@@ -397,3 +623,11 @@ export type FeatureEvent = typeof featureEvents.$inferSelect
 export type ProjectAutomation = typeof projectAutomation.$inferSelect
 export type PrAutomation = typeof prAutomation.$inferSelect
 export type AutomationEvent = typeof automationEvents.$inferSelect
+export type Run = typeof runs.$inferSelect
+export type RunTurn = typeof runTurns.$inferSelect
+export type RunUsage = typeof runUsage.$inferSelect
+export type RunEventRow = typeof runEvents.$inferSelect
+export type PermissionRequest = typeof permissionRequests.$inferSelect
+export type EvalRun = typeof evalRuns.$inferSelect
+export type EvalCase = typeof evalCases.$inferSelect
+export type EvalFinding = typeof evalFindings.$inferSelect

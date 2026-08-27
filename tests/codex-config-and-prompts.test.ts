@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { codexCliConfig, codexWorkingDirectoryOptions, isForbiddenRemoteOrGitMutation, toCodexEffort } from '../core/agent/codexAgent'
-import { buildCodexChatPrompt, buildCodexFeaturePrompt, buildCodexGlobalPrompt } from '../core/agent/codexChat'
+import { codexCliConfig, isForbiddenRemoteOrGitMutation, toCodexEffort } from '../core/agent/codexAgent'
+import { codexSessionContract, codexUltracodePrompt } from '../core/codex/prompts'
 import { shouldBlockCodexCommand } from '../core/agent/commandGuard'
 import { projectGlobalAgentDefaults, runtimeGlobalAgentDefaults } from '../server/utils/globalAgentConfig'
 
@@ -32,15 +29,6 @@ assert.equal(toCodexEffort('max'), 'max')
 assert.equal(toCodexEffort('ultra'), 'ultra')
 assert.equal(toCodexEffort('not-a-real-effort'), undefined)
 assert.equal(codexCliConfig({ CODEX_PROJECT_DOC_MAX_BYTES: 'nope' } as NodeJS.ProcessEnv).project_doc_max_bytes, 65536)
-assert.deepEqual(codexWorkingDirectoryOptions(), { skipGitRepoCheck: true })
-assert.deepEqual(codexWorkingDirectoryOptions(process.cwd()), { workingDirectory: process.cwd() })
-const nonGitDir = mkdtempSync(join(tmpdir(), 'codex-non-git-'))
-try {
-  assert.deepEqual(codexWorkingDirectoryOptions(nonGitDir), { workingDirectory: nonGitDir, skipGitRepoCheck: true })
-} finally {
-  rmSync(nonGitDir, { recursive: true, force: true })
-}
-
 assert.deepEqual(runtimeGlobalAgentDefaults({ inferenceProvider: 'codex', codexModel: 'gpt-5', anthropicModel: 'claude-sonnet', globalEffort: 'high' }), {
   provider: 'codex',
   model: 'gpt-5',
@@ -61,42 +49,13 @@ assert.deepEqual(projectGlobalAgentDefaults({ provider: 'claude', model: 'claude
   codexServiceTier: null,
 })
 
-const featurePrompt = buildCodexFeaturePrompt({
-  cwd: '/tmp/project',
-  model: '',
-  lang: 'zh',
-  sessionId: null,
-  message: '实现一个导出按钮',
-  promptKind: 'feature',
-  baseBranch: 'dev',
-  ultracode: true,
-})
-assert.match(featurePrompt, /```ask-user/)
-assert.match(featurePrompt, /Ultracode mode is enabled/)
-assert.match(featurePrompt, /git push -u origin HEAD/)
-assert.match(featurePrompt, /gh pr create --base dev/)
-
-const fixPrompt = buildCodexChatPrompt({
-  cwd: '/tmp/project',
-  model: '',
-  lang: 'zh',
-  sessionId: null,
-  message: '修一下 reviewer 提到的问题',
-  ultracode: true,
-})
-assert.match(fixPrompt, /Ultracode mode is enabled/)
-assert.match(fixPrompt, /```ask-user/)
-
-const globalPrompt = buildCodexGlobalPrompt({
-  cwd: '/tmp/project',
-  model: '',
-  sessionId: null,
-  message: '检查这个项目',
-  ultracode: true,
-})
-assert.match(globalPrompt, /Codex thread/)
-assert.match(globalPrompt, /Ultracode mode is enabled/)
-assert.match(globalPrompt, /```ask-user/)
+// Codex developer instructions: the deep-work workflow + the git contract each session kind relies on.
+assert.match(codexUltracodePrompt('feature'), /```ask-user/)
+assert.match(codexUltracodePrompt('feature'), /Ultracode mode is enabled/)
+assert.match(codexUltracodePrompt('fix'), /Ultracode mode is enabled/)
+assert.match(codexSessionContract('feature'), /git push -u origin HEAD/)
+assert.match(codexSessionContract('fix'), /Do NOT run git add\/commit\/push/)
+assert.equal(codexSessionContract('global'), '')
 
 assert.equal(isForbiddenRemoteOrGitMutation('gh pr create --base dev --title test --body body'), true)
 assert.equal(isForbiddenRemoteOrGitMutation('gh --repo owner/repo pr create --base dev --title test --body body'), true)

@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
+import { ensureSkillVersion } from '~core/skillVersions'
 
 // Create a skill (blank hand-written / pasted content). activate=true also sets it as the project's
 // active skill.
@@ -25,6 +26,7 @@ export default defineEventHandler(async (event) => {
     createdAt: new Date().toISOString(),
   }
   d.insert(schema.skills).values(row).run()
+  ensureSkillVersion(d, schema, row) // version 1 snapshot
   if (b.activate) {
     d.update(schema.projects).set({ activeSkillId: row.id }).where(eq(schema.projects.id, id)).run()
   }

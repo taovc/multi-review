@@ -1,14 +1,14 @@
-import type { ChatRunner, ReviewRunner } from '../core/agent/runners'
-import { claudeChatRunner, claudeReviewRunner } from '../core/agent/claudeRunners'
+import type { ReviewRunner } from '../core/agent/runners'
+import { claudeReviewRunner } from '../core/agent/claudeRunners'
 import { codexReviewRunner } from '../core/agent/codexReview'
-import { codexChatRunner } from '../core/agent/codexChat'
+import type { SessionHost } from '../core/host/types'
+import { claudeHost, codexHost } from '../core/host'
 
+// Reviews still have one runner per provider; chats have none — both providers implement the session host contract.
 const reviewRunner: ReviewRunner = claudeReviewRunner
-const chatRunner: ChatRunner = claudeChatRunner
 const codexRunner: ReviewRunner = codexReviewRunner
-const codexChat: ChatRunner = codexChatRunner
+const hosts: SessionHost[] = [claudeHost, codexHost]
 
 void reviewRunner
-void chatRunner
 void codexRunner
-void codexChat
+void hosts

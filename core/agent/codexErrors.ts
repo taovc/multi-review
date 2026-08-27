@@ -36,6 +36,11 @@ export function classifyCodexError(error: unknown): CodexFailureKind {
   return 'runtime'
 }
 
+// A saved thread id whose rollout is gone locally: start a fresh thread instead of failing the turn.
+export function shouldRetryCodexChatWithoutThread(error: unknown, hadSessionId: boolean): boolean {
+  return hadSessionId && classifyCodexError(error) === 'invalid_thread'
+}
+
 export function formatCodexProviderError(phase: CodexPhase, error: unknown): string {
   const message = rawCodexErrorMessage(error)
   switch (classifyCodexError(error)) {

@@ -33,7 +33,7 @@ function setConfig(over: Partial<any> = {}) {
 }
 
 function resetWorld() {
-  for (const t of [schema.findingRechecks, schema.findings, schema.reviews, schema.fixes, schema.prAutomation]) {
+  for (const t of [schema.findingRechecks, schema.findings, schema.reviews, schema.runs, schema.prAutomation]) {
     d.delete(t).run()
   }
 }
@@ -90,13 +90,15 @@ function makeWorld(opts: { convergeAfter?: number; fixProducesChanges?: boolean 
       calls.fix++
       // fixProducesChanges=true → the fix produced uploadable changes (ready); false → it couldn't fix anything (stays open)
       const status = fixProducesChanges ? 'ready' : 'open'
-      const existing = d.select().from(schema.fixes).where(and(eq(schema.fixes.projectId, pid), eq(schema.fixes.prNumber, pr))).get() as any
-      if (existing) d.update(schema.fixes).set({ status, updatedAt: now() }).where(eq(schema.fixes.id, existing.id)).run()
-      else d.insert(schema.fixes).values({ id: 'FX1', projectId: pid, prNumber: pr, branch: 'b', status, createdAt: now(), updatedAt: now() }).run()
+      // A PR session run; the legacy fix status is expressed through upload_state / status.
+      const patch = status === 'ready' ? { status: 'idle', uploadState: 'ready' } : status === 'pushed' ? { status: 'idle', uploadState: 'pushed' } : status === 'error' ? { status: 'error' } : { status: 'idle', uploadState: 'none' }
+      const existing = d.select().from(schema.runs).where(and(eq(schema.runs.projectId, pid), eq(schema.runs.prNumber, pr))).get() as any
+      if (existing) d.update(schema.runs).set({ ...patch, updatedAt: now() } as any).where(eq(schema.runs.id, existing.id)).run()
+      else d.insert(schema.runs).values({ id: 'FX1', kind: 'session', subkind: 'session', provider: 'claude', projectId: pid, workspaceType: 'pr_worktree', prNumber: pr, branch: 'b', ...patch, createdAt: now(), updatedAt: now() } as any).run()
     },
     dispatchPush: async (fid) => {
       calls.push++; headN++ // pushed → head moves
-      d.update(schema.fixes).set({ status: 'pushed', lastPushSha: head(), pushedAt: now(), updatedAt: now() }).where(eq(schema.fixes.id, fid)).run()
+      d.update(schema.runs).set({ status: 'idle', uploadState: 'pushed', lastPushSha: head(), pushedAt: now(), updatedAt: now() } as any).where(eq(schema.runs.id, fid)).run()
     },
   }
   return { deps, calls }
@@ -265,7 +267,7 @@ async function runUntilStable(deps: EngineDeps, calls: any, max = 40) {
   // Set the stage: a posted review + 2 High findings + a ready fix + pr_automation (fixOn explicitly off, reviewOn inherited on, pendingFix=true)
   d.insert(schema.reviews).values({ id: 'R1', projectId: PID, prNumber: PR, prUrl: 'u', branch: 'b', headSha: 'H0', status: 'posted', prState: 'open', createdAt: now(), updatedAt: now() }).run()
   for (let i = 0; i < 2; i++) d.insert(schema.findings).values({ id: nanoid(), reviewId: 'R1', fid: `F${i}`, severity: 'High', title: 'x', introducedByPr: true, checked: false, sortOrder: i, createdAt: now() }).run()
-  d.insert(schema.fixes).values({ id: 'FX1', projectId: PID, prNumber: PR, branch: 'b', status: 'ready', createdAt: now(), updatedAt: now() }).run()
+  d.insert(schema.runs).values({ id: 'FX1', kind: 'session', subkind: 'session', provider: 'claude', projectId: PID, workspaceType: 'pr_worktree', prNumber: PR, branch: 'b', status: 'idle', uploadState: 'ready', createdAt: now(), updatedAt: now() } as any).run()
   d.insert(schema.prAutomation).values({ id: nanoid(), projectId: PID, prNumber: PR, reviewOn: null, fixOn: false, pendingFix: true, round: 1, optOut: false, updatedAt: now() }).run()
   await runAutomationTick(d, schema, deps)
   assert.equal(calls.push, 0, 'with auto-fix off, the in-flight fix must not be pushed')

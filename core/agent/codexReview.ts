@@ -1,6 +1,6 @@
 import { withContract } from './guard'
 import { formatCodexProviderError, previewRawOutput, rawCodexErrorMessage } from './codexErrors'
-import { runCodexReadonly } from './codexAgent'
+import { runCodexReadonly } from '../codex/oneshot'
 import {
   buildReviewPrompt,
   buildGuidedReviewPrompt,
@@ -14,6 +14,7 @@ import {
 import { buildRecheckPrompt, RecheckSchema, type RecheckAgentOptions, type RecheckResult } from './recheck'
 import { resolveLang } from './lang'
 import type { ReviewRunner } from './runners'
+import type { ProviderUsage } from '../runs/types'
 
 // ── Structured-output JSON Schemas (aligned with their zod schemas, forcing Codex to emit parseable JSON) ──
 const REVIEW_RESULT_JSON_SCHEMA = {
@@ -198,9 +199,10 @@ ${buildReviewPrompt({ ...opts, lang: resolveLang(opts.lang) })}`
 }
 
 // ── First review (codex) ──
-export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string }> {
+export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ result: ReviewResult; costUsd: number; raw: string; usage: ProviderUsage | null }> {
   try {
-    const raw = await runCodexReadonly({
+    const { raw, usage } = await runCodexReadonly({
+    onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
       prompt: buildCodexReviewPrompt(opts),
       cwd: opts.cwd,
       model: opts.model,
@@ -208,19 +210,22 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
       serviceTier: opts.codexServiceTier,
       outputSchema: REVIEW_RESULT_JSON_SCHEMA,
       allowNetwork: true, // lets gh read PR metadata; write operations are blocked by the command guard
+      mcpAllow: opts.mcpAllow,
       label: 'review',
       onTool: opts.onTool,
     })
-    return { result: parseCodexReviewJson(raw), costUsd: 0, raw }
+    // costUsd stays a number for legacy consumers; the run record uses `usage` (null cost = unknown, never 0).
+    return { result: parseCodexReviewJson(raw), costUsd: usage?.costUsd ?? 0, raw, usage }
   } catch (error) {
     throw normalizeCodexReviewError(error)
   }
 }
 
 // ── Targeted re-review with feedback (codex) ──
-export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number }> {
+export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number; usage: ProviderUsage | null }> {
   try {
-    const raw = await runCodexReadonly({
+    const { raw, usage } = await runCodexReadonly({
+    onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
       prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildGuidedReviewPrompt(opts)}\n\n(The structured output requires an fid field on every finding: use the existing finding's fid when it matches one, and set fid to the empty string "" for a new finding.)`,
       cwd: opts.cwd,
       model: opts.model,
@@ -228,19 +233,21 @@ export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions):
       serviceTier: opts.codexServiceTier,
       outputSchema: GUIDED_RESULT_JSON_SCHEMA,
       allowNetwork: true,
+      mcpAllow: opts.mcpAllow,
       label: 'guided review',
       onTool: opts.onTool,
     })
-    return { result: parseCodexGuidedJson(raw), costUsd: 0 }
+    return { result: parseCodexGuidedJson(raw), costUsd: usage?.costUsd ?? 0, usage }
   } catch (error) {
     throw normalizeCodexReviewError(error)
   }
 }
 
 // ── Recheck after the author's update (codex) ── needs gh to read PR comments → allow network
-export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number }> {
+export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }> {
   try {
-    const raw = await runCodexReadonly({
+    const { raw, usage } = await runCodexReadonly({
+    onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
       prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildRecheckPrompt(opts)}`,
       cwd: opts.cwd,
       model: opts.model,
@@ -248,10 +255,11 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       serviceTier: opts.codexServiceTier,
       outputSchema: RECHECK_RESULT_JSON_SCHEMA,
       allowNetwork: true,
+      mcpAllow: opts.mcpAllow,
       label: 'recheck',
       onTool: opts.onTool,
     })
-    return { result: parseCodexRecheckJson(raw), costUsd: 0 }
+    return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage }
   } catch (error) {
     throw normalizeCodexReviewError(error)
   }

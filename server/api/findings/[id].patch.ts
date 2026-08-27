@@ -2,9 +2,12 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { schema } from '~core/db/client'
 
-// Edit a single finding: tick "post to PR comment" / write notes
+// Edit a single finding: tick "post to PR comment" / write notes.
+// checkedBy records who decided the checkbox: 'human' (the reviewer clicked, the default) or 'auto' (the drawer's
+// recheck-status adjustment). Precision metrics only count human decisions.
 const Body = z.object({
   checked: z.boolean().optional(),
+  checkedBy: z.enum(['human', 'auto']).optional(),
   notes: z.string().optional(),
 })
 
@@ -14,7 +17,15 @@ export default defineEventHandler(async (event) => {
   if (!parsed.success) throw createError({ statusCode: 400, statusMessage: '参数错误' })
 
   const patch: Record<string, unknown> = {}
-  if (parsed.data.checked !== undefined) patch.checked = parsed.data.checked
+  if (parsed.data.checked !== undefined) {
+    const by = parsed.data.checkedBy ?? 'human'
+    const ts = new Date().toISOString()
+    patch.checked = parsed.data.checked
+    patch.checkedBy = by
+    patch.checkedAt = ts
+    // Sticky acceptance: only a human sets or clears it; the drawer's auto-adjust must never erase a human's decision.
+    if (by === 'human') patch.humanAcceptedAt = parsed.data.checked ? ts : null
+  }
   if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes
   if (Object.keys(patch).length) {
     const d = db()

@@ -6,8 +6,14 @@ import { prepareWorktree } from './git/worktree'
 import { fetchPrMergeable } from './github/gh'
 import { claudeReviewRunner } from './agent/claudeRunners'
 import { codexReviewRunner } from './agent/codexReview'
+import { runVerifyAgent, verdictMap } from './agent/verify'
 import { pickByLang } from './agent/lang'
+import { createRun, finishRun, recordRunUsage } from './runs/store'
+import { formatUsageLabel } from './runs/format'
 import type { ReviewProvider, ReviewRunner } from './agent/runners'
+import { reviewAborts } from './agent/reviewAborts'
+import { getAgentSettings } from './agent/settings'
+import { projectDirNameFor } from './host/options'
 
 export function selectReviewRunner(provider?: ReviewProvider): ReviewRunner {
   return provider === 'codex' ? codexReviewRunner : claudeReviewRunner
@@ -56,6 +62,18 @@ export type ReviewJobCtx = {
   codexServiceTier?: string | null
   lang?: string // working language of the AI output (UI locale); defaults to zh to preserve the old behavior
   guided?: boolean // true = targeted re-review with feedback; false/undefined = fresh first review
+  // Observability: attribute the run to a project and to the exact skill version that ran (both optional for old callers).
+  projectId?: string | null
+  skillId?: string | null
+  skillVersionId?: string | null
+  verifyBeforePost?: boolean // fresh reviews: run the refute pass and store a verdict per finding
+}
+
+type VerifyCounts = { confirmed: number; refuted: number; unsure: number }
+const VERIFY_STAGE = {
+  zh: { start: '发前验证：第二遍尝试反驳每条 finding…', done: (c: VerifyCounts) => `验证完成：确认 ${c.confirmed} · 反驳 ${c.refuted} · 不确定 ${c.unsure}`, failed: (m: string) => `验证失败（findings 保留，未标注）：${m}` },
+  en: { start: 'Verify before post: a second pass tries to refute each finding…', done: (c: VerifyCounts) => `Verified: ${c.confirmed} confirmed · ${c.refuted} refuted · ${c.unsure} unsure`, failed: (m: string) => `Verify failed (findings kept, unlabelled): ${m}` },
+  fr: { start: 'Vérification avant publication : une seconde passe tente de réfuter chaque finding…', done: (c: VerifyCounts) => `Vérifié : ${c.confirmed} confirmés · ${c.refuted} réfutés · ${c.unsure} incertains`, failed: (m: string) => `Vérification échouée (findings conservés, non annotés) : ${m}` },
 }
 
 export function enqueueReview(ctx: ReviewJobCtx) {
@@ -87,6 +105,10 @@ async function runReviewJob(ctx: ReviewJobCtx) {
   const taskGone = () => !db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()
 
   let wt: { path: string; headSha: string; cleanup: () => Promise<void> } | null = null
+  let runId: string | null = null // the runs row for this execution (cost / tokens / model / skill version)
+  const abort = new AbortController()
+  reviewAborts.set(reviewId, abort)
+  const hostOpts = { abort, mcpAllow: getAgentSettings(db, schema).reviewMcpAllow, projectDirName: projectDirNameFor(ctx.localPath) }
   try {
     setStatus('cloning')
     emit('stage', '准备代码（worktree）')
@@ -106,8 +128,18 @@ async function runReviewJob(ctx: ReviewJobCtx) {
     const review = db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()
     const guided = ctx.guided && existing.length > 0
 
+    // One run record per execution; the review row points at its latest run and the skill version it used.
+    runId = createRun(db, schema, {
+      kind: 'review', subkind: guided ? 'guided' : 'review', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+      projectId: ctx.projectId ?? review?.projectId ?? null, reviewId, workspaceType: 'pr_worktree', workspacePath: wt.path,
+      prNumber: ctx.prNumber, branch: ctx.branch, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier,
+      skillId: ctx.skillId ?? null, skillVersionId: ctx.skillVersionId ?? null, lang: ctx.lang ?? null, title: review?.title ?? null,
+    })
+    db.update(schema.reviews).set({ lastRunId: runId, skillVersionId: ctx.skillVersionId ?? null, updatedAt: now() }).where(eq(schema.reviews.id, reviewId)).run()
+
     let result: any
     let costUsd = 0
+    let usage: any = null
 
     if (guided) {
       // ── Targeted re-review with feedback: keep notes/checkmarks, the AI responds item by item ──
@@ -117,11 +149,13 @@ async function runReviewJob(ctx: ReviewJobCtx) {
         defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
         instruction: review?.reviewInstruction || '', globalNotes: review?.globalNotes || '',
         existing: existing.map((f: any) => ({ fid: f.fid, severity: f.severity, title: f.title, location: f.location, problem: f.problem, reviewerNote: f.notes })),
-        onTool: (n, i) => emit('tool', `${n} ${i}`),
+        onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
       })
       result = g.result
       costUsd = g.costUsd
-      if (taskGone()) { emit('error', '任务已被删除，丢弃复审结果'); return }
+      usage = g.usage
+      recordRunUsage(db, schema, runId, usage)
+      if (taskGone()) { emit('error', '任务已被删除，丢弃复审结果'); finishRun(db, schema, runId, { status: 'stopped', error: 'task deleted' }); return }
 
       const byFid = new Map(existing.map((f: any) => [f.fid, f]))
       const round =
@@ -136,6 +170,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           db.update(schema.findings).set({
             severity: f.severity, title: f.title, location: f.location || null,
             problem: f.problem || null, detail: f.detail || null, fix: f.fix || null, introducedByPr: f.introducedByPr,
+            verifyStatus: null, verifyNote: null, // the verdict was about the previous wording
           }).where(eq(schema.findings.id, cur.id)).run()
           if (f.response) {
             db.insert(schema.findingRechecks).values({
@@ -164,11 +199,13 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       const r = await reviewRunner.runReview({
         cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
         defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
-        onTool: (name, info) => emit('tool', `${name} ${info}`),
+        onTool: (name, info) => emit('tool', `${name} ${info}`), ...hostOpts,
       })
       result = r.result
       costUsd = r.costUsd
-      if (taskGone()) { emit('error', '任务已被删除，丢弃审核结果'); return }
+      usage = r.usage
+      recordRunUsage(db, schema, runId, usage)
+      if (taskGone()) { emit('error', '任务已被删除，丢弃审核结果'); finishRun(db, schema, runId, { status: 'stopped', error: 'task deleted' }); return }
       // Wipe + insert in one transaction: all or nothing, so a crash halfway doesn't leave findings empty
       db.transaction((tx: any) => {
         tx.delete(schema.findings).where(eq(schema.findings.reviewId, reviewId)).run()
@@ -180,6 +217,42 @@ async function runReviewJob(ctx: ReviewJobCtx) {
           }).run()
         })
       })
+
+      // Verify-before-post: a second read-only pass tries to refute every finding; verdicts are stored on the findings
+      // (refuted ones stay visible but unchecked). A failed verify pass never fails the review.
+      if (ctx.verifyBeforePost && result.findings.length && !taskGone()) {
+        emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).start)
+        const verifyRunId = createRun(db, schema, {
+          kind: 'review', subkind: 'verify', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+          projectId: ctx.projectId ?? review?.projectId ?? null, reviewId, workspaceType: 'pr_worktree', workspacePath: wt.path,
+          prNumber: ctx.prNumber, branch: ctx.branch, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier,
+          skillId: ctx.skillId ?? null, skillVersionId: ctx.skillVersionId ?? null, lang: ctx.lang ?? null, title: review?.title ?? null,
+        })
+        try {
+          const rows = db.select().from(schema.findings).where(eq(schema.findings.reviewId, reviewId)).all() as any[]
+          const v = await runVerifyAgent({
+            cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch, defaultBranch: ctx.defaultBranch,
+            provider: ctx.provider, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, methodology: ctx.methodology,
+            findings: rows.map((f) => ({ fid: f.fid, severity: f.severity, title: f.title, location: f.location, problem: f.problem, detail: f.detail })),
+            onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
+          })
+          recordRunUsage(db, schema, verifyRunId, v.usage)
+          costUsd += v.costUsd
+          const verdicts = verdictMap(v.result, rows.map((f) => f.fid))
+          const counts = { confirmed: 0, refuted: 0, unsure: 0 }
+          for (const f of rows) {
+            const x = verdicts.get(f.fid)!
+            counts[x.verdict]++
+            db.update(schema.findings).set({ verifyStatus: x.verdict, verifyNote: x.reason || null }).where(eq(schema.findings.id, f.id)).run()
+          }
+          finishRun(db, schema, verifyRunId, { status: 'done' })
+          emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).done(counts))
+        } catch (e) {
+          if (abort.signal.aborted) throw e
+          finishRun(db, schema, verifyRunId, { status: 'error', error: (e as Error).message })
+          emit('stage', pickByLang(ctx.lang, VERIFY_STAGE).failed((e as Error).message))
+        }
+      }
 
       // Merge conflict detection: the PR conflicts with its base branch → append a High "resolve merge conflicts" finding (auto-fix will try to resolve them).
       // A failed / UNKNOWN GitHub mergeable lookup never raises a false alarm.
@@ -209,11 +282,16 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       requirement: result.requirement || null,
       testPath: result.testPath || null,
     })
-    emit('done', `${guided ? '复审' : '审核'}完成 · $${costUsd.toFixed(3)}`)
+    finishRun(db, schema, runId, { status: 'done' })
+    emit('done', `${guided ? '复审' : '审核'}完成 · ${formatUsageLabel(usage, costUsd)}`)
   } catch (e) {
-    setStatus('error', { error: (e as Error).message })
-    emit('error', (e as Error).message)
+    const stopped = abort.signal.aborted
+    const message = stopped ? '已停止' : (e as Error).message
+    if (runId) finishRun(db, schema, runId, { status: stopped ? 'stopped' : 'error', error: message })
+    setStatus('error', { error: message })
+    emit('error', message)
   } finally {
+    reviewAborts.delete(reviewId)
     if (wt) await wt.cleanup()
   }
 }
@@ -241,6 +319,10 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
       .filter((e: any) => e.kind === 'recheck').length + 1
 
   let wt: { path: string; headSha: string; cleanup: () => Promise<void> } | null = null
+  let runId: string | null = null
+  const abort = new AbortController()
+  reviewAborts.set(reviewId, abort)
+  const hostOpts = { abort, mcpAllow: getAgentSettings(db, schema).reviewMcpAllow, projectDirName: projectDirNameFor(ctx.localPath) }
   try {
     setStatus('rechecking')
     emit('stage', '复审：准备最新代码')
@@ -249,17 +331,27 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
       branch: ctx.branch, defaultBranch: ctx.defaultBranch, onStep: (m) => emit('stage', m),
     })
 
+    runId = createRun(db, schema, {
+      kind: 'review', subkind: 'recheck', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+      projectId: ctx.projectId ?? review?.projectId ?? null, reviewId, workspaceType: 'pr_worktree', workspacePath: wt.path,
+      prNumber: ctx.prNumber, branch: ctx.branch, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier,
+      skillId: ctx.skillId ?? null, skillVersionId: ctx.skillVersionId ?? null, lang: ctx.lang ?? null, title: review?.title ?? null,
+    })
+    // Only the run pointer: the findings were produced by an earlier (fresh/guided) review, so the review keeps that skill version.
+    db.update(schema.reviews).set({ lastRunId: runId, updatedAt: now() }).where(eq(schema.reviews.id, reviewId)).run()
+
     emit('stage', '复审中：判断作者改了没')
-    const { result } = await selectReviewRunner(ctx.provider).runRecheck({
+    const { result, usage } = await selectReviewRunner(ctx.provider).runRecheck({
       cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, defaultBranch: ctx.defaultBranch,
       lastPostSha: review?.lastPostSha ?? null,
       requirement: review?.requirement ?? null,
       findings: existing.map((f: any) => ({ fid: f.fid, title: f.title, location: f.location, problem: f.problem, fix: f.fix, notes: f.notes })),
-      methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, onTool: (n, i) => emit('tool', `${n} ${i}`),
+      methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
     })
 
+    recordRunUsage(db, schema, runId, usage)
     if (!db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()) {
-      emit('error', '任务已被删除，丢弃复审结果'); return
+      emit('error', '任务已被删除，丢弃复审结果'); finishRun(db, schema, runId, { status: 'stopped', error: 'task deleted' }); return
     }
     const fidToId = new Map(existing.map((f: any) => [f.fid, f.id]))
     let applied = 0
@@ -291,11 +383,16 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     // The post-recheck overall conclusion overwrites the AI summary; if the AI gave none (empty), keep the old summary instead of clearing it
     const newConclusion = result.conclusion?.trim()
     setStatus('draft', { headSha: wt.headSha, authorUpdated: false, ...(newConclusion ? { conclusion: newConclusion } : {}) })
-    emit('recheck', `复审 round ${round} 完成 · 更新 ${applied} 条${added ? ` · 新增 ${added} 条` : ''}`)
+    finishRun(db, schema, runId, { status: 'done' })
+    emit('recheck', `复审 round ${round} 完成 · 更新 ${applied} 条${added ? ` · 新增 ${added} 条` : ''} · ${formatUsageLabel(usage, 0)}`)
   } catch (e) {
-    setStatus('error', { error: (e as Error).message })
-    emit('error', (e as Error).message)
+    const stopped = abort.signal.aborted
+    const message = stopped ? '已停止' : (e as Error).message
+    if (runId) finishRun(db, schema, runId, { status: stopped ? 'stopped' : 'error', error: message })
+    setStatus('error', { error: message })
+    emit('error', message)
   } finally {
+    reviewAborts.delete(reviewId)
     if (wt) await wt.cleanup()
   }
 }

@@ -8,14 +8,17 @@ const { t, locale } = useI18n()
 type Finding = {
   id: string; fid: string; severity: 'High' | 'Medium' | 'Low'; title: string
   location: string | null; problem: string | null; detail: string | null; fix: string | null
-  introducedByPr: boolean; checked: boolean; notes: string | null
+  introducedByPr: boolean; checked: boolean; notes: string | null; verifyStatus?: 'confirmed' | 'refuted' | 'unsure' | null; verifyNote?: string | null
   rechecks: { round: number; status: string; text: string | null; at: string }[]
 }
+type RunInfo = { id: string; subkind: string; provider: string; model: string | null; effort: string | null; status: string; costUsd: number | null; costSource: string | null; inputTokens: number; outputTokens: number; durationMs: number; skillVersion: number | null; skillName: string | null } | null
 type ReviewData = {
   review: any
   findings: Finding[]
   posts: { round: number; url: string; mode: string; at: string }[]
   events: { ts: string; kind: string; message: string | null }[]
+  run: RunInfo // the latest agent run (cost / tokens / model / skill version), null for legacy reviews
+  totalCostUsd: number | null // all runs of this review added up (null when nothing was priced)
 }
 
 const rid = ref<string | null>(props.reviewId)
@@ -66,7 +69,8 @@ async function autoAdjustChecks() {
     if (f.checked !== desired) { f.checked = desired; changed.push(f) }
   }
   if (!changed.length) return
-  await Promise.all(changed.map((f) => $fetch(`/api/findings/${f.id}`, { method: 'PATCH', body: { checked: f.checked } }).catch(() => {})))
+  // checkedBy:'auto' — a machine adjustment, not a human decision (kept out of the precision metric)
+  await Promise.all(changed.map((f) => $fetch(`/api/findings/${f.id}`, { method: 'PATCH', body: { checked: f.checked, checkedBy: 'auto' } }).catch(() => {})))
 }
 function openSSE() {
   if (!rid.value || !import.meta.client) return
@@ -111,6 +115,10 @@ async function startReview() {
 const confirming = ref<'' | 'rerun' | 'recheck' | 'fresh' | 'delete'>('')
 // fresh=true → full review from scratch (wipes findings/notes, non-guided review);
 // false → guided re-review that keeps findings + notes.
+async function stopRun() {
+  busy.value = 'stop'
+  try { await $fetch(`/api/reviews/${rid.value}/stop`, { method: 'POST' }) } catch (e: any) { live.value = e?.data?.statusMessage || e?.message || String(e) } finally { busy.value = '' }
+}
 async function rerun(fresh = false) {
   confirming.value = ''
   busy.value = 'run'; logLines.value = []; showLog.value = true
@@ -130,8 +138,24 @@ async function recheck() {
 const saving = ref<Record<string, any>>({})
 async function toggleFinding(f: Finding) {
   f.checked = !f.checked
-  await $fetch(`/api/findings/${f.id}`, { method: 'PATCH', body: { checked: f.checked } })
+  await $fetch(`/api/findings/${f.id}`, { method: 'PATCH', body: { checked: f.checked, checkedBy: 'human' } })
 }
+
+// Cost / usage line for the latest run: "$1.36 · sonnet · high · 84.2k in / 3.1k out · 4m12s · skill v3"
+function fmtTok(n: number) { return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
+function fmtDur(ms: number) { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s` }
+const runLine = computed(() => {
+  const r = data.value?.run
+  if (!r) return ''
+  const parts: string[] = []
+  parts.push(r.costUsd != null ? `$${r.costUsd.toFixed(3)}${r.costSource === 'estimated' ? ' (est.)' : ''}` : t('review.costUnknown'))
+  if (data.value?.totalCostUsd != null && data.value.totalCostUsd > (r.costUsd ?? 0) + 1e-9) parts.push(t('review.costTotal', { cost: data.value.totalCostUsd.toFixed(3) }))
+  parts.push([r.provider, r.model, r.effort].filter(Boolean).join(' · '))
+  if (r.inputTokens || r.outputTokens) parts.push(`${fmtTok(r.inputTokens)} in / ${fmtTok(r.outputTokens)} out`)
+  if (r.durationMs) parts.push(fmtDur(r.durationMs))
+  if (r.skillVersion != null) parts.push(`${r.skillName || 'skill'} v${r.skillVersion}`)
+  return parts.join(' · ')
+})
 function saveNotes(f: Finding) {
   clearTimeout(saving.value[f.id])
   saving.value[f.id] = setTimeout(() => {
@@ -238,6 +262,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
           <span v-if="data.review.authorUpdated" class="ml-2 text-xs text-highlighted font-medium" :title="$t('review.authorUpdatedTitle')">● {{ $t('project.authorUpdated') }}</span>
         </div>
         <div class="flex items-center gap-3 text-xs">
+          <button v-if="running && !confirming" class="text-highlighted font-medium hover:underline disabled:opacity-40" :disabled="busy === 'stop'" @click="stopRun">{{ $t('review.stop') }}</button>
           <template v-if="confirming === 'rerun'">
             <span class="text-dimmed">{{ $t('review.rerunConfirm') }}</span>
             <button class="text-highlighted font-medium hover:underline disabled:opacity-40" :disabled="!!busy" @click="rerun()">{{ $t('review.startRerun') }}</button>
@@ -280,6 +305,8 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
         <pre v-if="showLog && logLines.length" ref="logBox" class="mt-2 max-h-56 overflow-auto bg-neutral-900 text-neutral-300 rounded p-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
       </div>
       <p v-if="data.review.error" class="text-xs text-highlighted border border-default rounded p-2 mb-4 whitespace-pre-wrap">{{ data.review.error }}</p>
+      <!-- latest run: cost / tokens / model / skill version (observability) -->
+      <p v-if="runLine" class="text-[11px] text-dimmed font-mono mb-3" :title="$t('review.runLineTitle')">{{ runLine }}</p>
 
       <!-- AI summary (pinned to the top) -->
       <section v-if="data.review.conclusion" class="mb-5 border border-default rounded p-3">
@@ -319,7 +346,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
             <div class="text-sm">
               <span class="text-xs mr-1" :class="sevCls[f.severity]">[{{ f.severity }}]</span>{{ f.title }}
             </div>
-            <div class="text-xs text-dimmed mt-0.5">{{ f.location }}<span v-if="!f.introducedByPr"> {{ $t('review.preExisting') }}</span></div>
+            <div class="text-xs text-dimmed mt-0.5">{{ f.location }}<span v-if="!f.introducedByPr"> {{ $t('review.preExisting') }}</span><span v-if="f.verifyStatus === 'refuted'" class="ml-1 text-highlighted" :title="f.verifyNote || ''">⊘ {{ $t('review.verifyRefuted') }}</span><span v-else-if="f.verifyStatus === 'confirmed'" class="ml-1" :title="f.verifyNote || ''">✓ {{ $t('review.verifyConfirmed') }}</span><span v-else-if="f.verifyStatus === 'unsure'" class="ml-1" :title="f.verifyNote || ''">? {{ $t('review.verifyUnsure') }}</span></div>
             <p v-if="f.problem" class="text-sm text-toned mt-1">{{ f.problem }}</p>
             <details v-if="f.detail || f.fix" class="mt-1">
               <summary class="text-xs text-dimmed cursor-pointer">{{ $t('review.detailFix') }}</summary>

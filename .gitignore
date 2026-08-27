@@ -17,3 +17,6 @@ release/
 electron/build-info.json
 .vscode/
 .idea/
+
+# eval replay reports (local artefacts)
+eval/reports/

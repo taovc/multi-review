@@ -1,10 +1,11 @@
+import { ghBin } from './gh'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { writeFile, rm, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runClaude } from '../agent/claudeCli'
-import { runCodexText } from '../agent/codexAgent'
+import { runHelperText } from '../host/helpers'
+import { runCodexText } from '../codex/oneshot'
 import type { ReviewProvider } from '../agent/runners'
 
 const pexec = promisify(execFile)
@@ -81,13 +82,12 @@ function parseLoc(loc: string | null): { path: string; line: number } | null {
 // Translate the Chinese findings into English PR comment bodies (content published to GitHub is in English). One-shot text generation.
 // Routed by the project's provider: claude goes through `claude --print` (prompt fed via stdin, so the server never hangs waiting on stdin);
 // codex goes through the Codex SDK's one-shot run(). **Never mixed**: a codex project's translations also come from codex.
-async function claudePrint(model: string, prompt: string): Promise<string> {
-  const out = await runClaude(['--print', '--model', model || 'sonnet'], { input: prompt, timeout: 120_000 })
-  return String(out).trim()
+async function claudePrint(model: string, prompt: string, cwd?: string): Promise<string> {
+  return runHelperText({ prompt, cwd: cwd || process.cwd(), model: model || 'sonnet', timeoutMs: 120_000 })
 }
 function makePrint(provider: ReviewProvider, model: string, cwd?: string, codexServiceTier?: string | null): (prompt: string) => Promise<string> {
   if (provider === 'codex') return (prompt) => runCodexText({ prompt, model: model || undefined, cwd, serviceTier: codexServiceTier })
-  return (prompt) => claudePrint(model, prompt)
+  return (prompt) => claudePrint(model, prompt, cwd)
 }
 
 // Each finding is translated independently in parallel (every call emits little output, a few seconds) → wall clock ≈ the slowest one, not the sum.
@@ -238,10 +238,10 @@ export async function postReview(opts: {
   // Any PENDING visible in the GET response is necessarily ours (other people's pending reviews aren't visible), so just delete it.
   try {
     // With timeout: these two steps run inside the review's 'posting' claim window, and a gh call hanging forever would pin the row at 'posting' permanently (recover only runs at startup).
-    const { stdout } = await pexec('gh', ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'], { maxBuffer: 1024 * 1024 * 16, timeout: 30_000 })
+    const { stdout } = await pexec(ghBin(), ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'], { maxBuffer: 1024 * 1024 * 16, timeout: 30_000 })
     for (const r of (JSON.parse(stdout) as any[][]).flat()) {
       if (r.state === 'PENDING') {
-        await pexec('gh', ['api', `repos/${repo}/pulls/${prNumber}/reviews/${r.id}`, '--method', 'DELETE'], { timeout: 30_000 }).catch(() => {})
+        await pexec(ghBin(), ['api', `repos/${repo}/pulls/${prNumber}/reviews/${r.id}`, '--method', 'DELETE'], { timeout: 30_000 }).catch(() => {})
       }
     }
   } catch {

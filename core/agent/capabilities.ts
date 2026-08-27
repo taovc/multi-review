@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import { ISOLATED } from './guard'
+import { buildHelperOptions } from '../host/options'
 
 export type ModelCap = {
   value: string
@@ -20,7 +20,8 @@ export async function getCapabilities(force = false): Promise<{ models: ModelCap
   async function* input() {
     await gate
   }
-  const q = query({ prompt: input(), options: { permissionMode: 'bypassPermissions', ...ISOLATED } })
+  // A helper-shaped query (no user settings, no tools, nothing persisted) is enough to ask the CLI for its model catalog.
+  const q = query({ prompt: input(), options: buildHelperOptions({ cwd: process.cwd() }) })
   try {
     const raw = await q.supportedModels()
     const models: ModelCap[] = raw.map((m: any) => ({
