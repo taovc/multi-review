@@ -70,6 +70,29 @@ function showHistory() { view.value = 'history'; void loadHistory() }
 function histPrev() { if (histPage.value > 0) { histPage.value--; loadHistory() } }
 function histNext() { if (hist.value?.hasNext) { histPage.value++; loadHistory() } }
 function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value, { hour12: false }) }
+// Per-row rename / delete without opening the session (the header controls only act on the open one).
+const editingId = ref<string | null>(null)
+const editVal = ref('')
+function startEdit(s: RunRow) { editingId.value = s.id; editVal.value = s.title || '' }
+async function saveEdit(s: RunRow) {
+  const id = editingId.value
+  const v = editVal.value.trim()
+  editingId.value = null
+  if (id !== s.id || !v || v === (s.title || '')) return
+  try {
+    await $fetch(`/api/runs/${id}`, { method: 'PATCH', body: { title: v } })
+    s.title = v
+    if (sessionId.value === id) title.value = v
+  } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+}
+async function deleteHistory(id: string) {
+  confirming.value = ''
+  try {
+    await $fetch(`/api/runs/${id}`, { method: 'DELETE' })
+    if (sessionId.value === id) { sessionId.value = null; title.value = null }
+    await loadHistory()
+  } catch (e: any) { notify(e?.data?.statusMessage || t('common.failed')) }
+}
 </script>
 
 <template>
@@ -109,10 +132,28 @@ function fmtTime(iso: string) { return new Date(iso).toLocaleString(locale.value
         <!-- History list -->
         <div v-if="view === 'history'" class="flex-1 min-h-0 overflow-y-auto">
           <div v-if="!hist?.runs.length" class="text-xs text-dimmed py-8 text-center">{{ $t('global.historyEmpty') }}</div>
-          <button v-for="s in hist?.runs ?? []" :key="s.id" class="w-full text-left px-3 py-2 rounded border border-default hover:border-accented mb-1.5" @click="openHistorySession(s.id)">
-            <div class="text-sm truncate">{{ s.title || $t('global.untitled') }}</div>
-            <div class="text-[11px] text-dimmed flex gap-2"><span>{{ fmtTime(s.updatedAt) }}</span><span class="font-mono">{{ s.provider }}</span><span class="font-mono truncate">{{ s.workspacePath }}</span></div>
-          </button>
+          <div v-for="s in hist?.runs ?? []" :key="s.id" class="flex items-start gap-2 px-3 py-2 rounded border border-default hover:border-accented mb-1.5">
+            <div class="flex-1 min-w-0">
+              <input
+                v-if="editingId === s.id" :ref="(el) => (el as HTMLInputElement | null)?.focus()" v-model="editVal"
+                class="w-full text-sm border-b border-inverted outline-none bg-transparent py-0.5" :placeholder="$t('global.untitled')"
+                @keydown.enter="$event.isComposing || saveEdit(s)" @keydown.esc="editingId = null" @blur="saveEdit(s)"
+              />
+              <button v-else class="w-full text-left text-sm truncate" @click="openHistorySession(s.id)">{{ s.title || $t('global.untitled') }}</button>
+              <div class="text-[11px] text-dimmed flex gap-2"><span>{{ fmtTime(s.updatedAt) }}</span><span class="font-mono">{{ s.provider }}</span><span class="font-mono truncate">{{ s.workspacePath }}</span></div>
+            </div>
+            <div class="shrink-0 flex items-center gap-1 text-xs pt-0.5">
+              <template v-if="confirming === `del:${s.id}`">
+                <span class="text-dimmed">{{ $t('global.confirmDelete') }}</span>
+                <button class="text-error font-medium hover:underline" @click="deleteHistory(s.id)">{{ $t('common.delete') }}</button>
+                <button class="text-dimmed hover:text-highlighted" @click="confirming = ''">{{ $t('common.cancel') }}</button>
+              </template>
+              <template v-else>
+                <button class="p-1 text-dimmed hover:text-highlighted" :title="$t('global.rename')" @click="startEdit(s)"><UIcon name="i-lucide-pencil" class="size-3.5" /></button>
+                <button class="p-1 text-dimmed hover:text-error" :title="$t('global.deleteSession')" @click="confirming = `del:${s.id}`"><UIcon name="i-lucide-trash-2" class="size-3.5" /></button>
+              </template>
+            </div>
+          </div>
           <div v-if="hist && hist.total > hist.pageSize" class="flex items-center justify-between text-xs text-dimmed mt-2">
             <button class="hover:text-highlighted disabled:opacity-30" :disabled="histPage === 0" @click="histPrev">{{ $t('project.pagination.prev') }}</button>
             <span>{{ hist.page + 1 }}</span>
