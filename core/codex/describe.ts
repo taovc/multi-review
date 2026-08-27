@@ -1,4 +1,5 @@
 import { codexServerInfo, getCodexServer } from './appServer'
+import { homedir } from 'node:os'
 import { codexExecutableSource, resolveCodexExecutable } from './bin'
 
 // What Codex actually loads and can do — the transparency page's Codex section, read from the live app-server
@@ -62,7 +63,7 @@ async function build(cwd: string): Promise<CodexConfigReport> {
     else {
       const c = cfg?.config ?? {}
       for (const k of KEYS) if (c[k] !== undefined) base.config[k] = k === 'hooks' || k === 'plugins' || k === 'features' ? summarize(c[k]) : c[k]
-      for (const [k, v] of Object.entries<any>(cfg?.origins ?? {})) base.configOrigins[k] = String(v?.layer?.type ?? v?.layer ?? v?.source ?? JSON.stringify(v)).slice(0, 80)
+      for (const [k, v] of Object.entries<any>(cfg?.origins ?? {})) base.configOrigins[k] = originLabel(v)
     }
     if (mcp?._error) errors.push(`mcp: ${mcp._error}`)
     else base.mcpServers = (mcp?.data ?? []).map((s: any) => ({ name: String(s.name), authStatus: String(s.authStatus ?? 'unknown'), tools: Object.keys(s.tools ?? {}).length }))
@@ -86,4 +87,12 @@ function summarize(v: unknown): unknown {
   if (Array.isArray(v)) return `${v.length} entries`
   if (v && typeof v === 'object') return Object.keys(v as object).join(', ') || '(empty)'
   return v
+}
+
+// config/read origins: { name: { type: 'user' | 'project' | 'sessionFlags' | …, file?: string }, version } → "user · ~/.codex/config.toml".
+function originLabel(v: any): string {
+  const name = v?.name ?? v
+  const type = String(name?.type ?? name?.layer?.type ?? name?.layer ?? name?.source ?? JSON.stringify(v) ?? '?')
+  const file = typeof name?.file === 'string' ? name.file.replace(homedir(), '~') : ''
+  return (file ? `${type} · ${file}` : type).slice(0, 120)
 }
