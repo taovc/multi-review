@@ -165,20 +165,49 @@ function openGen(baseId: string | null) {
   showGen.value = true
 }
 const genProgress = ref('')
+let es: EventSource | null = null
+// Progress stream (which file the agent reads / greps / done). `onEnd` is only used when re-attaching to a generation
+// started earlier (tab switch / reload); a generation started from this component ends with its HTTP response.
+function openGenStream(onEnd?: (kind: 'done' | 'error', message: string) => void) {
+  if (!import.meta.client) return
+  es?.close()
+  es = new EventSource(`/api/projects/${props.project.id}/skills/genstream`)
+  es.onmessage = (ev) => {
+    try {
+      const e = JSON.parse(ev.data)
+      if (e.message) genProgress.value = e.message
+      if (onEnd && (e.kind === 'done' || e.kind === 'error')) onEnd(e.kind, String(e.message ?? ''))
+    } catch {}
+  }
+}
+function closeGenStream() { es?.close(); es = null }
+onBeforeUnmount(closeGenStream)
+const newestCandidate = () => [...(skills.value ?? [])].filter((s) => s.source === 'ai' || s.source === 'optimized').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
+// The generation runs server-side: if this tab was unmounted (tab switch) or the page reloaded while it ran, pick it up
+// again — same progress line, same "candidate ready" preview at the end.
+async function resumeGen() {
+  try {
+    const st = await $fetch<{ running: boolean }>(`/api/projects/${props.project.id}/skills/genstatus`)
+    if (!st.running || generating.value) return
+    generating.value = true; msg.value = ''; genProgress.value = t('config.connecting')
+    openGenStream(async (kind, message) => {
+      closeGenStream()
+      generating.value = false; genProgress.value = ''
+      // The "done" event is emitted just before the candidate row is written: give the insert a moment.
+      await new Promise((r) => setTimeout(r, 800))
+      await refreshSkills().catch(() => {})
+      if (kind !== 'done') { msg.value = message || t('config.genInterrupted'); return }
+      const c = newestCandidate()
+      if (c) previewId.value = c.id
+      msg.value = t('config.candidateGenerated')
+    })
+  } catch { /* status unknown → nothing to resume */ }
+}
+onMounted(resumeGen)
 async function runGen() {
   showGen.value = false
   generating.value = true; msg.value = ''; genProgress.value = t('config.connecting')
-  // Open an SSE stream for live progress (which file the agent is reading / what it greps)
-  let es: EventSource | null = null
-  if (import.meta.client) {
-    es = new EventSource(`/api/projects/${props.project.id}/skills/genstream`)
-    es.onmessage = (ev) => {
-      try {
-        const e = JSON.parse(ev.data)
-        if (e.message) genProgress.value = e.message
-      } catch {}
-    }
-  }
+  openGenStream()
   try {
     const row = await $fetch<Skill>(`/api/projects/${props.project.id}/skills/generate`, {
       method: 'POST',
@@ -195,7 +224,7 @@ async function runGen() {
     await refreshSkills().catch(() => {})
     msg.value = e?.data?.statusMessage || t('config.genInterrupted')
   }
-  finally { generating.value = false; genProgress.value = ''; es?.close() }
+  finally { generating.value = false; genProgress.value = ''; closeGenStream() }
 }
 const showNew = ref(false)
 const newForm = reactive({ name: '', content: '' })
