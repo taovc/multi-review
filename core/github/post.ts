@@ -255,7 +255,7 @@ export async function postReview(opts: {
     await writeFile(file, JSON.stringify(payload))
     try {
       const { stdout } = await pexec(
-        'gh',
+        ghBin(), // never the bare 'gh': a LaunchAgent / Electron PATH has no /opt/homebrew/bin → spawn gh ENOENT
         ['api', `repos/${repo}/pulls/${prNumber}/reviews`, '--method', 'POST', '--input', file],
         { maxBuffer: 1024 * 1024 * 16, timeout: 60_000 },
       )
