@@ -1,2 +1,11 @@
 @import 'tailwindcss';
 @import '@nuxt/ui';
+
+/* Monochrome: Nuxt UI maps --ui-primary to the 500 (light) / 400 (dark) shade, which with the neutral palette is a
+   mid grey on switches, checkboxes and active pager pages. Pure black on light, pure white on dark. */
+:root {
+  --ui-primary: #000;
+}
+.dark {
+  --ui-primary: #fff;
+}
