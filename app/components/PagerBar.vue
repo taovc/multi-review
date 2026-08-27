@@ -12,7 +12,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.perPa
     <UPagination
       v-if="pageCount > 1"
       :page="Math.min(page, pageCount)" :total="total" :items-per-page="perPage" :sibling-count="1" :disabled="disabled"
-      size="xs" color="neutral" variant="ghost" active-variant="outline"
+      size="xs" color="neutral" active-color="neutral" variant="ghost" active-variant="outline"
       @update:page="(p: number) => emit('update:page', p)"
     />
   </div>
