@@ -2,7 +2,7 @@
 // Inbox: what is waiting for the human. Read-only list with deep links (review drawer / global chat session).
 import type { InboxOverview } from '~core/inbox/queries'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { data, refresh } = await useFetch<InboxOverview>('/api/inbox')
 const openSession = useOpenGlobalSession()
 let timer: ReturnType<typeof setInterval> | null = null
@@ -23,7 +23,8 @@ const hint = 'text-xs text-dimmed mt-0.5 leading-relaxed'
 const row = 'flex items-center justify-between gap-3 py-2 border-t border-default text-sm first:border-t-0'
 const tag = 'inline-block text-[10px] uppercase tracking-[0.1em] border border-default px-1.5 py-px text-dimmed whitespace-nowrap'
 const btn = 'text-xs border border-default px-2 py-1 hover:border-inverted shrink-0'
-const when = (iso: string | null) => iso ? new Date(iso).toLocaleString() : ''
+// Explicit locale + hour12: the server formats with the process locale otherwise, and the client with the browser's (hydration mismatch).
+const when = (iso: string | null) => iso ? new Date(iso).toLocaleString(locale.value, { hour12: false }) : ''
 const reviewLink = (r: { projectId: string; prNumber: number; reviewId: string | null }) => `/projects/${r.projectId}?pr=${r.prNumber}${r.reviewId ? `&review=${r.reviewId}` : ''}`
 // A session run lives in one of three workspaces: PR worktree (fix tab of the PR drawer), branch worktree (the project's feature list) or a plain cwd (global drawer).
 const runLink = (x: { runId: string; workspaceType: string | null; projectId: string | null; prNumber: number | null }) => {

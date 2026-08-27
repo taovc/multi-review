@@ -5,7 +5,7 @@
 import type { Project } from '~core/db/schema'
 import type { AgentConfigReport, ConfigFile, ProbeReport } from '~core/host/config'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { data: projects } = await useFetch<Project[]>('/api/projects')
 const SERVER = 'server' // select sentinel: an empty-string item value is not allowed by the select primitive
 const cwdSel = ref<string>(SERVER)
@@ -38,7 +38,7 @@ async function save(patch: { chrome?: boolean; reviewMcpAllow?: string[] }) {
   try {
     const r = await $fetch<{ chrome: boolean; reviewMcpAllow: string[] }>('/api/agent/config', { method: 'PATCH', body: patch })
     chrome.value = r.chrome; mcpAllow.value = [...r.reviewMcpAllow]
-    savedAt.value = new Date().toLocaleTimeString()
+    savedAt.value = new Date().toLocaleTimeString(locale.value, { hour12: false })
     if (data.value) data.value = { ...data.value, agent: r }
     await refresh() // the per-run-kind cards depend on the switches (probe stays cached)
   } catch (e: any) {
@@ -53,6 +53,8 @@ function toggleMcp(name: string, on: boolean) {
 }
 
 const kb = (n: number) => n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`
+// Explicit locale + hour12 so the server and the browser format identically (hydration).
+const at = (iso: string) => new Date(iso).toLocaleString(locale.value, { hour12: false })
 const SCOPES = ['user', 'project', 'local', 'managed'] as const
 const filesByScope = computed(() => SCOPES.map((scope) => ({ scope, files: (data.value?.files ?? []).filter((f: ConfigFile) => f.scope === scope) })).filter((g) => g.files.length))
 const settingSections = computed(() => {
@@ -183,7 +185,7 @@ const card = 'border border-default p-3'
     <!-- 4. what Claude Code reports once started -->
     <section v-if="data" :class="box">
       <div :class="head">
-        <h2 :class="h2">{{ t('agentConfig.groups.claude') }} <span class="text-xs text-dimmed">· <template v-if="data.probe">{{ t('agentConfig.probeTime', { at: new Date(data.probe.at).toLocaleTimeString(), ms: data.probe.ms }) }}</template><template v-else>{{ t('agentConfig.noProbe') }}</template></span></h2>
+        <h2 :class="h2">{{ t('agentConfig.groups.claude') }} <span class="text-xs text-dimmed">· <template v-if="data.probe">{{ t('agentConfig.probeTime', { at: at(data.probe.at), ms: data.probe.ms }) }}</template><template v-else>{{ t('agentConfig.noProbe') }}</template></span></h2>
         <p :class="hint">{{ t('agentConfig.groups.claudeHint') }}</p>
       </div>
       <div class="p-4 space-y-4">
@@ -243,7 +245,7 @@ const card = 'border border-default p-3'
           <div :class="card">
             <div :class="h3">{{ t('agentConfig.codexRateLimits') }}<span v-if="data.codex.rateLimits?.plan"> · {{ data.codex.rateLimits.plan }}</span></div><p :class="sub">{{ t('agentConfig.codexRateHint') }}</p>
             <template v-if="data.codex.rateLimits">
-              <div v-for="(w, k) in { primary: data.codex.rateLimits.primary, secondary: data.codex.rateLimits.secondary }" :key="k" class="font-mono"><template v-if="w">{{ k }} · {{ w.usedPercent }}% of {{ Math.round(w.windowMinutes / 60) }}h<span v-if="w.resetsAt" class="text-dimmed"> · resets {{ new Date(w.resetsAt).toLocaleString() }}</span></template></div>
+              <div v-for="(w, k) in { primary: data.codex.rateLimits.primary, secondary: data.codex.rateLimits.secondary }" :key="k" class="font-mono"><template v-if="w">{{ k }} · {{ w.usedPercent }}% of {{ Math.round(w.windowMinutes / 60) }}h<span v-if="w.resetsAt" class="text-dimmed"> · resets {{ at(w.resetsAt) }}</span></template></div>
             </template>
             <div v-else>{{ t('agentConfig.none') }}</div>
           </div>

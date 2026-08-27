@@ -10,12 +10,13 @@ const ALL = 'all' // select sentinel: an empty-string item value is not allowed 
 const projectSel = ref<string>(ALL)
 const projectId = computed(() => (projectSel.value === ALL ? '' : projectSel.value))
 const range = ref<string>('30')
-// A ref written by a watcher, NOT a computed: computed getters are re-run on every read during SSR, and a fresh
-// `new Date()` per read made the useFetch key differ between two consecutive reads (500 on server render).
+// Window start, rounded to local midnight and written by a watcher rather than a computed: the value is part of
+// the useFetch key, so it must be identical on the server and on the client (hydration) and between two reads of a
+// computed during SSR (computed getters are not cached there) — a millisecond timestamp was neither.
 const from = ref('')
 watch(range, (r) => {
   if (r === ALL) { from.value = ''; return }
-  const d = new Date(); d.setDate(d.getDate() - Number(r)); from.value = d.toISOString()
+  const d = new Date(); d.setDate(d.getDate() - Number(r)); d.setHours(0, 0, 0, 0); from.value = d.toISOString()
 }, { immediate: true })
 const projectItems = computed(() => [{ label: t('dashboard.allProjects'), value: ALL }, ...(projects.value ?? []).map((p) => ({ label: p.name, value: p.id }))])
 const rangeItems = computed(() => [{ label: t('dashboard.last7'), value: '7' }, { label: t('dashboard.last30'), value: '30' }, { label: t('dashboard.all'), value: ALL }])
