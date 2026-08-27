@@ -824,6 +824,24 @@
     "defaultSkill": "built-in default",
     "noData": "No runs recorded yet — run a review to see numbers here.",
     "pricingNote": "Codex cost is estimated from {n} priced models (rates as of {asOf}).",
-    "pricingMissing": "Codex runs are not priced: add data/codex-rates.json to estimate their cost."
+    "pricingMissing": "Codex runs are not priced: add data/codex-rates.json to estimate their cost.",
+    "refresh": "Refresh",
+    "noTriaged": "No triaged review yet — tick or post findings once and this fills in.",
+    "tilesHint": "Every run in the selected project and period.",
+    "group": {
+      "spend": "Where the money goes",
+      "quality": "Review quality"
+    },
+    "hint": {
+      "spend": "One row per run. Cost is what the SDK reported (Claude) or tokens × rate (Codex, marked ~); runs without a rate count as \"unpriced\" and are left out of the total.",
+      "bySubkind": "Run kind × provider. review / guided / recheck / skillgen are the review family; session is the persistent chat; helper is a one-shot helper call (commit message, title, translation).",
+      "byModel": "Review family only (review / guided / recheck). Average cost counts priced runs only; p50 / p95 = half / 95% of the runs finished within this duration.",
+      "byDay": "Grouped by the run's creation day, last 30 days.",
+      "quality": "Only reviews a human handled: ticked, posted, re-reviewed or rechecked after the author pushed. A draft nobody looked at says nothing about the skill and is left out.",
+      "precision": "Precision = human-accepted (ticked or posted) ÷ all findings; machine ticks (auto / engine) do not count as accepted. Cost per accepted = every run of those reviews ÷ accepted findings — what one useful finding costs.",
+      "recheck": "Retraction rate: findings withdrawn after your feedback and a re-review (lower is better). Fixed rate: findings judged fixed after the author pushed. Below, the count of each finding's latest recheck status.",
+      "automation": "Event counts from the automation engine: review dispatched / fix dispatched / skipped / cooling down / round limit reached, and so on.",
+      "recent": "One row per run, newest first. After the cost, ~ means estimated and +? means some turns were unpriced (the total is a lower bound); hover a row for its title or error text."
+    }
   }
 }

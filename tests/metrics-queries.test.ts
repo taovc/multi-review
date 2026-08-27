@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { nanoid } from 'nanoid'
 import { getDb, schema } from '../core/db/client'
-import { metricsOverview, percentile, precisionBySkillVersion, recheckFunnel, reviewRunsByModel } from '../core/metrics/queries'
+import { countRuns, metricsOverview, percentile, precisionBySkillVersion, recentRuns, recheckFunnel, reviewRunsByModel } from '../core/metrics/queries'
 import { createRun, recordRunUsage, finishRun } from '../core/runs/store'
 
 // Dashboard queries against a seeded in-memory DB. The key property: only HUMAN checks count as accepted.
@@ -82,9 +82,14 @@ assert.ok(Math.abs(rc.retractionRate! - 1) < 1e-9, 'retracted / guided-latest (o
 // Filters: a project id with no data → empty everything, no throw
 const empty = metricsOverview(d, { projectId: 'nope' })
 assert.equal(empty.runsBySubkind.length, 0)
-assert.equal(empty.recentRuns.length, 0)
+assert.equal(recentRuns(d, { projectId: 'nope' }).length, 0)
+assert.equal(countRuns(d, { projectId: 'nope' }), 0)
 const full = metricsOverview(d, {})
-assert.equal(full.recentRuns.length, 7)
+// The run list pages with limit/offset and reports the total separately
+assert.equal(recentRuns(d, {}).length, 7)
+assert.equal(countRuns(d, {}), 7)
+assert.equal(recentRuns(d, {}, { limit: 3, offset: 0 }).length, 3)
+assert.equal(recentRuns(d, {}, { limit: 3, offset: 6 }).length, 1)
 assert.equal(full.costByDay.length, 1)
 assert.ok(full.runsBySubkind.some((r: any) => r.subkind === 'review' && Number(r.runs) === 6 && Number(r.unpriced) === 2))
 assert.ok(full.runsBySubkind.some((r: any) => r.subkind === 'skillgen' && Number(r.runs) === 1))

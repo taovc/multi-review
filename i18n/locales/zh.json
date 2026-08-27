@@ -824,6 +824,24 @@
     "defaultSkill": "内置默认",
     "noData": "还没有运行记录——跑一次审核就会有数据。",
     "pricingNote": "Codex 成本按 {n} 个已定价模型估算（费率日期 {asOf}）。",
-    "pricingMissing": "Codex 运行未定价：添加 data/codex-rates.json 后可估算成本。"
+    "pricingMissing": "Codex 运行未定价：添加 data/codex-rates.json 后可估算成本。",
+    "refresh": "刷新",
+    "noTriaged": "还没有人处理过的审核——勾选或发布一次 findings 后这里才有数据。",
+    "tilesHint": "所选项目与时间段内的全部运行。",
+    "group": {
+      "spend": "花在哪",
+      "quality": "审核质量"
+    },
+    "hint": {
+      "spend": "每次运行落一行记录。成本取 SDK 报告值（Claude）或 token × 费率估算（Codex，带 ~）；没有费率的运行计为「未定价」，不算进总额。",
+      "bySubkind": "运行类型 × provider。review / guided / recheck / skillgen 是审核家族；session 是常驻对话；helper 是一次性辅助调用（commit message、标题、翻译）。",
+      "byModel": "只统计审核家族（review / guided / recheck）。平均成本只算有价格的运行；p50 / p95 = 一半 / 95% 的运行在这个时长内完成。",
+      "byDay": "按运行创建日期汇总，最近 30 天。",
+      "quality": "只看人处理过的审核：勾选、发布、复审和作者更新后的复查。没人看过的 draft 不能说明 skill 的好坏，不计入。",
+      "precision": "采纳率 = 人工采纳（勾选或已发布）÷ findings 总数；机器勾选（自动 / 引擎）不算采纳。每条采纳成本 = 这些审核的全部运行成本 ÷ 采纳数，是「一条有用 finding 值多少钱」。",
+      "recheck": "撤回率：你给了反馈、复审后被撤回的 findings 占比（越低越好）。修复率：作者 push 后被判定已修复的占比。下面是每条 finding 最新复查状态的计数。",
+      "automation": "自动化引擎的事件计数：派发审核 / 派发修复 / 跳过 / 冷却 / 达到回合上限等。",
+      "recent": "每次运行一行，按时间倒序。成本后的 ~ 表示估算值，+? 表示有未定价的轮次（总数偏低）；悬停一行看标题或错误原文。"
+    }
   }
 }

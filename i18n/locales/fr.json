@@ -824,6 +824,24 @@
     "defaultSkill": "défaut intégré",
     "noData": "Aucune exécution enregistrée — lancez une revue pour voir des chiffres.",
     "pricingNote": "Coût Codex estimé à partir de {n} modèles tarifés (tarifs au {asOf}).",
-    "pricingMissing": "Exécutions Codex non tarifées : ajoutez data/codex-rates.json pour estimer leur coût."
+    "pricingMissing": "Exécutions Codex non tarifées : ajoutez data/codex-rates.json pour estimer leur coût.",
+    "refresh": "Actualiser",
+    "noTriaged": "Aucune revue traitée pour l'instant — cochez ou publiez des findings une fois et cette table se remplit.",
+    "tilesHint": "Toutes les exécutions du projet et de la période sélectionnés.",
+    "group": {
+      "spend": "Où va l'argent",
+      "quality": "Qualité des revues"
+    },
+    "hint": {
+      "spend": "Une ligne par exécution. Le coût est celui rapporté par le SDK (Claude) ou tokens × tarif (Codex, marqué ~) ; les exécutions sans tarif comptent comme « non tarifées » et sortent du total.",
+      "bySubkind": "Type d'exécution × provider. review / guided / recheck / skillgen forment la famille revue ; session est la conversation persistante ; helper est un appel auxiliaire unique (message de commit, titre, traduction).",
+      "byModel": "Famille revue uniquement (review / guided / recheck). Le coût moyen ne compte que les exécutions tarifées ; p50 / p95 = la moitié / 95 % des exécutions ont fini dans cette durée.",
+      "byDay": "Regroupé par jour de création de l'exécution, 30 derniers jours.",
+      "quality": "Seules les revues traitées par un humain : cochées, publiées, re-revues ou re-vérifiées après un push de l'auteur. Un brouillon que personne n'a regardé ne dit rien sur le skill et est exclu.",
+      "precision": "Précision = acceptés par un humain (cochés ou publiés) ÷ tous les findings ; les coches machine (auto / moteur) ne comptent pas. Coût par accepté = toutes les exécutions de ces revues ÷ findings acceptés — ce que coûte un finding utile.",
+      "recheck": "Taux de retrait : findings retirés après votre retour et une re-revue (plus bas = mieux). Taux de correction : findings jugés corrigés après le push de l'auteur. Dessous, le décompte du dernier statut de re-vérification de chaque finding.",
+      "automation": "Décomptes d'événements du moteur d'automatisation : revue lancée / correction lancée / ignoré / refroidissement / limite de tours atteinte, etc.",
+      "recent": "Une ligne par exécution, la plus récente en premier. Après le coût, ~ signifie estimé et +? que certains tours ne sont pas tarifés (le total est un minimum) ; survolez une ligne pour son titre ou le texte de l'erreur."
+    }
   }
 }

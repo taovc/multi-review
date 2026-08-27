@@ -150,7 +150,10 @@ export function costByDay(db: any, f: MetricsFilter = {}, days = 30) {
     GROUP BY day ORDER BY day DESC LIMIT ?`, [...w.args, days])
 }
 
-export function recentRuns(db: any, f: MetricsFilter = {}, limit = 30) {
+// One page of runs, newest first (limit/offset); countRuns gives the total for the pager.
+export function recentRuns(db: any, f: MetricsFilter = {}, page: { limit?: number; offset?: number } = {}) {
+  const limit = page.limit ?? 30
+  const offset = page.offset ?? 0
   const w = where(f, { project: 'r.project_id', ts: 'r.created_at' })
   return all(db, `
     SELECT r.id, r.kind, r.subkind, r.provider, r.model, r.effort, r.status, r.cost_usd, r.cost_source, r.unpriced_turns,
@@ -160,7 +163,12 @@ export function recentRuns(db: any, f: MetricsFilter = {}, limit = 30) {
     LEFT JOIN projects p ON p.id = r.project_id
     LEFT JOIN skill_versions sv ON sv.id = r.skill_version_id
     ${w.clause}
-    ORDER BY r.created_at DESC LIMIT ?`, [...w.args, limit])
+    ORDER BY r.created_at DESC LIMIT ? OFFSET ?`, [...w.args, limit, offset])
+}
+
+export function countRuns(db: any, f: MetricsFilter = {}): number {
+  const w = where(f, { project: 'project_id', ts: 'created_at' })
+  return Number(all<{ n: number }>(db, `SELECT COUNT(*) AS n FROM runs ${w.clause}`, w.args)[0]?.n ?? 0)
 }
 
 export function metricsOverview(db: any, f: MetricsFilter = {}) {
@@ -173,7 +181,6 @@ export function metricsOverview(db: any, f: MetricsFilter = {}) {
     recheck: recheckFunnel(db, f),
     automation: automationFunnel(db, f),
     costByDay: costByDay(db, f),
-    recentRuns: recentRuns(db, f),
     pricing: { codexRatesAsOf: rates.asOf, codexModelsPriced: Object.keys(rates.rates).length },
   }
 }
