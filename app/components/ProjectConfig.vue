@@ -4,11 +4,11 @@ const props = defineProps<{ project: Project }>()
 const emit = defineEmits<{ changed: []; deleted: [] }>()
 const { t } = useI18n()
 
-type ModelCap = { value: string; displayName: string; description: string; supportsEffort: boolean; effortLevels: string[] }
+type ModelCap = { value: string; displayName: string; description: string; supportsEffort: boolean; effortLevels: string[]; supportsFast?: boolean }
 type Provider = 'claude' | 'codex'
 type ProviderStageId = 'review' | 'fix_chat' | 'recheck' | 'skill_generation' | 'publish_reply'
 type ProviderCapabilityStage = { id: ProviderStageId; claude: boolean; codex: boolean; providerControlled: boolean }
-type CodexSdkStatus = { installed: boolean; authStatus: 'authenticated' | 'missing' | 'unknown'; detail: string; sdkVersion?: string; cliVersion?: string }
+type CodexSdkStatus = { installed: boolean; authStatus: 'authenticated' | 'missing' | 'unknown'; detail: string; sdkVersion?: string; cliVersion?: string; authMethod?: string; binSource?: string; binPath?: string }
 type AgentCapabilities = {
   models: ModelCap[]
   providers?: { stages: ProviderCapabilityStage[] }
@@ -59,6 +59,12 @@ const codexModelOptions = computed<ModelCap[]>(() => [
   ...(caps.value?.codexModels ?? []),
 ])
 const activeModelOptions = computed<ModelCap[]>(() => form.provider === 'codex' ? codexModelOptions.value : modelOptions.value)
+// The Fast switch is a no-op for a model without a speed tier: say so next to it (only when a concrete model is picked).
+const fastUnsupportedModel = computed(() => {
+  if (form.provider !== 'codex' || !form.codexFast || !form.model) return null
+  const m = (caps.value?.codexModels ?? []).find((x) => x.value === form.model)
+  return m && m.supportsFast === false ? (m.displayName || m.value) : null
+})
 const defaultCodexEfforts = computed(() => {
   const efforts = new Set((caps.value?.codexModels ?? []).flatMap((model) => model.effortLevels))
   return efforts.size ? [...efforts] : CODEX_EFFORTS
@@ -431,11 +437,14 @@ function codexAuthClass(status: CodexSdkStatus | null) {
                 <div class="min-w-0">
                   <div class="text-xs text-highlighted">{{ $t('config.codexFastLabel') }}</div>
                   <p class="mt-1 text-[11px] leading-relaxed text-dimmed">{{ $t('config.codexFastHint') }}</p>
+                  <p v-if="fastUnsupportedModel" class="mt-1 text-[11px] leading-relaxed text-highlighted">{{ $t('config.codexFastUnsupported', { model: fastUnsupportedModel }) }}</p>
                 </div>
                 <USwitch v-model="form.codexFast" />
               </div>
             </div>
-            <p class="mt-3 text-[11px] leading-relaxed text-dimmed">{{ codexStatus?.detail || $t('config.codexStatusUnknown') }}</p>
+            <p v-if="codexStatus?.detail" class="mt-3 text-[11px] leading-relaxed text-dimmed">{{ codexStatus.detail }}</p>
+            <p v-else-if="codexStatus?.installed" class="mt-3 text-[11px] leading-relaxed text-dimmed font-mono" :title="codexStatus.binPath || ''">{{ $t('config.codexStatusLine', { auth: codexStatus.authMethod || '—', source: codexStatus.binSource || '?' }) }}</p>
+            <p v-else class="mt-3 text-[11px] leading-relaxed text-dimmed">{{ $t('config.codexStatusUnknown') }}</p>
           </template>
           <!-- Claude -->
           <template v-else>

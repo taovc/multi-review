@@ -9,6 +9,7 @@ export type CodexModel = {
   description: string
   supportsEffort: boolean
   effortLevels: string[]
+  supportsFast: boolean // the model lists a speed tier (`serviceTiers` / `additionalSpeedTiers`); the project's Fast switch is a no-op otherwise
 }
 
 let _cache: { value: CodexModel[]; at: number } | null = null
@@ -40,7 +41,8 @@ export function modelsFromAppServer(data: unknown): CodexModel[] {
       const effortLevels = Array.isArray(m.supportedReasoningEfforts)
         ? (m.supportedReasoningEfforts as Array<any>).map((e) => (typeof e === 'string' ? e : e?.reasoningEffort)).filter((e): e is string => typeof e === 'string')
         : []
-      return { value: String(m.model ?? m.id), displayName: m.displayName || String(m.model ?? m.id), description: m.description || '', supportsEffort: effortLevels.length > 0, effortLevels }
+      const supportsFast = (Array.isArray(m.serviceTiers) && m.serviceTiers.length > 0) || (Array.isArray(m.additionalSpeedTiers) && m.additionalSpeedTiers.includes('fast'))
+      return { value: String(m.model ?? m.id), displayName: m.displayName || String(m.model ?? m.id), description: m.description || '', supportsEffort: effortLevels.length > 0, effortLevels, supportsFast }
     })
 }
 
@@ -70,6 +72,7 @@ export function parseCodexModels(raw: string): CodexModel[] {
         description: m.description || '',
         supportsEffort: effortLevels.length > 0,
         effortLevels,
+        supportsFast: false, // the legacy CLI listing carries no tier information
       }
     })
 }

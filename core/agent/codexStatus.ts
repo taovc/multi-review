@@ -6,7 +6,10 @@ export type CodexAuthStatus = 'authenticated' | 'missing' | 'unknown'
 export type CodexSdkStatus = {
   installed: boolean
   authStatus: CodexAuthStatus
-  detail: string
+  detail: string // human-readable only when something is wrong (not installed / not logged in / probe failed)
+  authMethod?: string // e.g. chatgpt / apiKey
+  binSource?: string // vendored / packaged / env / path
+  binPath?: string
   sdkVersion?: string // kept for the UI: now the app-server protocol version (same binary as cliVersion)
   cliVersion?: string
 }
@@ -40,8 +43,9 @@ async function resolveCodexSdkStatus(): Promise<CodexSdkStatus> {
     const method = auth?.authMethod as string | null | undefined
     const source = codexExecutableSource()
     const where = `binary: ${source ?? '?'} (${executablePath})`
-    if (method) return { installed: true, authStatus: 'authenticated', cliVersion, sdkVersion: cliVersion, detail: `Codex login: ${method}. ${where}` }
-    return { installed: true, authStatus: 'missing', cliVersion, sdkVersion: cliVersion, detail: `Codex is not logged in (run \`codex login\`). ${where}` }
+    const bin = { authMethod: method || undefined, binSource: source ?? undefined, binPath: executablePath }
+    if (method) return { installed: true, authStatus: 'authenticated', cliVersion, sdkVersion: cliVersion, detail: '', ...bin }
+    return { installed: true, authStatus: 'missing', cliVersion, sdkVersion: cliVersion, detail: `Codex is not logged in (run \`codex login\`). ${where}`, ...bin }
   } catch (error) {
     return { installed: true, authStatus: 'unknown', detail: error instanceof Error ? error.message : String(error) }
   }
