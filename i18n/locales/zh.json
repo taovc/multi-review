@@ -18,8 +18,8 @@
   "layout": {
     "metaDescription": "本地批量 PR 审核管理",
     "projectsTitle": "项目",
-    "notifyHint": "agent 等你时弹桌面通知",
-    "notifyOn": "通知已开",
+    "notifyHint": "开启桌面通知：有 agent 等你回答时弹出",
+    "notifyOn": "桌面通知已开：有 agent 等你回答时弹出（点击关闭）",
     "notifyOff": "通知已关",
     "createProject": "创建项目",
     "create": "创建",

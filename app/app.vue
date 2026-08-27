@@ -101,15 +101,19 @@ async function createProject() {
         <aside class="w-full md:w-60 shrink-0 border-b md:border-b-0 md:border-r border-default flex flex-col md:min-h-0 max-h-44 md:max-h-none">
           <div class="px-4 md:px-6 pt-4 md:pt-5 pb-3 flex items-center justify-between">
             <span class="text-xs font-medium uppercase tracking-[0.15em] text-muted">{{ $t('layout.projectsTitle') }}</span>
-            <button
-              v-if="notifications.supported"
-              class="mr-2 transition-colors text-sm leading-none"
-              :class="notifications.enabled.value ? 'text-highlighted' : 'text-dimmed hover:text-highlighted'"
-              :title="notifications.enabled.value ? $t('layout.notifyOn') : $t('layout.notifyHint')"
-              @click="notifications.toggle()"
-            >
-              {{ notifications.enabled.value ? '🔔' : '🔕' }}
-            </button>
+            <!-- Desktop-notification toggle (client only: Notification support is unknown on the server) -->
+            <ClientOnly>
+              <button
+                v-if="notifications.supported"
+                class="mr-2 transition-colors flex items-center justify-center size-6"
+                :class="notifications.enabled.value ? 'text-highlighted' : 'text-dimmed hover:text-highlighted'"
+                :title="notifications.enabled.value ? $t('layout.notifyOn') : $t('layout.notifyHint')"
+                :aria-label="notifications.enabled.value ? $t('layout.notifyOn') : $t('layout.notifyHint')"
+                @click="notifications.toggle()"
+              >
+                <UIcon :name="notifications.enabled.value ? 'i-lucide-bell' : 'i-lucide-bell-off'" class="size-4" />
+              </button>
+            </ClientOnly>
             <button
               class="text-dimmed hover:text-highlighted transition-colors text-lg leading-none"
               :title="$t('layout.createProject')"

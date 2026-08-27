@@ -18,8 +18,8 @@
   "layout": {
     "metaDescription": "Gestion locale des revues de PR en masse",
     "projectsTitle": "Projets",
-    "notifyHint": "Notifications de bureau quand un agent vous attend",
-    "notifyOn": "Notifications activées",
+    "notifyHint": "Activer les notifications de bureau : affichées quand un agent vous attend",
+    "notifyOn": "Notifications de bureau activées : affichées quand un agent vous attend (cliquer pour désactiver)",
     "notifyOff": "Notifications désactivées",
     "createProject": "Créer un projet",
     "create": "Créer",

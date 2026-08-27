@@ -18,8 +18,8 @@
   "layout": {
     "metaDescription": "Local batch PR review management",
     "projectsTitle": "Projects",
-    "notifyHint": "Desktop notifications when an agent waits on you",
-    "notifyOn": "Notifications on",
+    "notifyHint": "Turn on desktop notifications: shown when an agent is waiting on you",
+    "notifyOn": "Desktop notifications on: shown when an agent is waiting on you (click to turn off)",
     "notifyOff": "Notifications off",
     "createProject": "Create project",
     "create": "Create",
