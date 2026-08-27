@@ -14,7 +14,7 @@ const report = await probeAgent(cwd, true, true)
 const names = (xs: Array<{ name: string }>) => xs.map((x) => x.name)
 
 console.log(`probe ${report.at} in ${report.ms} ms (${Date.now() - t0} ms wall)`)
-console.log('commands:', report.commands.length, '· agents:', report.agents.length, '· chrome:', report.chromeTransport, '· mcp:', names(report.mcp).join(', '))
+console.log('commands:', report.commands.length, '· chrome:', report.chromeTransport, '· mcp:', names(report.mcp).join(', '))
 if (report.error) console.log('error:', report.error)
 
 assert.ok(report.commands.length > 20, 'the CLI should report its built-in and user commands')
