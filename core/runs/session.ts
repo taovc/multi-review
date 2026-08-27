@@ -281,7 +281,7 @@ export async function runSessionTurn(ctx: SessionTurnCtx, opts: { userTurnId?: s
       runId, kind: 'session', cwd, model, effort, resume: resumeId, ...(run.forkedFrom && resumeId ? { fork: true } : {}), // a fork carries the source's native id until its own session exists
       permissionMode: ctx.permissionMode ?? (run.permissionMode as PermissionMode | null) ?? defaultMode, allowDanger: ctx.allowDanger,
       systemAppend: systemPromptFor(run, ctx, { conflict: run.workspaceType === 'pr_worktree' ? await conflictHint(cwd) : undefined }),
-      chrome: run.workspaceType === 'cwd' ? ctx.chrome : undefined, codexServiceTier, ultracode: ctx.ultracode, guardScope,
+      chrome: ctx.chrome, codexServiceTier, ultracode: ctx.ultracode, guardScope,
       projectDirName: run.workspaceType !== 'cwd' ? projectDirNameFor(ctx.project?.localPath) : undefined, // one memory dir per project, not per worktree
       db, schema,
     })

@@ -52,7 +52,7 @@ export type RunSpec = {
   ultracode?: boolean // raise the reasoning effort + prepend the deep-work instructions
   guardScope?: 'fix' | 'feature' | 'global' // post-execution git/GitHub mutation guard for unattended (bypass) turns
   allowNetwork?: boolean // review kind: let gh read PR metadata (writes are still declined before they run)
-  mcpAllow?: string[] // review/helper kinds: MCP servers that may be called (empty = none connected)
+  mcp?: boolean // review/helper kinds: may the run connect and call the user's MCP servers (false = none connected)
   outputSchema?: unknown // review kind: JSON Schema constraining the final message
   db?: any
   schema?: any

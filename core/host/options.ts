@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { CanUseTool, HookCallback, Options } from '@anthropic-ai/claude-agent-sdk'
 import { resolveClaudeExecutable } from '../agent/claude-bin'
 import type { RunSpec } from './types'
@@ -52,7 +54,8 @@ export type ReviewOptionsSpec = {
   effort?: string
   methodology: string // already wrapped by withContract()
   maxTurns: number
-  mcpAllow?: string[]
+  mcp?: boolean // let the review connect and call the user's MCP servers (agent-config switch; off = none connected)
+  chrome?: boolean // with mcp: also start Claude in Chrome (--chrome), like sessions do
   projectDirName?: string
   abort?: AbortController
   outputSchema?: Record<string, unknown> // JSON Schema the CLI validates the final message against (structured_output on the result)
@@ -64,20 +67,25 @@ export function buildReviewOptions(spec: ReviewOptionsSpec): Options {
   const bin = resolveClaudeExecutable()
   const env: Record<string, string | undefined> = { ...process.env }
   if (spec.projectDirName) env.CLAUDE_CODE_PROJECT_DIR_NAME = spec.projectDirName
-  const mcpAllow = spec.mcpAllow ?? []
+  const mcp = !!spec.mcp
+  // The review cwd is the PR branch worktree — attacker-controlled content. With MCP on the CLI would auto-approve and SPAWN
+  // servers from the branch's own .mcp.json before any tool call (verified against the bundled CLI), which none of the three
+  // read-only layers can see. A rejection beats every approval, so list them as disabled.
+  const projectMcp = mcp ? projectMcpServerNames(spec.cwd) : []
   return {
     cwd: spec.cwd,
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.effort ? { effort: spec.effort as Options['effort'] } : {}),
     systemPrompt: { type: 'preset', preset: 'claude_code', append: spec.methodology },
     permissionMode: 'default',
-    canUseTool: makeReviewCanUseTool(mcpAllow),
-    hooks: { PreToolUse: [{ hooks: [makeReviewGuardHook(mcpAllow)] }] },
+    canUseTool: makeReviewCanUseTool(mcp),
+    hooks: { PreToolUse: [{ hooks: [makeReviewGuardHook(mcp)] }] },
     disallowedTools: REVIEW_DISALLOWED_TOOLS,
-    settings: { permissions: { deny: REVIEW_DENY_RULES }, disableAllHooks: true },
-    // No allowed server → do not even connect the configured ones (faster start, nothing to leak to); with an allow
-    // list the servers connect and the verdict gates them per call.
-    ...(mcpAllow.length ? {} : { mcpServers: {}, strictMcpConfig: true }),
+    settings: { permissions: { deny: REVIEW_DENY_RULES }, disableAllHooks: true, ...(projectMcp.length ? { disabledMcpjsonServers: projectMcp } : {}) },
+    // MCP off → do not even connect the configured servers (faster start, nothing to leak to); on → the CLI connects
+    // them like a session does, optionally with Claude in Chrome.
+    ...(mcp ? {} : { mcpServers: {}, strictMcpConfig: true }),
+    ...(mcp && spec.chrome ? { extraArgs: { chrome: null } } : {}),
     maxTurns: spec.maxTurns,
     ...(REVIEW_MAX_BUDGET_USD > 0 ? { maxBudgetUsd: REVIEW_MAX_BUDGET_USD } : {}),
     ...(spec.outputSchema ? { outputFormat: { type: 'json_schema', schema: spec.outputSchema } } : {}),
@@ -85,6 +93,12 @@ export function buildReviewOptions(spec: ReviewOptionsSpec): Options {
     ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
     ...(spec.abort ? { abortController: spec.abort } : {}),
   }
+}
+
+export function projectMcpServerNames(cwd: string): string[] {
+  const file = join(cwd, '.mcp.json')
+  if (!existsSync(file)) return []
+  try { const v = JSON.parse(readFileSync(file, 'utf8')); const servers = v?.mcpServers ?? v; return servers && typeof servers === 'object' ? Object.keys(servers) : [] } catch { return ['*'] } // unreadable → refuse anything it could declare
 }
 
 // One-shot text helpers (commit message, title, comment rewrite, JSON repair): no user configuration, no tools, one turn,

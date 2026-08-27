@@ -24,6 +24,6 @@ const chrome = report.mcp.find((s) => s.name === 'claude-in-chrome')
 assert.ok(chrome, 'claude-in-chrome should be listed when the probe passes --chrome')
 assert.ok(['connected', 'needs-auth', 'pending', 'failed'].includes(chrome!.status), `claude-in-chrome status ${chrome!.status}`)
 for (const s of report.mcp.filter((x) => x.name.startsWith('claude.ai'))) assert.ok(['connected', 'needs-auth', 'pending', 'failed'].includes(s.status), `${s.name}: ${s.status}`)
-const memory = report.context.filter((c) => /memory|claude\.md/i.test(c.name))
+const memory = report.context?.memoryFiles ?? []
 if (existsSync(join(os.homedir(), '.claude', 'CLAUDE.md'))) assert.ok(memory.length > 0, 'the startup context should include memory files when ~/.claude/CLAUDE.md exists')
 console.log('probe ok')

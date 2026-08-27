@@ -105,7 +105,7 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
   const prompt = buildRecheckPrompt(opts)
   const stream = query({
     prompt,
-    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 40, mcpAllow: opts.mcpAllow, projectDirName: opts.projectDirName, abort: opts.abort, outputSchema: RECHECK_JSON_SCHEMA }),
+    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 40, mcp: opts.mcp, chrome: opts.chrome, projectDirName: opts.projectDirName, abort: opts.abort, outputSchema: RECHECK_JSON_SCHEMA }),
   })
   let text = ''
   let costUsd = 0

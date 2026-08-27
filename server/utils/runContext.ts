@@ -27,7 +27,7 @@ export function buildSessionTurnCtx(event: any, run: any, o: { message: string; 
     assetsDir: resolve(process.cwd(), dirname(cfg.dbPath as string), 'issue-assets'),
     lang: resolveLang(o.lang ?? run.lang ?? getCookie(event, 'mr-locale')),
     permissionMode: o.permissionMode, allowDanger: !!o.allowDanger, ultracode: !!o.ultracode,
-    chrome: run.workspaceType === 'cwd' ? getAgentSettings(d, schema).chrome : undefined,
+    chrome: getAgentSettings(d, schema).chrome, // every Claude session may start Claude in Chrome (the Codex host ignores it)
   }
 }
 

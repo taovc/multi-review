@@ -8,7 +8,8 @@ import { isDangerousBash } from '../agent/guard'
 //      inside the review worktree) — REVIEW_DENY_RULES
 //   3. disallowedTools + canUseTool + permissionMode 'default' — REVIEW_DISALLOWED_TOOLS / reviewCanUseTool
 // Unlike the old ISOLATED mode the user's configuration (CLAUDE.md, rules, skills, MCP, plugins) is loaded; MCP tools are
-// denied unless their server is on the read-only allow list from the agent-config screen.
+// denied unless the agent-config screen's "reviews may use MCP" switch is on (then every configured server is callable —
+// an opt-in the owner made knowingly: MCP tools can write to external systems and reviews run unattended).
 
 export const READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'Skill', 'TodoWrite', 'Task', 'TaskOutput', 'TaskStop', 'StructuredOutput']) // StructuredOutput = how the CLI delivers outputFormat json_schema results
 
@@ -31,7 +32,7 @@ function mcpServerOf(toolName: string): string | null {
 }
 
 // The single decision function behind layers 1 and 3.
-export function reviewVerdict(toolName: string, input: unknown, mcpAllow: string[]): Verdict {
+export function reviewVerdict(toolName: string, input: unknown, mcp: boolean): Verdict {
   if (READONLY_TOOLS.has(toolName)) return { ok: true }
   if (toolName === 'Bash') {
     const cmd = String((input as any)?.command ?? '')
@@ -39,32 +40,30 @@ export function reviewVerdict(toolName: string, input: unknown, mcpAllow: string
     return { ok: true }
   }
   if (toolName.startsWith('mcp__')) {
-    const server = mcpServerOf(toolName)
-    if (server && mcpAllow.includes(server)) return { ok: true }
-    return { ok: false, reason: `read-only review: MCP server "${server ?? toolName}" is not on the read-only allow list` }
+    if (mcp) return { ok: true }
+    return { ok: false, reason: `read-only review: MCP is off for reviews (tool ${toolName}, server ${mcpServerOf(toolName) ?? '?'})` }
   }
   if (toolName === 'ListMcpResourcesTool' || toolName === 'ReadMcpResourceTool') {
-    const server = String((input as any)?.server ?? '')
-    if (server && mcpAllow.includes(server)) return { ok: true }
-    return { ok: false, reason: `read-only review: MCP server "${server}" is not on the read-only allow list` }
+    if (mcp) return { ok: true }
+    return { ok: false, reason: `read-only review: MCP is off for reviews (server ${String((input as any)?.server ?? '?')})` }
   }
   return { ok: false, reason: `read-only review: tool ${toolName} is not allowed` }
 }
 
-export function makeReviewCanUseTool(mcpAllow: string[]): CanUseTool {
+export function makeReviewCanUseTool(mcp: boolean): CanUseTool {
   return async (toolName, input) => {
-    const v = reviewVerdict(toolName, input, mcpAllow)
+    const v = reviewVerdict(toolName, input, mcp)
     if (v.ok) return { behavior: 'allow', updatedInput: input }
     return { behavior: 'deny', message: `Denied by PR Cockpit security policy — ${v.reason}`, interrupt: false }
   }
 }
 
 // Layer 1: a hook decision beats every permission rule; anything not denied here still goes through layers 2 and 3.
-export function makeReviewGuardHook(mcpAllow: string[]): HookCallback {
+export function makeReviewGuardHook(mcp: boolean): HookCallback {
   return async (input) => {
     if ((input as any)?.hook_event_name !== 'PreToolUse') return {}
     const toolName = String((input as any).tool_name ?? '')
-    const v = reviewVerdict(toolName, (input as any).tool_input, mcpAllow)
+    const v = reviewVerdict(toolName, (input as any).tool_input, mcp)
     if (v.ok) return {}
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `PR Cockpit read-only guard — ${v.reason}` } }
   }

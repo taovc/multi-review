@@ -95,7 +95,7 @@ export default defineEventHandler(async (event) => {
     emit('stage', t.stage(rc.provider, rc.model || t.defaultModel, rc.effort ? ' · ' + rc.effort : ''))
     const res = await runGenerate({
       cwd: project.localPath,
-      mcpAllow: getAgentSettings(d, schema).reviewMcpAllow, projectDirName: projectDirNameFor(project.localPath),
+      mcp: getAgentSettings(d, schema).reviewMcp, chrome: getAgentSettings(d, schema).chrome, projectDirName: projectDirNameFor(project.localPath),
       model: rc.model,
       effort: rc.effort,
       codexServiceTier: rc.codexServiceTier,
