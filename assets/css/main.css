@@ -1,11 +1,25 @@
 @import 'tailwindcss';
 @import '@nuxt/ui';
 
-/* Monochrome: Nuxt UI maps --ui-primary to the 500 (light) / 400 (dark) shade, which with the neutral palette is a
-   mid grey on switches, checkboxes and active pager pages. Pure black on light, pure white on dark. */
+/* Monochrome, pure black & white. The neutral palette has no tint, but Nuxt UI's defaults stop short of the extremes
+   (light: body text neutral-700, headings neutral-900, primary neutral-500; dark: background neutral-900). Push both
+   ends to #000 / #fff and shift the dark surfaces one step so they still stack on a black page; the grey lines stay. */
 :root {
   --ui-primary: #000;
+  --ui-text: var(--ui-color-neutral-900);
+  --ui-text-highlighted: #000;
+  --ui-bg-inverted: #000;
+  --ui-border-inverted: #000;
 }
 .dark {
   --ui-primary: #fff;
+  --ui-text: var(--ui-color-neutral-100);
+  --ui-text-highlighted: #fff;
+  --ui-text-inverted: #000;
+  --ui-bg: #000;
+  --ui-bg-inverted: #fff; /* the :root values above outrank Nuxt UI's own .dark defaults, so restate them */
+  --ui-border-inverted: #fff;
+  --ui-bg-muted: var(--ui-color-neutral-950);
+  --ui-bg-elevated: var(--ui-color-neutral-900);
+  --ui-bg-accented: var(--ui-color-neutral-800);
 }
