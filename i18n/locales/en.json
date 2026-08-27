@@ -726,9 +726,9 @@
       "denyRules": "Extra deny rules",
       "switches": "Switches",
       "chrome": "Claude in Chrome in sessions (--chrome)",
-      "chromeHint": "Takes effect on the next session turn; requires the Chrome extension.",
-      "mcpAllow": "MCP servers reviews may call (read-only)",
-      "mcpAllowHint": "Everything else is denied inside the review family. Only list servers that cannot write.",
+      "chromeHint": "Passes --chrome to sessions so the Claude in Chrome MCP connects. Takes effect on the next session turn and needs the Chrome extension; reviews are not affected.",
+      "mcpAllow": "MCP servers reviews may call read-only",
+      "mcpAllowHint": "Reviews deny every MCP server by default; a ticked server may be called read-only, so only tick servers that cannot write. The list = servers the probe found + the ones already ticked. Independent of the session switch on the left — the same server (claude-in-chrome, say) showing up in both places is expected.",
       "saved": "Saved",
       "memoryDir": "Memory / transcript directory",
       "codex": "What Codex reports (app-server)",
@@ -737,7 +737,48 @@
       "codexConfig": "Effective config (with layer)",
       "codexSkills": "Skills",
       "codexRateLimits": "Rate limits",
-      "codexError": "Codex probe failed: {msg}"
+      "codexError": "Codex probe failed: {msg}",
+      "groups": {
+        "switches": "PR Cockpit's own switches",
+        "switchesHint": "Only these two live in PR Cockpit's database and are changed here; everything else on this page is read-only.",
+        "overrides": "How each run kind applies this configuration",
+        "overridesHint": "One CLI configuration, used three ways: sessions match the CLI exactly; reviews add read-only guards on top; helper calls load nothing.",
+        "sources": "What this directory loads",
+        "sourcesHint": "Resolved the way the CLI does: user (~/.claude) → project (.claude in the repo) → local (personal, in the repo) → managed (organisation policy), later layers override earlier ones; the source layer is in brackets.",
+        "claude": "What Claude Code reports once started",
+        "claudeHint": "Starts the CLI once with exactly the options a session uses (no turn is run) and reads what it loaded. Cached per directory for 5 minutes; \"re-probe\" forces a refresh.",
+        "codex": "What the Codex app-server reports",
+        "codexHint": "Starts the app-server and reads the binary, login, effective config (with its layer), MCP, models and skills; cached for 5 minutes as well."
+      },
+      "sessionSwitch": "Sessions (persistent chat)",
+      "reviewSwitch": "Reviews (read-only family)",
+      "kindDesc": {
+        "session": "Persistent chat: PR worktree / branch worktree / any directory.",
+        "review": "Review family: review / guided / recheck / skillgen, read-only.",
+        "helper": "One-shot helper calls: commit message, title, translation."
+      },
+      "scopeLabel": {
+        "user": "user · ~/.claude",
+        "project": "project · .claude in the repo",
+        "local": "local · personal, in the repo",
+        "managed": "managed · organisation policy"
+      },
+      "filesHint": "Whether it exists, its size and entry count; grey = missing.",
+      "settingsHint": "Merged permissions / hooks / plugins / env keys; the source layer is in brackets.",
+      "accountHint": "Login method and subscription.",
+      "mcpHint": "Connection state of each MCP server when the probe started.",
+      "contextHint": "Context taken at start-up by each category (system prompt, memory files, skills, MCP tool definitions…).",
+      "modelsHint": "Selectable models.",
+      "agentsHint": "Available sub-agent definitions (~/.claude/agents and in the repo).",
+      "commandsHint": "Everything the / palette can run, grouped by origin.",
+      "cmdOrigin": {
+        "custom": "My skills and commands",
+        "plugin": "Plugin commands",
+        "builtin": "Built-in commands"
+      },
+      "codexRateHint": "Subscription usage windows: primary is the short one, secondary the long one.",
+      "codexSkillsHint": "Skills Codex discovered; grey = disabled.",
+      "codexConfigHint": "Keys that affect runs; the layer that set each one is in brackets."
   },
   "session": {
     "palette": {

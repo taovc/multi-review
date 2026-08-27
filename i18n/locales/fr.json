@@ -726,9 +726,9 @@
       "denyRules": "Règles deny supplémentaires",
       "switches": "Interrupteurs",
       "chrome": "Claude in Chrome dans les sessions (--chrome)",
-      "chromeHint": "Actif au prochain tour ; nécessite l'extension Chrome.",
-      "mcpAllow": "Serveurs MCP autorisés en revue (lecture seule)",
-      "mcpAllowHint": "Tout le reste est refusé dans la famille revue. Ne listez que des serveurs qui n'écrivent pas.",
+      "chromeHint": "Passe --chrome aux sessions pour que le MCP Claude in Chrome se connecte. Actif au prochain tour de session, nécessite l'extension Chrome ; les revues ne sont pas concernées.",
+      "mcpAllow": "Serveurs MCP que les revues peuvent appeler en lecture seule",
+      "mcpAllowHint": "Les revues refusent tout serveur MCP par défaut ; un serveur coché peut être appelé en lecture seule, ne cochez donc que des serveurs qui n'écrivent pas. La liste = serveurs trouvés par le sondage + ceux déjà cochés. Indépendant du réglage session à gauche — voir le même serveur (claude-in-chrome, par exemple) aux deux endroits est normal.",
       "saved": "Enregistré",
       "memoryDir": "Répertoire mémoire / transcript",
       "codex": "Ce que rapporte Codex (app-server)",
@@ -737,7 +737,48 @@
       "codexConfig": "Config effective (avec couche)",
       "codexSkills": "Skills",
       "codexRateLimits": "Limites de débit",
-      "codexError": "Sondage Codex échoué : {msg}"
+      "codexError": "Sondage Codex échoué : {msg}",
+      "groups": {
+        "switches": "Les réglages propres à PR Cockpit",
+        "switchesHint": "Seuls ces deux réglages vivent dans la base de PR Cockpit et se modifient ici ; tout le reste de la page est en lecture seule.",
+        "overrides": "Comment chaque type d'exécution applique cette configuration",
+        "overridesHint": "Une seule configuration CLI, utilisée de trois façons : les sessions suivent exactement la CLI ; les revues ajoutent des garde-fous lecture seule ; les appels auxiliaires ne chargent rien.",
+        "sources": "Ce que ce répertoire charge",
+        "sourcesHint": "Résolu comme la CLI : user (~/.claude) → project (.claude du dépôt) → local (personnel, dans le dépôt) → managed (politique d'organisation), les couches suivantes écrasent les précédentes ; la couche source est entre parenthèses.",
+        "claude": "Ce que Claude Code rapporte une fois démarré",
+        "claudeHint": "Démarre la CLI une fois avec exactement les options d'une session (aucun tour n'est exécuté) et lit ce qu'elle a chargé. Mis en cache par répertoire 5 minutes ; « re-sonder » force le rafraîchissement.",
+        "codex": "Ce que l'app-server Codex rapporte",
+        "codexHint": "Démarre l'app-server et lit le binaire, la connexion, la config effective (avec sa couche), MCP, modèles et skills ; également mis en cache 5 minutes."
+      },
+      "sessionSwitch": "Sessions (conversation persistante)",
+      "reviewSwitch": "Revues (famille lecture seule)",
+      "kindDesc": {
+        "session": "Conversation persistante : worktree PR / worktree de branche / n'importe quel répertoire.",
+        "review": "Famille revue : review / guided / recheck / skillgen, lecture seule.",
+        "helper": "Appels auxiliaires uniques : message de commit, titre, traduction."
+      },
+      "scopeLabel": {
+        "user": "user · ~/.claude",
+        "project": "project · .claude du dépôt",
+        "local": "local · personnel, dans le dépôt",
+        "managed": "managed · politique d'organisation"
+      },
+      "filesHint": "Existence, taille et nombre d'entrées ; gris = absent.",
+      "settingsHint": "permissions / hooks / plugins / clés env fusionnés ; la couche source est entre parenthèses.",
+      "accountHint": "Méthode de connexion et abonnement.",
+      "mcpHint": "État de connexion de chaque serveur MCP au démarrage du sondage.",
+      "contextHint": "Contexte occupé au démarrage par chaque catégorie (system prompt, fichiers mémoire, skills, définitions d'outils MCP…).",
+      "modelsHint": "Modèles sélectionnables.",
+      "agentsHint": "Définitions de sous-agents disponibles (~/.claude/agents et dans le dépôt).",
+      "commandsHint": "Tout ce que la palette / peut lancer, groupé par origine.",
+      "cmdOrigin": {
+        "custom": "Mes skills et commandes",
+        "plugin": "Commandes de plugins",
+        "builtin": "Commandes intégrées"
+      },
+      "codexRateHint": "Fenêtres d'usage de l'abonnement : primary est la courte, secondary la longue.",
+      "codexSkillsHint": "Skills découverts par Codex ; gris = désactivé.",
+      "codexConfigHint": "Clés qui influencent les exécutions ; la couche qui les fixe est entre parenthèses."
   },
   "session": {
     "palette": {

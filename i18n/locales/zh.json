@@ -726,9 +726,9 @@
       "denyRules": "额外 deny 规则",
       "switches": "开关",
       "chrome": "会话里启用 Claude in Chrome（--chrome）",
-      "chromeHint": "下一轮会话生效；需要 Chrome 扩展。",
-      "mcpAllow": "审核可调用的 MCP 服务（只读）",
-      "mcpAllowHint": "审核家族里其余 MCP 全部拒绝；只列不会写入的服务。",
+      "chromeHint": "把 --chrome 传给会话，让 Claude in Chrome 的 MCP 连上。下一轮会话生效，需要 Chrome 扩展；审核不受影响。",
+      "mcpAllow": "允许审核只读调用的 MCP 服务",
+      "mcpAllowHint": "审核默认拒绝所有 MCP；勾选的服务允许审核只读调用，只勾不会写入的服务。列表 = 探针发现的服务 + 已勾选的。它和左边的会话开关互不影响——同一个服务（比如 claude-in-chrome）在两处出现是正常的。",
       "saved": "已保存",
       "memoryDir": "记忆 / transcript 目录",
       "codex": "Codex 实际报告（app-server）",
@@ -737,7 +737,48 @@
       "codexConfig": "生效配置（含来源层）",
       "codexSkills": "Skills",
       "codexRateLimits": "用量窗口",
-      "codexError": "Codex 探测失败：{msg}"
+      "codexError": "Codex 探测失败：{msg}",
+      "groups": {
+        "switches": "PR Cockpit 自己的开关",
+        "switchesHint": "只有这两项存在 PR Cockpit 的数据库里、由本页修改；页面其余部分都是只读展示。",
+        "overrides": "每类运行怎么用这份配置",
+        "overridesHint": "同一份 CLI 配置，三类运行各取所需：会话和 CLI 完全一致；审核在此之上加只读保障；辅助调用什么都不加载。",
+        "sources": "这个目录会加载什么",
+        "sourcesHint": "按 CLI 的规则解析：user（~/.claude）→ project（仓库内 .claude）→ local（仓库内个人）→ managed（组织策略），后者覆盖前者；括号里是每条的来源层。",
+        "claude": "Claude Code 启动后实际报告",
+        "claudeHint": "用与会话完全相同的选项启动一次 CLI（不跑任何回合），读它加载了什么。结果按目录缓存 5 分钟，「重新探测」强制刷新。",
+        "codex": "Codex app-server 实际报告",
+        "codexHint": "启动 app-server 读取二进制、登录方式、生效配置（含来源层）、MCP、模型与 skills；同样缓存 5 分钟。"
+      },
+      "sessionSwitch": "会话（常驻对话）",
+      "reviewSwitch": "审核（只读家族）",
+      "kindDesc": {
+        "session": "常驻对话：PR worktree / 分支 worktree / 任意目录。",
+        "review": "审核家族：review / guided / recheck / skillgen，只读。",
+        "helper": "一次性辅助调用：commit message、标题、翻译。"
+      },
+      "scopeLabel": {
+        "user": "user · ~/.claude",
+        "project": "project · 仓库内 .claude",
+        "local": "local · 仓库内个人",
+        "managed": "managed · 组织策略"
+      },
+      "filesHint": "存在与否、大小、条目数；灰色 = 不存在。",
+      "settingsHint": "合并后的 permissions / hooks / plugins / env 键；括号 = 来源层。",
+      "accountHint": "登录方式与订阅。",
+      "mcpHint": "探针启动时各 MCP 服务的连接状态。",
+      "contextHint": "启动时各类内容占用的上下文（system prompt、记忆文件、skills、MCP 工具定义…）。",
+      "modelsHint": "可选的模型。",
+      "agentsHint": "可用的子 agent 定义（~/.claude/agents 与仓库内）。",
+      "commandsHint": "/ 面板里能用的全部命令，按来源分组。",
+      "cmdOrigin": {
+        "custom": "我的 skills 与命令",
+        "plugin": "Plugin 命令",
+        "builtin": "内建命令"
+      },
+      "codexRateHint": "订阅用量窗口：primary 是短窗，secondary 是长窗。",
+      "codexSkillsHint": "Codex 发现的 skills；灰色 = 已禁用。",
+      "codexConfigHint": "对运行有影响的键；括号 = 设置它的配置层。"
   },
   "session": {
     "palette": {
