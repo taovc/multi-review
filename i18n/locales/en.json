@@ -498,6 +498,14 @@
     "thinking": "thinking",
     "untitled": "Untitled chat",
     "historyEmpty": "No past chats yet",
+    "ws": {
+      "cwd": "This directory",
+      "branch_worktree": "New branch"
+    },
+    "wsHint": {
+      "cwd": "Chat and edit right in the project clone (asks before each action by default); /cd switches directory.",
+      "branch_worktree": "Develop in an isolated worktree on a new branch cut from the default branch (full permissions); ask it to open a PR when happy."
+    },
     "deleteSession": "Delete chat",
     "confirmDelete": "Delete this chat? This cannot be undone.",
     "dangerNote": "⚠️ Full-access mode: can run any command and edit any file on this machine",
@@ -554,13 +562,8 @@
     }
   },
   "feature": {
-    "tab": "Feature dev",
-    "composerHint": "Describe a feature or paste an issue — the AI builds it directly in an isolated new-branch worktree (full permissions + ultracode, never touching your real repo), asks you only when it hits a real decision, and opens the PR itself when you ask.",
     "composerPlaceholder": "Describe the feature / paste an issue…",
-    "start": "Start building",
     "creating": "Creating…",
-    "empty": "No feature tasks yet",
-    "newTitle": "New feature",
     "newHint": "Describe what you want to build, or paste an issue link.\nA task is created only when you send the first message — close anytime before that.",
     "status": {
       "working": "Working",
@@ -568,7 +571,6 @@
       "opened": "PR opened",
       "error": "Error"
     },
-    "untitled": "Untitled task",
     "decisionTitle": "Decision — your call",
     "decisionOther": "Something else…",
     "openPr": "Open PR",
@@ -576,13 +578,7 @@
     "openPrMsg": "Please open a PR for this: commit with an English conventional-commit message, push the branch, and run gh pr create with an English title + body. Then reply with the PR URL.",
     "chatPlaceholder": "Keep chatting to build / ask for changes… (click Open PR when you’re happy)",
     "discard": "Delete task",
-    "discardConfirm": "Delete this task? (incl. worktree, irreversible)",
-    "col": {
-      "title": "Title",
-      "status": "Status",
-      "pr": "PR",
-      "updated": "Updated"
-    }
+    "discardConfirm": "Delete this task? (incl. worktree, irreversible)"
   },
   "remote": {
     "title": "Remote access",

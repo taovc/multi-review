@@ -77,8 +77,8 @@ No more reviewing PRs one at a time in the terminal, and no more scattering fixe
 - "Commit and upload" first shows the diff plus an editable conventional commit message; only confirmation runs `git add/commit/push`.
 - Supports stop/resume, expandable run logs, decision cards, an ultracode toggle that escalates the turn to higher reasoning effort, and an explicit dangerous-command toggle.
 
-**Feature development and global assistant**
-- The "Feature development" tab creates an isolated feature worktree from a requirement and lets the agent develop in a single native chat loop.
+**Project assistant: directory chat and feature development**
+- The project assistant (bottom-right button on a project page) starts a session either in the project directory or in an isolated feature worktree on a new branch ("New branch"), and lets the agent develop in a single native chat loop.
 - Real decision points are rendered as `ask-user` cards. Opening a PR is an explicit action that allows the agent to commit, push and run `gh pr create` for that turn; commit messages and PR title/body are always written in English.
 - The bottom-right global assistant inherits project provider/cwd when available and supports commands such as `/cd`, `/resume` and `/clear`, for ad-hoc troubleshooting and one-off operations.
 
@@ -192,7 +192,7 @@ pnpm install
 pnpm dev                  # defaults to http://localhost:3001
 ```
 
-Once inside, click the "＋" on the left to create a project (fill in `owner/repo` + the local clone path), configure provider/model/effort and generate a review skill. Then use "All PRs" for review/fix work or "Feature development" for new feature worktrees.
+Once inside, click the "＋" on the left to create a project (fill in `owner/repo` + the local clone path), configure provider/model/effort and generate a review skill. Then use "All PRs" for review/fix work, or the project assistant (bottom right) for a directory chat or a new feature branch.
 
 ## Configuration (.env)
 
@@ -225,7 +225,7 @@ See `.env.example`; key entries:
 ```
 core/      Engine: db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
 server/    Nuxt API: projects / reviews / fixes / features / global sessions / skills / SSE / startup recovery plugin
-app/       UI: project nav; project page (Feature development / All PRs / Config); PR drawer (AI review / Fix / Timeline / Changes)
+app/       UI: project nav; project page (All PRs / Config + the project assistant drawer); PR drawer (AI review / Fix / Timeline / Changes)
 electron/  Desktop shell: starts Nitro and loads the local HTTP UI
 docs/      ARCHITECTURE.md — design goals + invariants + safety mechanisms
 data/      SQLite + migration source for legacy centralized worktrees (git-ignored)

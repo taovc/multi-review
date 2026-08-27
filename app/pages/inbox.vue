@@ -4,7 +4,6 @@ import type { InboxOverview } from '~core/inbox/queries'
 
 const { t, locale } = useI18n()
 const { data, refresh } = await useFetch<InboxOverview>('/api/inbox')
-const openSession = useOpenGlobalSession()
 let timer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, 15_000) })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
@@ -28,10 +27,11 @@ const btn = 'text-xs border border-default px-2 py-1 hover:border-inverted shrin
 // Explicit locale + hour12: the server formats with the process locale otherwise, and the client with the browser's (hydration mismatch).
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString(locale.value, { hour12: false }) : ''
 const reviewLink = (r: { projectId: string; prNumber: number; reviewId: string | null }) => `/projects/${r.projectId}?pr=${r.prNumber}${r.reviewId ? `&review=${r.reviewId}` : ''}`
-// A session run lives in one of three workspaces: PR worktree (fix tab of the PR drawer), branch worktree (the project's feature list) or a plain cwd (global drawer).
+// A session run lives in one of three workspaces: PR worktree (fix tab of the PR drawer), or a branch worktree / plain cwd (the project's
+// assistant drawer, which only exists on the project page — sessions without a project cannot be opened from here).
 const runLink = (x: { runId: string; workspaceType: string | null; projectId: string | null; prNumber: number | null }) => {
   if (x.workspaceType === 'pr_worktree' && x.projectId && x.prNumber) return `/projects/${x.projectId}?pr=${x.prNumber}&fix=${x.runId}&tab=fix`
-  if (x.workspaceType === 'branch_worktree' && x.projectId) return `/projects/${x.projectId}?session=${x.runId}`
+  if ((x.workspaceType === 'branch_worktree' || x.workspaceType === 'cwd') && x.projectId) return `/projects/${x.projectId}?session=${x.runId}`
   return null
 }
 // Where an item lives, so the reader knows what "open" leads to. Reviews never keep a workspace: their worktree is
@@ -66,7 +66,6 @@ function whereLabel(x: { workspaceType: string | null; prNumber?: number | null;
             <div class="text-xs text-dimmed truncate mt-0.5"><span :class="tag" class="mr-2">{{ whereLabel(p) }}</span>{{ p.sessionTitle || t('inbox.session') }} · {{ p.workspacePath }} · {{ t('inbox.since', { t: when(p.createdAt) }) }}</div>
           </div>
           <NuxtLink v-if="runLink(p)" :to="runLink(p)!" :class="btn">{{ t('inbox.open') }}</NuxtLink>
-          <button v-else :class="btn" @click="openSession = p.runId">{{ t('inbox.open') }}</button>
         </div>
         <PagerBar :total="data.prompts.length" :per-page="PER_PAGE" :page="pageOf('prompts', data.prompts)" @update:page="(p) => pages.prompts = p" />
       </div>
@@ -99,7 +98,6 @@ function whereLabel(x: { workspaceType: string | null; prNumber?: number | null;
           </div>
           <NuxtLink v-if="e.subkind !== 'session' && e.projectId && e.prNumber" :to="reviewLink({ projectId: e.projectId, prNumber: e.prNumber, reviewId: e.reviewId })" :class="btn">{{ t('inbox.open') }}</NuxtLink>
           <NuxtLink v-else-if="e.subkind === 'session' && runLink(e)" :to="runLink(e)!" :class="btn">{{ t('inbox.open') }}</NuxtLink>
-          <button v-else-if="e.subkind === 'session'" :class="btn" @click="openSession = e.runId">{{ t('inbox.open') }}</button>
         </div>
         <PagerBar :total="data.errors.length" :per-page="PER_PAGE" :page="pageOf('errors', data.errors)" @update:page="(p) => pages.errors = p" />
       </div>

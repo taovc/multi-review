@@ -77,8 +77,8 @@ Fini la revue des PR une par une dans le terminal, et fini les corrections dispe
 - « Commit and upload » affiche d'abord le diff et un message de commit conventionnel éditable ; la confirmation seule lance `git add/commit/push`.
 - Stop/reprise, logs d'exécution dépliables, cartes de décision, un interrupteur ultracode qui pousse le tour vers un effort de raisonnement supérieur, et un interrupteur de commandes dangereuses sont pris en charge.
 
-**Développement de feature et assistant global**
-- Le tab « Feature development » crée un worktree de feature isolé depuis un besoin et laisse l'agent développer dans une boucle de chat native.
+**Assistant de projet : chat dans le dossier et développement de feature**
+- L'assistant de projet (bouton en bas à droite d'une page projet) démarre une session dans le dossier du projet ou dans un worktree de feature isolé sur une nouvelle branche (« Nouvelle branche »), et laisse l'agent développer dans une boucle de chat native.
 - Les vrais points de décision sont rendus en cartes `ask-user`. L'ouverture de PR est une action explicite qui autorise commit, push et `gh pr create` pour ce tour ; les messages de commit et le titre/corps de la PR sont toujours rédigés en anglais.
 - L'assistant global en bas à droite hérite du provider/cwd du projet quand c'est possible et prend en charge `/cd`, `/resume`, `/clear`, pour le diagnostic ponctuel et les opérations one-off.
 
@@ -192,7 +192,7 @@ pnpm install
 pnpm dev                  # par défaut http://localhost:3001
 ```
 
-Une fois dedans, clique sur le « ＋ » à gauche pour créer un projet (renseigne `owner/repo` + le chemin du clone local), configure provider/model/effort et génère une skill de revue. Utilise ensuite « Toutes les PR » pour revue/correction, ou « Feature development » pour créer des worktrees de feature.
+Une fois dedans, clique sur le « ＋ » à gauche pour créer un projet (renseigne `owner/repo` + le chemin du clone local), configure provider/model/effort et génère une skill de revue. Utilise ensuite « Toutes les PR » pour revue/correction, ou l'assistant de projet (en bas à droite) pour un chat dans le dossier ou une nouvelle branche de feature.
 
 ## Configuration (.env)
 
@@ -225,7 +225,7 @@ Voir `.env.example` ; éléments clés :
 ```
 core/      Moteur : db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
 server/    API Nuxt : projects / reviews / fixes / features / global sessions / skills / SSE / plugin de reprise au démarrage
-app/       UI : navigation projets ; page projet (Feature development / Toutes les PR / Configuration) ; drawer PR (Revue IA / Correction / Timeline / Modifs)
+app/       UI : navigation projets ; page projet (Toutes les PR / Configuration + tiroir de l'assistant de projet) ; drawer PR (Revue IA / Correction / Timeline / Modifs)
 electron/  Shell desktop : démarre Nitro et charge l'UI HTTP locale
 docs/      ARCHITECTURE.md — objectifs de design + invariants + mécanismes de sécurité
 data/      SQLite + source de migration des anciens worktrees centralisés (ignorés par git)

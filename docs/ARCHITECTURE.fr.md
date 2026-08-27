@@ -36,7 +36,7 @@ Nuxt 4 + @nuxt/ui (Tailwind v4) · better-sqlite3 + drizzle · `@anthropic-ai/cl
 ```
 core/      Moteur : db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
 server/    API Nuxt : projects / reviews / fixes / features / global sessions / skills / SSE
-app/       UI : navigation projets ; page projet (Feature development / Toutes les PR / Configuration) ; drawer PR (Revue IA / Correction / Timeline / Modifs)
+app/       UI : navigation projets ; page projet (Toutes les PR / Configuration + tiroir de l'assistant : sessions dossier / nouvelle branche) ; drawer PR (Revue IA / Correction / Timeline / Modifs)
 electron/  Shell desktop : démarre Nitro et charge l'UI HTTP locale
 ```
 

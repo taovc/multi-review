@@ -498,6 +498,14 @@
     "thinking": "réflexion",
     "untitled": "Chat sans titre",
     "historyEmpty": "Aucun chat passé",
+    "ws": {
+      "cwd": "Ce dossier",
+      "branch_worktree": "Nouvelle branche"
+    },
+    "wsHint": {
+      "cwd": "Discuter et modifier directement dans le clone du projet (confirmation à chaque action par défaut) ; /cd change de dossier.",
+      "branch_worktree": "Développer dans un worktree isolé sur une nouvelle branche coupée de la branche par défaut (tous droits) ; demandez-lui d’ouvrir une PR quand c’est bon."
+    },
     "deleteSession": "Supprimer le chat",
     "confirmDelete": "Supprimer ce chat ? Action irréversible.",
     "dangerNote": "⚠️ Mode plein accès : peut exécuter n'importe quelle commande et modifier n'importe quel fichier sur cette machine",
@@ -554,13 +562,8 @@
     }
   },
   "feature": {
-    "tab": "Dév. fonctionnalité",
-    "composerHint": "Décrivez une fonctionnalité ou collez une issue — l’IA la développe directement dans un worktree isolé sur une nouvelle branche (permissions complètes + ultracode, sans jamais toucher votre vrai dépôt), ne vous consulte que sur une vraie décision, et ouvre la PR elle-même quand vous le demandez.",
     "composerPlaceholder": "Décrivez la fonctionnalité / collez une issue…",
-    "start": "Démarrer",
     "creating": "Création…",
-    "empty": "Aucune tâche pour l’instant",
-    "newTitle": "Nouvelle fonctionnalité",
     "newHint": "Décrivez ce que vous voulez développer, ou collez un lien d’issue.\nUne tâche n’est créée qu’à l’envoi du premier message — vous pouvez fermer avant sans rien créer.",
     "status": {
       "working": "En cours",
@@ -568,7 +571,6 @@
       "opened": "PR ouverte",
       "error": "Erreur"
     },
-    "untitled": "Tâche sans titre",
     "decisionTitle": "Décision — à vous de choisir",
     "decisionOther": "Autre chose…",
     "openPr": "Ouvrir la PR",
@@ -576,13 +578,7 @@
     "openPrMsg": "Ouvre une PR pour ceci : commit avec un message conventional-commit en anglais, pousse la branche, et lance gh pr create avec un titre + corps en anglais. Réponds ensuite avec l’URL de la PR.",
     "chatPlaceholder": "Continuez à discuter pour développer / demander des changements… (cliquez « Ouvrir la PR » quand vous êtes satisfait)",
     "discard": "Supprimer la tâche",
-    "discardConfirm": "Supprimer cette tâche ? (worktree inclus, irréversible)",
-    "col": {
-      "title": "Titre",
-      "status": "Statut",
-      "pr": "PR",
-      "updated": "Mis à jour"
-    }
+    "discardConfirm": "Supprimer cette tâche ? (worktree inclus, irréversible)"
   },
   "remote": {
     "title": "Accès distant",

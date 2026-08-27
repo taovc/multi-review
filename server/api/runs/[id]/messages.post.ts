@@ -31,6 +31,12 @@ export default defineEventHandler(async (event) => {
     } else if (!run.workspacePath) {
       throw createError({ statusCode: 400, statusMessage: '这个会话还没有工作目录（用 /cd <路径> 设置）' })
     }
+    // A directory session from before the assistant was scoped to projects: the first message sent from a project page
+    // stamps that project on it, so the drawer history and the inbox links stop depending on path adoption.
+    if (!run.projectId && b.projectId && d.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, b.projectId)).get()) {
+      d.update(schema.runs).set({ projectId: b.projectId, updatedAt: new Date().toISOString() }).where(eq(schema.runs.id, id)).run()
+      run = getRunOr404(id)
+    }
   }
   const ctx = buildSessionTurnCtx(event, run, { message: b.message, permissionMode: b.permissionMode, allowDanger: b.allowDanger, ultracode: b.ultracode, projectId: b.projectId })
   // A running turn does not block: the message is queued and starts when the turn ends.

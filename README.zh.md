@@ -77,8 +77,8 @@ Intel 芯片的 Mac 目前没有预编译包，请改用[从源码构建](#从�
 - 「提交并上传」先生成 diff + conventional commit message 预览，用户确认后才 `git add/commit/push`
 - 支持停止、继续对话、可展开运行日志、决策卡、ultracode 开关（后台注入，把该轮拉到更高推理力度）和危险命令开关
 
-**Feature 开发与全局助手**
-- 项目页有「Feature 开发」tab：输入需求后创建隔离 feature worktree，agent 单段式开发，遇到关键决策用 `ask-user` 卡片让你拍板
+**项目助手：目录对话与 feature 开发**
+- 项目页右下角的助手：新建会话时选「当前目录」或「新分支」——后者从需求创建隔离 feature worktree，agent 单段式开发，遇到关键决策用卡片让你拍板
 - 「开 PR」是显式动作：那一轮放行 push/`gh pr create`，commit message、PR title/body 保持英文
 - 右下角全局助手支持项目继承 provider/cwd，也可 `/cd`、`/resume`、`/clear`，用于自由排查和操作
 
@@ -192,7 +192,7 @@ pnpm install
 pnpm dev                  # 默认 http://localhost:3001
 ```
 
-进去左侧「＋」创建项目（填仓库 owner/repo + 本地 clone 路径），到项目配置里选择 provider/model/effort 并生成审核 skill。之后可以在「全部 PR」里审核/修复 PR，也可以在「Feature 开发」里从需求创建 feature worktree。
+进去左侧「＋」创建项目（填仓库 owner/repo + 本地 clone 路径），到项目配置里选择 provider/model/effort 并生成审核 skill。之后可以在「全部 PR」里审核/修复 PR，也可以用右下角的项目助手做目录对话或从需求开新分支。
 
 ## 配置（.env）
 
@@ -225,7 +225,7 @@ pnpm dev                  # 默认 http://localhost:3001
 ```
 core/      引擎：db / github / git(worktree) / agent(review·fix·feature·global·codex·skillgen) / automation / pipeline / events
 server/    Nuxt API：projects / reviews / fixes / features / global sessions / skills / SSE / 启动恢复 plugin
-app/       UI：左侧项目导航；项目页(Feature 开发 / 全部 PR / 项目配置)；PR drawer(AI审核 / 修复 / 时间线 / 改动)
+app/       UI：左侧项目导航；项目页(全部 PR / 项目配置 + 项目助手抽屉)；PR drawer(AI审核 / 修复 / 时间线 / 改动)
 electron/  桌面壳：启动 Nitro server，窗口加载本地 HTTP UI
 docs/      ARCHITECTURE.md — 设计目的 + 不变量 + 安全防御说明
 data/      SQLite + 旧版集中 worktrees 迁移源（git 忽略）

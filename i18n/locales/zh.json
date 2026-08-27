@@ -498,6 +498,14 @@
     "thinking": "思考",
     "untitled": "未命名对话",
     "historyEmpty": "还没有历史对话",
+    "ws": {
+      "cwd": "当前目录",
+      "branch_worktree": "新分支"
+    },
+    "wsHint": {
+      "cwd": "在项目 clone 里直接对话与改动（默认逐条确认）；/cd 可切目录。",
+      "branch_worktree": "从默认分支切出隔离的新分支 worktree 开发（全权限），满意后让它开 PR。"
+    },
     "deleteSession": "删除对话",
     "confirmDelete": "删除这段对话？不可恢复。",
     "dangerNote": "⚠️ 全权限模式：可在本机执行任意命令、改任意文件",
@@ -554,13 +562,8 @@
     }
   },
   "feature": {
-    "tab": "Feature 开发",
-    "composerHint": "描述一个功能或贴 issue —— AI 直接在隔离的新分支 worktree 里开发（全权限 + ultracode，绝不碰你真实仓库），只有遇到真决策点才问你，你让它开 PR 它就自己开。",
     "composerPlaceholder": "描述功能 / 贴 issue…",
-    "start": "开始开发",
     "creating": "创建中…",
-    "empty": "还没有 feature 任务",
-    "newTitle": "新功能",
     "newHint": "描述你想开发的功能，或贴一个 issue 链接。\n发出第一条消息才会创建任务 —— 在那之前随时可以关掉。",
     "status": {
       "working": "开发中",
@@ -568,7 +571,6 @@
       "opened": "PR 已开",
       "error": "出错"
     },
-    "untitled": "未命名任务",
     "decisionTitle": "决策点（待你拍板）",
     "decisionOther": "其它…",
     "openPr": "开 PR",
@@ -576,13 +578,7 @@
     "openPrMsg": "请帮我开这个 PR：用英文 conventional commit 提交、推送分支、用 gh pr create 开 PR（英文标题 + 正文），完成后把 PR 链接发我。",
     "chatPlaceholder": "继续聊来开发 / 让它改…（满意了点「开 PR」）",
     "discard": "删除任务",
-    "discardConfirm": "删除这个任务？（含 worktree，不可恢复）",
-    "col": {
-      "title": "标题",
-      "status": "状态",
-      "pr": "PR",
-      "updated": "更新"
-    }
+    "discardConfirm": "删除这个任务？（含 worktree，不可恢复）"
   },
   "remote": {
     "title": "远程访问",

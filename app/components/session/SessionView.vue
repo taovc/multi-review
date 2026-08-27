@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<{
   prNumber?: number | null
   active?: boolean
 }>(), { projectId: null, prNumber: null, active: true })
-const emit = defineEmits<{ changed: []; created: [id: string]; deleted: [id: string]; clear: []; history: []; fork: [] }>()
+const emit = defineEmits<{ changed: []; created: [id: string, workspaceType: WorkspaceType]; deleted: [id: string]; clear: []; history: []; fork: [] }>()
 const { t, te, locale } = useI18n()
 const toast = useToast()
 
@@ -314,7 +314,7 @@ async function ensureRun(firstMessage: string): Promise<string> {
   if (isCwd.value && pendingCwd.value) body.cwd = pendingCwd.value
   const res = await $fetch<{ id: string }>('/api/runs', { method: 'POST', body })
   currentRunId.value = res.id
-  emit('created', res.id)
+  emit('created', res.id, wt.value) // the kind it was created with — the parent's picker may have moved meanwhile
   emit('changed')
   openSSE()
   return res.id
