@@ -250,7 +250,7 @@ const card = 'border border-default p-3'
             <div v-else>{{ t('agentConfig.none') }}</div>
           </div>
           <div :class="card">
-            <div :class="h3">{{ t('agentConfig.mcp') }} ({{ data.codex.mcpServers.length }})</div><p :class="sub">{{ t('agentConfig.mcpHint') }}</p>
+            <div :class="h3">{{ t('agentConfig.mcp') }} ({{ data.codex.mcpServers.length }})</div><p :class="sub">{{ t('agentConfig.codexMcpHint') }}</p>
             <div v-for="s in data.codex.mcpServers" :key="s.name" class="font-mono">{{ s.name }} · {{ s.authStatus }} · {{ s.tools }} tools</div>
             <div v-if="!data.codex.mcpServers.length">{{ t('agentConfig.none') }}</div>
           </div>

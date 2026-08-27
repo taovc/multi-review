@@ -670,13 +670,14 @@
         "review": "审核 · 无本地工作区",
         "pr": "PR #{n} worktree",
         "branch": "分支 worktree",
-        "cwd": "目录会话"
+        "cwd": "目录会话",
+        "run": "{kind} 运行"
       },
       "hint": {
         "prompts": "会话卡在权限确认、提问或 plan 审批上。「打开」按工作区跳转：PR worktree → PR 抽屉的修复 tab；分支 worktree → 项目的会话列表；目录会话 → 右下角全局抽屉。",
-        "drafts": "审核已产出 findings，还没人勾选或发布。审核在临时 worktree 里跑完即删，所以 PR 列表的「工作区」过滤不会命中它们——「打开」进入 PR 抽屉的审核 tab。",
+        "drafts": "审核已产出 findings、还没发布（状态仍是 draft，勾选过也算）。审核在临时 worktree 里跑完即删，所以 PR 列表的「工作区」过滤不会命中它们——「打开」进入 PR 抽屉的审核 tab。",
         "errors": "最近 24 小时内以 error 结束的运行（审核、复查、skill 生成、会话都算），错误原文见第二行。",
-        "automation": "自动化引擎最近 24 小时做了什么、为什么没做（跳过、冷却、回合上限）。只读记录。"
+        "automation": "自动化引擎最近 24 小时的事件：派发审核 / 复查 / 发布 / 派发修复 / push，以及冷却（cooldown）、回合上限（capped）、收敛（converged）和各类 error。只读记录。"
       }
   },
   "agentConfig": {
@@ -726,7 +727,7 @@
       "denyRules": "额外 deny 规则",
       "switches": "开关",
       "chrome": "会话里启用 Claude in Chrome（--chrome）",
-      "chromeHint": "把 --chrome 传给会话，让 Claude in Chrome 的 MCP 连上。下一轮会话生效，需要 Chrome 扩展；审核不受影响。",
+      "chromeHint": "把 --chrome 传给目录会话（右下角全局抽屉），让 Claude in Chrome 的 MCP 连上。下一轮会话生效，需要 Chrome 扩展；PR / 分支 worktree 会话和审核不受影响。",
       "mcpAllow": "允许审核只读调用的 MCP 服务",
       "mcpAllowHint": "审核默认拒绝所有 MCP；勾选的服务允许审核只读调用，只勾不会写入的服务。列表 = 探针发现的服务 + 已勾选的。它和左边的会话开关互不影响——同一个服务（比如 claude-in-chrome）在两处出现是正常的。",
       "saved": "已保存",
@@ -770,12 +771,13 @@
       "contextHint": "启动时各类内容占用的上下文（system prompt、记忆文件、skills、MCP 工具定义…）。",
       "modelsHint": "可选的模型。",
       "agentsHint": "可用的子 agent 定义（~/.claude/agents 与仓库内）。",
-      "commandsHint": "/ 面板里能用的全部命令，按来源分组。",
+      "commandsHint": "CLI 报告的全部命令，按来源分组。/ 面板默认只显示 curated 的一部分（其余在「显示全部」，exit / login / doctor 等永不显示）。",
       "cmdOrigin": {
         "custom": "我的 skills 与命令",
         "plugin": "Plugin 命令",
         "builtin": "内建命令"
       },
+      "codexMcpHint": "各 MCP 服务的登录状态与工具数。",
       "codexRateHint": "订阅用量窗口：primary 是短窗，secondary 是长窗。",
       "codexSkillsHint": "Codex 发现的 skills；灰色 = 已禁用。",
       "codexConfigHint": "对运行有影响的键；括号 = 设置它的配置层。"
@@ -874,14 +876,14 @@
       "quality": "审核质量"
     },
     "hint": {
-      "spend": "每次运行落一行记录。成本取 SDK 报告值（Claude）或 token × 费率估算（Codex，带 ~）；没有费率的运行计为「未定价」，不算进总额。",
+      "spend": "每次运行落一行记录，这里按类型、模型、日期汇总。成本取 SDK 报告值（Claude）或 token × 费率估算（Codex，带 ~）；没有费率的运行计为「未定价」，不算进总额。",
       "bySubkind": "运行类型 × provider。review / guided / recheck / skillgen 是审核家族；session 是常驻对话；helper 是一次性辅助调用（commit message、标题、翻译）。",
       "byModel": "只统计审核家族（review / guided / recheck）。平均成本只算有价格的运行；p50 / p95 = 一半 / 95% 的运行在这个时长内完成。",
-      "byDay": "按运行创建日期汇总，最近 30 天。",
-      "quality": "只看人处理过的审核：勾选、发布、复审和作者更新后的复查。没人看过的 draft 不能说明 skill 的好坏，不计入。",
+      "byDay": "按运行创建日期汇总，最多列出 30 个有运行的日期（受上方时间段过滤）。",
+      "quality": "采纳率只统计人处理过（勾选或发布）的审核——没人看过的 draft 不能说明 skill 的好坏，不计入；复查与自动化按各自的记录统计。",
       "precision": "采纳率 = 人工采纳（勾选或已发布）÷ findings 总数；机器勾选（自动 / 引擎）不算采纳。每条采纳成本 = 这些审核的全部运行成本 ÷ 采纳数，是「一条有用 finding 值多少钱」。",
       "recheck": "撤回率：你给了反馈、复审后被撤回的 findings 占比（越低越好）。修复率：作者 push 后被判定已修复的占比。下面是每条 finding 最新复查状态的计数。",
-      "automation": "自动化引擎的事件计数：派发审核 / 派发修复 / 跳过 / 冷却 / 达到回合上限等。",
+      "automation": "自动化引擎的事件计数：review_created / recheck / posted / fix_started / pushed，以及 cooldown、capped、converged 和各类 error。",
       "recent": "每次运行一行，按时间倒序。成本后的 ~ 表示估算值，+? 表示有未定价的轮次（总数偏低）；悬停一行看标题或错误原文。"
     }
   }

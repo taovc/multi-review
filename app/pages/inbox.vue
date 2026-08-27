@@ -15,6 +15,8 @@ const PER_PAGE = 10
 const pages = reactive<Record<string, number>>({ prompts: 1, drafts: 1, errors: 1, automation: 1 })
 function pageOf(key: string, list: unknown[]) { return Math.min(pages[key] ?? 1, Math.max(1, Math.ceil(list.length / PER_PAGE))) }
 function paged<T>(key: string, list: T[]): T[] { const p = pageOf(key, list); return list.slice((p - 1) * PER_PAGE, p * PER_PAGE) }
+// Write the clamp back after every refresh, so a list that shrinks and later grows again does not jump back to the old page.
+watch(data, (d) => { if (d) for (const k of Object.keys(pages)) pages[k] = pageOf(k, (d as any)[k] ?? []) })
 
 const box = 'border border-default'
 const head = 'px-4 py-3 border-b border-default'
@@ -34,8 +36,10 @@ const runLink = (x: { runId: string; workspaceType: string | null; projectId: st
 }
 // Where an item lives, so the reader knows what "open" leads to. Reviews never keep a workspace: their worktree is
 // deleted right after the run, which is why the PR list's "worktree" filter does not find them.
+const REVIEW_FAMILY = ['review', 'guided', 'recheck']
 function whereLabel(x: { workspaceType: string | null; prNumber?: number | null; subkind?: string }) {
-  if (x.subkind && x.subkind !== 'session') return t('inbox.where.review')
+  if (x.subkind && REVIEW_FAMILY.includes(x.subkind)) return t('inbox.where.review')
+  if (x.subkind && x.subkind !== 'session') return t('inbox.where.run', { kind: x.subkind })
   if (x.workspaceType === 'pr_worktree') return t('inbox.where.pr', { n: x.prNumber ?? '?' })
   if (x.workspaceType === 'branch_worktree') return t('inbox.where.branch')
   return t('inbox.where.cwd')

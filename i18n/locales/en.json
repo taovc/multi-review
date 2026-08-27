@@ -670,13 +670,14 @@
         "review": "review · no local workspace",
         "pr": "PR #{n} worktree",
         "branch": "branch worktree",
-        "cwd": "directory session"
+        "cwd": "directory session",
+        "run": "{kind} run"
       },
       "hint": {
         "prompts": "Sessions blocked on a permission, a question or a plan approval. \"Open\" follows the workspace: PR worktree → the fix tab of the PR drawer; branch worktree → the project's session list; directory session → the global drawer (bottom right).",
-        "drafts": "Reviews that produced findings nobody has ticked or posted yet. A review runs in a throw-away worktree that is deleted right after, so the PR list's \"worktree\" filter never matches them — \"Open\" goes to the review tab of the PR drawer.",
+        "drafts": "Reviews that produced findings and were not posted yet (still in draft, ticked or not). A review runs in a throw-away worktree that is deleted right after, so the PR list's \"worktree\" filter never matches them — \"Open\" goes to the review tab of the PR drawer.",
         "errors": "Runs that ended in error during the last 24 hours (reviews, rechecks, skill generation and sessions alike); the second line is the error text.",
-        "automation": "What the automation engine did in the last 24 hours and why it held back (skipped, cooling down, round limit). Read-only log."
+        "automation": "The automation engine's events of the last 24 hours: review / recheck / post / fix dispatched / pushed, plus cooldown, round limit (capped), converged and the error kinds. Read-only log."
       }
   },
   "agentConfig": {
@@ -726,7 +727,7 @@
       "denyRules": "Extra deny rules",
       "switches": "Switches",
       "chrome": "Claude in Chrome in sessions (--chrome)",
-      "chromeHint": "Passes --chrome to sessions so the Claude in Chrome MCP connects. Takes effect on the next session turn and needs the Chrome extension; reviews are not affected.",
+      "chromeHint": "Passes --chrome to directory sessions (the global drawer, bottom right) so the Claude in Chrome MCP connects. Takes effect on the next session turn and needs the Chrome extension; PR / branch worktree sessions and reviews are not affected.",
       "mcpAllow": "MCP servers reviews may call read-only",
       "mcpAllowHint": "Reviews deny every MCP server by default; a ticked server may be called read-only, so only tick servers that cannot write. The list = servers the probe found + the ones already ticked. Independent of the session switch on the left — the same server (claude-in-chrome, say) showing up in both places is expected.",
       "saved": "Saved",
@@ -770,12 +771,13 @@
       "contextHint": "Context taken at start-up by each category (system prompt, memory files, skills, MCP tool definitions…).",
       "modelsHint": "Selectable models.",
       "agentsHint": "Available sub-agent definitions (~/.claude/agents and in the repo).",
-      "commandsHint": "Everything the / palette can run, grouped by origin.",
+      "commandsHint": "Every command the CLI reports, grouped by origin. The / palette shows only the curated part by default (the rest behind \"show all\"; exit / login / doctor and the like never).",
       "cmdOrigin": {
         "custom": "My skills and commands",
         "plugin": "Plugin commands",
         "builtin": "Built-in commands"
       },
+      "codexMcpHint": "Auth status and tool count of each MCP server.",
       "codexRateHint": "Subscription usage windows: primary is the short one, secondary the long one.",
       "codexSkillsHint": "Skills Codex discovered; grey = disabled.",
       "codexConfigHint": "Keys that affect runs; the layer that set each one is in brackets."
@@ -874,14 +876,14 @@
       "quality": "Review quality"
     },
     "hint": {
-      "spend": "One row per run. Cost is what the SDK reported (Claude) or tokens × rate (Codex, marked ~); runs without a rate count as \"unpriced\" and are left out of the total.",
+      "spend": "One row per run, aggregated here by kind, model and day. Cost is what the SDK reported (Claude) or tokens × rate (Codex, marked ~); runs without a rate count as \"unpriced\" and are left out of the total.",
       "bySubkind": "Run kind × provider. review / guided / recheck / skillgen are the review family; session is the persistent chat; helper is a one-shot helper call (commit message, title, translation).",
       "byModel": "Review family only (review / guided / recheck). Average cost counts priced runs only; p50 / p95 = half / 95% of the runs finished within this duration.",
-      "byDay": "Grouped by the run's creation day, last 30 days.",
-      "quality": "Only reviews a human handled: ticked, posted, re-reviewed or rechecked after the author pushed. A draft nobody looked at says nothing about the skill and is left out.",
+      "byDay": "Grouped by the run's creation day; at most the 30 most recent days that had runs (within the period above).",
+      "quality": "Precision only counts reviews a human handled (ticked or posted) — a draft nobody looked at says nothing about the skill and is left out; rechecks and automation are counted from their own records.",
       "precision": "Precision = human-accepted (ticked or posted) ÷ all findings; machine ticks (auto / engine) do not count as accepted. Cost per accepted = every run of those reviews ÷ accepted findings — what one useful finding costs.",
       "recheck": "Retraction rate: findings withdrawn after your feedback and a re-review (lower is better). Fixed rate: findings judged fixed after the author pushed. Below, the count of each finding's latest recheck status.",
-      "automation": "Event counts from the automation engine: review dispatched / fix dispatched / skipped / cooling down / round limit reached, and so on.",
+      "automation": "Event counts from the automation engine: review_created / recheck / posted / fix_started / pushed, plus cooldown, capped, converged and the error kinds.",
       "recent": "One row per run, newest first. After the cost, ~ means estimated and +? means some turns were unpriced (the total is a lower bound); hover a row for its title or error text."
     }
   }

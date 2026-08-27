@@ -670,13 +670,14 @@
         "review": "revue · pas d'espace de travail local",
         "pr": "worktree PR #{n}",
         "branch": "worktree de branche",
-        "cwd": "session de répertoire"
+        "cwd": "session de répertoire",
+        "run": "exécution {kind}"
       },
       "hint": {
         "prompts": "Sessions bloquées sur une permission, une question ou l'approbation d'un plan. « Ouvrir » suit l'espace de travail : worktree PR → onglet correction du tiroir PR ; worktree de branche → liste des sessions du projet ; session de répertoire → tiroir global (en bas à droite).",
-        "drafts": "Revues ayant produit des findings que personne n'a encore cochés ni publiés. Une revue tourne dans un worktree jetable supprimé juste après, donc le filtre « espace de travail » de la liste des PR ne les trouve jamais — « Ouvrir » mène à l'onglet revue du tiroir PR.",
+        "drafts": "Revues ayant produit des findings et pas encore publiées (toujours en brouillon, cochées ou non). Une revue tourne dans un worktree jetable supprimé juste après, donc le filtre « Worktree » de la liste des PR ne les trouve jamais — « Ouvrir » mène à l'onglet revue du tiroir PR.",
         "errors": "Exécutions terminées en erreur ces dernières 24 heures (revues, re-vérifications, génération de skill et sessions) ; la seconde ligne est le texte de l'erreur.",
-        "automation": "Ce que le moteur d'automatisation a fait ces dernières 24 heures et pourquoi il s'est retenu (ignoré, refroidissement, limite de tours). Journal en lecture seule."
+        "automation": "Les événements du moteur d'automatisation des dernières 24 heures : revue / re-vérification / publication / correction lancée / push, plus refroidissement (cooldown), limite de tours (capped), convergence et les erreurs. Journal en lecture seule."
       }
   },
   "agentConfig": {
@@ -726,7 +727,7 @@
       "denyRules": "Règles deny supplémentaires",
       "switches": "Interrupteurs",
       "chrome": "Claude in Chrome dans les sessions (--chrome)",
-      "chromeHint": "Passe --chrome aux sessions pour que le MCP Claude in Chrome se connecte. Actif au prochain tour de session, nécessite l'extension Chrome ; les revues ne sont pas concernées.",
+      "chromeHint": "Passe --chrome aux sessions de répertoire (tiroir global, en bas à droite) pour que le MCP Claude in Chrome se connecte. Actif au prochain tour de session, nécessite l'extension Chrome ; les sessions worktree PR / branche et les revues ne sont pas concernées.",
       "mcpAllow": "Serveurs MCP que les revues peuvent appeler en lecture seule",
       "mcpAllowHint": "Les revues refusent tout serveur MCP par défaut ; un serveur coché peut être appelé en lecture seule, ne cochez donc que des serveurs qui n'écrivent pas. La liste = serveurs trouvés par le sondage + ceux déjà cochés. Indépendant du réglage session à gauche — voir le même serveur (claude-in-chrome, par exemple) aux deux endroits est normal.",
       "saved": "Enregistré",
@@ -770,12 +771,13 @@
       "contextHint": "Contexte occupé au démarrage par chaque catégorie (system prompt, fichiers mémoire, skills, définitions d'outils MCP…).",
       "modelsHint": "Modèles sélectionnables.",
       "agentsHint": "Définitions de sous-agents disponibles (~/.claude/agents et dans le dépôt).",
-      "commandsHint": "Tout ce que la palette / peut lancer, groupé par origine.",
+      "commandsHint": "Toutes les commandes rapportées par la CLI, groupées par origine. La palette / n'affiche par défaut que la partie sélectionnée (le reste derrière « tout afficher » ; exit / login / doctor et consorts jamais).",
       "cmdOrigin": {
         "custom": "Mes skills et commandes",
         "plugin": "Commandes de plugins",
         "builtin": "Commandes intégrées"
       },
+      "codexMcpHint": "État d'authentification et nombre d'outils de chaque serveur MCP.",
       "codexRateHint": "Fenêtres d'usage de l'abonnement : primary est la courte, secondary la longue.",
       "codexSkillsHint": "Skills découverts par Codex ; gris = désactivé.",
       "codexConfigHint": "Clés qui influencent les exécutions ; la couche qui les fixe est entre parenthèses."
@@ -874,14 +876,14 @@
       "quality": "Qualité des revues"
     },
     "hint": {
-      "spend": "Une ligne par exécution. Le coût est celui rapporté par le SDK (Claude) ou tokens × tarif (Codex, marqué ~) ; les exécutions sans tarif comptent comme « non tarifées » et sortent du total.",
+      "spend": "Une ligne par exécution, agrégée ici par type, modèle et jour. Le coût est celui rapporté par le SDK (Claude) ou tokens × tarif (Codex, marqué ~) ; les exécutions sans tarif comptent comme « non tarifées » et sortent du total.",
       "bySubkind": "Type d'exécution × provider. review / guided / recheck / skillgen forment la famille revue ; session est la conversation persistante ; helper est un appel auxiliaire unique (message de commit, titre, traduction).",
       "byModel": "Famille revue uniquement (review / guided / recheck). Le coût moyen ne compte que les exécutions tarifées ; p50 / p95 = la moitié / 95 % des exécutions ont fini dans cette durée.",
-      "byDay": "Regroupé par jour de création de l'exécution, 30 derniers jours.",
-      "quality": "Seules les revues traitées par un humain : cochées, publiées, re-revues ou re-vérifiées après un push de l'auteur. Un brouillon que personne n'a regardé ne dit rien sur le skill et est exclu.",
+      "byDay": "Regroupé par jour de création de l'exécution ; au plus les 30 derniers jours ayant eu des exécutions (dans la période ci-dessus).",
+      "quality": "La précision ne compte que les revues traitées par un humain (cochées ou publiées) — un brouillon que personne n'a regardé ne dit rien sur le skill et est exclu ; re-vérifications et automatisation sont comptées depuis leurs propres enregistrements.",
       "precision": "Précision = acceptés par un humain (cochés ou publiés) ÷ tous les findings ; les coches machine (auto / moteur) ne comptent pas. Coût par accepté = toutes les exécutions de ces revues ÷ findings acceptés — ce que coûte un finding utile.",
       "recheck": "Taux de retrait : findings retirés après votre retour et une re-revue (plus bas = mieux). Taux de correction : findings jugés corrigés après le push de l'auteur. Dessous, le décompte du dernier statut de re-vérification de chaque finding.",
-      "automation": "Décomptes d'événements du moteur d'automatisation : revue lancée / correction lancée / ignoré / refroidissement / limite de tours atteinte, etc.",
+      "automation": "Décomptes d'événements du moteur d'automatisation : review_created / recheck / posted / fix_started / pushed, plus cooldown, capped, converged et les erreurs.",
       "recent": "Une ligne par exécution, la plus récente en premier. Après le coût, ~ signifie estimé et +? que certains tours ne sont pas tarifés (le total est un minimum) ; survolez une ligne pour son titre ou le texte de l'erreur."
     }
   }

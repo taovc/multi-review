@@ -26,10 +26,14 @@ const { data, pending, refresh } = await useFetch<any>('/api/metrics/overview', 
   watch: [projectId, from],
 })
 
-// Run list: its own endpoint so paging does not recompute the aggregates. Filter changes go back to page one.
+// Run list: its own endpoint so paging does not recompute the aggregates. The page is remembered together with
+// the filter it was chosen under, so a filter change reads as page 1 in the same tick (a reset watcher would run
+// after the useFetch key watcher and cost an extra request with the stale offset).
 const RUNS_PER_PAGE = 20
-const runsPage = ref(1)
-watch([projectId, from], () => { runsPage.value = 1 })
+const runsFilterKey = computed(() => `${projectId.value}|${from.value}`)
+const runsPick = ref<{ key: string; page: number }>({ key: '', page: 1 })
+const runsPage = computed(() => (runsPick.value.key === runsFilterKey.value ? runsPick.value.page : 1))
+function setRunsPage(p: number) { runsPick.value = { key: runsFilterKey.value, page: p } }
 const { data: runs, pending: runsPending, refresh: refreshRuns } = await useFetch<{ rows: any[]; total: number }>('/api/metrics/runs', {
   query: computed(() => ({ projectId: projectId.value || undefined, from: from.value || undefined, offset: (runsPage.value - 1) * RUNS_PER_PAGE, limit: RUNS_PER_PAGE })),
   watch: [projectId, from, runsPage],
@@ -175,7 +179,7 @@ const tileLabel = 'text-[10px] uppercase tracking-[0.15em] text-dimmed'
               <td :class="num">{{ tok(r.input_tokens) }} / {{ tok(r.output_tokens) }}</td><td :class="num">{{ dur(r.duration_ms) }}</td><td :class="num">{{ r.skill_version != null ? 'v' + r.skill_version : '—' }}</td>
             </tr></tbody>
           </table></div>
-          <PagerBar :total="runs?.total ?? 0" :per-page="RUNS_PER_PAGE" :page="runsPage" :disabled="runsPending" @update:page="(p) => runsPage = p" />
+          <PagerBar :total="runs?.total ?? 0" :per-page="RUNS_PER_PAGE" :page="runsPage" :disabled="runsPending" @update:page="setRunsPage" />
         </div>
       </section>
     </template>
