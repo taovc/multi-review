@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { query, type PermissionMode, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { eq } from 'drizzle-orm'
 import { PushQueue } from './queue'
-import { normalize, diffCumulativeUsage, resultOwner } from './normalize'
+import { normalize, diffCumulativeUsage } from './normalize'
 import { buildOptions } from './options'
 import { answerPending, makeDangerHook, makePromptBridge, resolvePromptRow, type PendingPrompt } from './permissions'
 import { makeRunEmitter, setRunStatus } from './recorder'
@@ -19,14 +19,13 @@ const IDLE_MS = Number(process.env.HOST_IDLE_MS || 20 * 60_000)
 const PROMPT_TTL_MS = Number(process.env.HOST_PROMPT_TTL_MS || 12 * 60 * 60_000)
 // Upper bound on simultaneously live queries (each is a claude process); the oldest idle one is closed to make room.
 const MAX_LIVE = Number(process.env.HOST_MAX_LIVE || 8)
-// How long a result we could not attribute to our send may hold the turn open before we accept it anyway (only an
-// older CLI that never echoes user_message_uuid gets this far; see resultOwner).
+// How long a turn may sit after a result we would not accept, before we stop waiting for one that fits.
 const ORPHAN_RESULT_MS = Number(process.env.HOST_ORPHAN_RESULT_MS || 90_000)
 
 type LiveTurn = {
   turnId: string | null
   cb: TurnCallbacks
-  uuid: string | null // the user-message uuid we minted for this send; a result echoes it back
+  uuid: string // the user-message uuid we minted for this send; a result echoes it back
   activity: boolean // this turn has produced output of its own (text, thinking, a tool call)
   text: string // accumulated assistant text (main thread only)
   resolve: (r: TurnResult) => void
@@ -172,11 +171,7 @@ class ClaudeHost {
         // while the session was closed). Log it, keep ours open, and leave its spend on the baseline so it rolls into
         // the next real result instead of vanishing.
         live.emit({ t: 'note', text: `ignored a result that does not answer this message (${e.subtype}, ${e.numTurns} turns)` })
-        if (owner === 'unsure') {
-          this.clearOrphan(live)
-          live.orphanTimer = setTimeout(() => { live.orphanTimer = null; if (live.turn) this.completeTurn(live, e) }, ORPHAN_RESULT_MS)
-          live.orphanTimer.unref?.()
-        }
+        this.armOrphan(live, owner === 'unsure' ? e : null)
         return
       }
       case 'reset':
@@ -211,6 +206,23 @@ class ClaudeHost {
     live.emit({ ...e, usage: delta, costUsd: delta?.costUsd ?? null })
     this.finishTurn(live, r)
     void this.emitContextUsage(live)
+  }
+
+  // No result has answered this send yet. Nothing else ever ends a turn — no idle timer runs while one is busy — so a
+  // session that only produced other turns' results would keep the run 'running' for good. Wait ORPHAN_RESULT_MS from
+  // the last result we turned down, then take it if it might have been ours after all (an older CLI echoes no uuid to
+  // match on), or give up with an error rather than never returning. Re-armed by each further result we turn down.
+  private armOrphan(live: LiveRun, fallback: Extract<RunEvent, { t: 'turn_done' }> | null): void {
+    this.clearOrphan(live)
+    const turn = live.turn
+    if (!turn) return
+    live.orphanTimer = setTimeout(() => {
+      live.orphanTimer = null
+      if (live.turn !== turn) return // that turn ended long ago; this result is no longer its business
+      if (fallback) this.completeTurn(live, fallback)
+      else this.finishTurn(live, { text: turn.text, sessionId: live.sessionId, usage: null, costUsd: null, subtype: 'no_matching_result', isError: true, interrupted: turn.interrupted, error: 'the session answered other messages but never this one' })
+    }, ORPHAN_RESULT_MS)
+    live.orphanTimer.unref?.()
   }
 
   private clearOrphan(live: LiveRun): void {
@@ -355,6 +367,7 @@ class ClaudeHost {
     if (!live || live.closed) return false
     live.closed = true
     if (live.idleTimer) clearTimeout(live.idleTimer)
+    this.clearOrphan(live)
     try { live.input.close() } catch { /* ignore */ }
     try { live.q.close() } catch { /* ignore */ }
     if (live.spec.db && live.spec.schema) {
@@ -374,11 +387,27 @@ class ClaudeHost {
   liveRunIds(): string[] { return [...this.runs.keys()].filter((id) => !this.runs.get(id)!.closed) }
 }
 
+// Whose turn did this result end? The CLI emits one result per turn IT ran, and not every turn is one we asked for:
+// a background-task notification queued while the session was closed wakes it up and completes in milliseconds with an
+// empty result, before our own message is even dequeued. Ending our turn on that one closes the reply with no text and
+// orphans everything the real turn goes on to produce.
+//
+// `user_message_uuid` echoes the uuid we minted for the send, which settles it outright. The CLI leaves it out on its
+// own meta turns, on session-scoped failures that answer no single send, and older CLIs never send it at all — and
+// those look alike from here. So an unnamed result that did nothing (no model turn, no text) while our turn has
+// produced nothing either is only 'unsure', for the caller to hold and fall back on.
+export function resultOwner(e: Extract<RunEvent, { t: 'turn_done' }>, turn: { uuid: string; activity: boolean; interrupted?: boolean }): 'ours' | 'foreign' | 'unsure' {
+  if (e.userMessageUuid) return e.userMessageUuid === turn.uuid ? 'ours' : 'foreign' // a named result settles it either way
+  if (turn.interrupted) return 'ours' // we asked the CLI to stop: the next unnamed result ends this turn, empty or not
+  return e.numTurns === 0 && !e.resultText && !turn.activity ? 'unsure' : 'ours'
+}
+
 // Did this event come from the turn's own main thread? Subagent output (parent set) and the CLI's bookkeeping
 // (task notifications, status, context) do not prove that our message is being worked on.
 function isTurnOutput(e: RunEvent): boolean {
-  if (e.t === 'local_command') return true
-  if (e.t === 'assistant_text' || e.t === 'thinking' || e.t === 'tool_use' || e.t === 'text_delta') return e.parent == null
+  // A reset answers our /clear, a compaction and a permission prompt only happen inside a turn that is running.
+  if (e.t === 'local_command' || e.t === 'reset' || e.t === 'compaction' || e.t === 'permission_request') return true
+  if (e.t === 'assistant_text' || e.t === 'thinking' || e.t === 'tool_use' || e.t === 'tool_result' || e.t === 'text_delta') return e.parent == null
   return false
 }
 
