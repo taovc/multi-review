@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { query, type PermissionMode, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { eq } from 'drizzle-orm'
 import { PushQueue } from './queue'
-import { normalize, diffCumulativeUsage } from './normalize'
+import { normalize, diffCumulativeUsage, resultOwner } from './normalize'
 import { buildOptions } from './options'
 import { answerPending, makeDangerHook, makePromptBridge, resolvePromptRow, type PendingPrompt } from './permissions'
 import { makeRunEmitter, setRunStatus } from './recorder'
@@ -19,10 +19,15 @@ const IDLE_MS = Number(process.env.HOST_IDLE_MS || 20 * 60_000)
 const PROMPT_TTL_MS = Number(process.env.HOST_PROMPT_TTL_MS || 12 * 60 * 60_000)
 // Upper bound on simultaneously live queries (each is a claude process); the oldest idle one is closed to make room.
 const MAX_LIVE = Number(process.env.HOST_MAX_LIVE || 8)
+// How long a result we could not attribute to our send may hold the turn open before we accept it anyway (only an
+// older CLI that never echoes user_message_uuid gets this far; see resultOwner).
+const ORPHAN_RESULT_MS = Number(process.env.HOST_ORPHAN_RESULT_MS || 90_000)
 
 type LiveTurn = {
   turnId: string | null
   cb: TurnCallbacks
+  uuid: string | null // the user-message uuid we minted for this send; a result echoes it back
+  activity: boolean // this turn has produced output of its own (text, thinking, a tool call)
   text: string // accumulated assistant text (main thread only)
   resolve: (r: TurnResult) => void
   interrupted: boolean
@@ -40,6 +45,7 @@ type LiveRun = {
   promptTimers: Map<string, ReturnType<typeof setTimeout>>
   lastCumulative: ProviderUsage | null
   idleTimer: ReturnType<typeof setTimeout> | null
+  orphanTimer: ReturnType<typeof setTimeout> | null
   closed: boolean
   lastUsedAt: number
   init: Extract<RunEvent, { t: 'init' }> | null
@@ -88,7 +94,7 @@ class ClaudeHost {
     const abort = new AbortController()
     const prompts = new Map<string, PendingPrompt>()
     const store = { db: spec.db, schema: spec.schema }
-    const live: Partial<LiveRun> & { spec: RunSpec } = { spec, input, abort, prompts, promptTimers: new Map(), sessionId: spec.resume ?? null, busy: false, turn: null, lastCumulative: null, idleTimer: null, closed: false, init: null, stderr: '', lastUsedAt: Date.now() }
+    const live: Partial<LiveRun> & { spec: RunSpec } = { spec, input, abort, prompts, promptTimers: new Map(), sessionId: spec.resume ?? null, busy: false, turn: null, lastCumulative: null, idleTimer: null, orphanTimer: null, closed: false, init: null, stderr: '', lastUsedAt: Date.now() }
     const emitRaw = makeRunEmitter({ runId: spec.runId, db: spec.db, schema: spec.schema, turnId: () => live.turn?.turnId ?? null })
     const emit = (e: RunEvent) => { emitRaw(e); try { live.turn?.cb.onEvent?.(e) } catch { /* ignore */ } }
     live.emit = emit
@@ -133,6 +139,8 @@ class ClaudeHost {
   }
 
   private dispatch(live: LiveRun, e: RunEvent): void {
+    // Output means a real turn is under way: it settles what an unattributable result could have been about.
+    if (live.turn && isTurnOutput(e)) { live.turn.activity = true; this.clearOrphan(live) }
     switch (e.t) {
       case 'init':
         live.sessionId = e.sessionId || live.sessionId
@@ -158,15 +166,18 @@ class ClaudeHost {
         setRunStatus(live.spec.db, live.spec.schema, live.spec.runId, live.busy ? 'running' : 'idle', { permissionMode: e.permissionMode })
         break
       case 'turn_done': {
-        const delta = diffCumulativeUsage(live.lastCumulative, e.usage)
-        // A crash/startup-error result may carry zeroed usage: keep the baseline, or the next turn would be billed the whole session.
-        if (e.usage && e.usage.models.some((m) => m.inputTokens || m.outputTokens)) live.lastCumulative = e.usage
-        // On an API error the result text IS the error; the partial assistant output stays in the turn, not in the error.
-        const r: TurnResult = { text: e.isError ? (live.turn?.text || '') : (e.resultText || live.turn?.text || ''), sessionId: live.sessionId, usage: delta, costUsd: delta?.costUsd ?? null, subtype: e.subtype, isError: e.isError, interrupted: !!live.turn?.interrupted, ...(e.isError && e.resultText ? { error: e.resultText } : {}) }
-        live.emit({ ...e, usage: delta, costUsd: delta?.costUsd ?? null })
-        this.finishTurn(live, r)
-        void this.emitContextUsage(live)
-        return // already emitted with the per-turn delta
+        const owner = live.turn ? resultOwner(e, live.turn) : 'ours'
+        if (owner === 'ours') { this.completeTurn(live, e); return } // already emitted with the per-turn delta
+        // Someone else's turn ended — the CLI runs turns we never asked for (a background-task notification queued
+        // while the session was closed). Log it, keep ours open, and leave its spend on the baseline so it rolls into
+        // the next real result instead of vanishing.
+        live.emit({ t: 'note', text: `ignored a result that does not answer this message (${e.subtype}, ${e.numTurns} turns)` })
+        if (owner === 'unsure') {
+          this.clearOrphan(live)
+          live.orphanTimer = setTimeout(() => { live.orphanTimer = null; if (live.turn) this.completeTurn(live, e) }, ORPHAN_RESULT_MS)
+          live.orphanTimer.unref?.()
+        }
+        return
       }
       case 'reset':
         live.lastCumulative = null // "a mid-session /clear resets the running total" (sdk.d.ts SDKResultMessage.total_cost_usd)
@@ -190,6 +201,23 @@ class ClaudeHost {
     live.emit(e)
   }
 
+  // End the live turn on the result that answers it: per-turn usage delta, resolve the caller, idle again.
+  private completeTurn(live: LiveRun, e: Extract<RunEvent, { t: 'turn_done' }>): void {
+    const delta = diffCumulativeUsage(live.lastCumulative, e.usage)
+    // A crash/startup-error result may carry zeroed usage: keep the baseline, or the next turn would be billed the whole session.
+    if (e.usage && e.usage.models.some((m) => m.inputTokens || m.outputTokens)) live.lastCumulative = e.usage
+    // On an API error the result text IS the error; the partial assistant output stays in the turn, not in the error.
+    const r: TurnResult = { text: e.isError ? (live.turn?.text || '') : (e.resultText || live.turn?.text || ''), sessionId: live.sessionId, usage: delta, costUsd: delta?.costUsd ?? null, subtype: e.subtype, isError: e.isError, interrupted: !!live.turn?.interrupted, ...(e.isError && e.resultText ? { error: e.resultText } : {}) }
+    live.emit({ ...e, usage: delta, costUsd: delta?.costUsd ?? null })
+    this.finishTurn(live, r)
+    void this.emitContextUsage(live)
+  }
+
+  private clearOrphan(live: LiveRun): void {
+    if (live.orphanTimer) clearTimeout(live.orphanTimer)
+    live.orphanTimer = null
+  }
+
   // Context-window usage after a turn (the UI's context meter). Best effort: older CLIs may not support the request.
   private async emitContextUsage(live: LiveRun): Promise<void> {
     if (live.closed) return
@@ -203,6 +231,7 @@ class ClaudeHost {
 
   private finishTurn(live: LiveRun, r: TurnResult & { error?: string }): void {
     const t = live.turn
+    this.clearOrphan(live)
     live.busy = false
     live.turn = null
     live.lastUsedAt = Date.now()
@@ -222,6 +251,7 @@ class ClaudeHost {
 
   private teardown(live: LiveRun): void {
     if (live.idleTimer) clearTimeout(live.idleTimer)
+    this.clearOrphan(live)
     live.closed = true
     for (const p of [...live.prompts.values()]) {
       resolvePromptRow({ db: live.spec.db, schema: live.spec.schema }, p.id, 'cancelled')
@@ -247,9 +277,9 @@ class ClaudeHost {
     setRunStatus(live.spec.db, live.spec.schema, runId, 'running')
     live.emit({ t: 'status', status: 'busy' })
     return new Promise<TurnResult>((resolve) => {
-      live.turn = { turnId: cb.turnId ?? null, cb, text: '', resolve, interrupted: false }
       // uuid lets results/stream events be bound back to this send (user_message_uuid); the CLI stamps session_id itself.
       const uuid = randomUUID()
+      live.turn = { turnId: cb.turnId ?? null, cb, uuid, activity: false, text: '', resolve, interrupted: false }
       try { cb.onUserUuid?.(uuid) } catch { /* ignore */ }
       const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: uuid as SDKUserMessage['uuid'] } as SDKUserMessage
       live.input.push(msg)
@@ -342,6 +372,14 @@ class ClaudeHost {
   }
 
   liveRunIds(): string[] { return [...this.runs.keys()].filter((id) => !this.runs.get(id)!.closed) }
+}
+
+// Did this event come from the turn's own main thread? Subagent output (parent set) and the CLI's bookkeeping
+// (task notifications, status, context) do not prove that our message is being worked on.
+function isTurnOutput(e: RunEvent): boolean {
+  if (e.t === 'local_command') return true
+  if (e.t === 'assistant_text' || e.t === 'thinking' || e.t === 'tool_use' || e.t === 'text_delta') return e.parent == null
+  return false
 }
 
 function summarizeInput(input: unknown): string {
