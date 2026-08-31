@@ -37,6 +37,9 @@ const done = normalize({ type: 'result', subtype: 'success', is_error: false, re
 assert.equal(done[0]!.t, 'turn_done')
 assert.equal((done[0] as any).resultText, 'final')
 assert.equal((done[0] as any).usage.models[0].model, 'claude-sonnet-5')
+assert.equal((done[0] as any).userMessageUuid, undefined, 'absent when the CLI does not echo one')
+const donePlus = normalize({ type: 'result', subtype: 'success', is_error: false, result: 'final', total_cost_usd: 0.5, duration_ms: 1200, num_turns: 3, session_id: 'S1', user_message_uuid: 'send-1', modelUsage: {} })
+assert.equal((donePlus[0] as any).userMessageUuid, 'send-1', 'the send this result answers is carried through')
 
 // Cumulative → per-turn deltas (streaming-input mode reports running totals per query() lifetime)
 const t1 = { models: [{ model: 'm', inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheCreateTokens: 0, costUsd: 0.1, costSource: 'reported' as const }], costUsd: 0.1, costSource: 'reported' as const, numTurns: 1, durationMs: 1000 }
