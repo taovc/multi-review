@@ -90,23 +90,6 @@ export function normalize(msg: SDKMessage | any): RunEvent[] {
   return out
 }
 
-// Whose turn did this result end? The CLI emits one result per turn IT ran, and not every turn is one we asked for:
-// a background-task notification queued while the session was closed wakes the session up and completes in
-// milliseconds with an empty result, before our own message is even dequeued. Ending our turn on that one closes the
-// reply with no text and orphans everything the real turn goes on to produce.
-//
-// `user_message_uuid` echoes the uuid we minted for our send, which settles it — except that the CLI leaves it out on
-// its own meta turns AND older CLIs never send it at all, and those two look alike. So an unnamed result that did
-// nothing (no model turn, no text) while our turn has produced nothing either is reported as 'unsure': probably a meta
-// turn, but the caller must keep a fallback so an old CLI cannot leave the turn hanging forever.
-export function resultOwner(e: Extract<RunEvent, { t: 'turn_done' }>, turn: { uuid: string | null; activity: boolean; interrupted?: boolean }): 'ours' | 'foreign' | 'unsure' {
-  if (turn.interrupted) return 'ours' // we asked the CLI to stop: the next result ends this turn, empty or not
-  if (!turn.uuid) return 'ours' // nothing to match against (a send that minted no uuid): behave as before
-  if (e.userMessageUuid) return e.userMessageUuid === turn.uuid ? 'ours' : 'foreign'
-  if (e.isError) return 'ours' // a session-scoped failure names no send and still has to end our turn
-  return e.numTurns === 0 && !e.resultText && !turn.activity ? 'unsure' : 'ours'
-}
-
 function toolResultText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
