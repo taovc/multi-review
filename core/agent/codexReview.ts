@@ -8,6 +8,7 @@ import {
   type ReviewResult,
 } from './review'
 import { buildRecheckPrompt, RECHECK_PROCEDURE, RecheckSchema, touchesHistory, type RecheckAgentOptions, type RecheckResult } from './recheck'
+import { unescapeNewlines } from './structured'
 import { resolveLang } from './lang'
 import type { ReviewRunner } from './runners'
 import type { ProviderUsage } from '../runs/types'
@@ -117,7 +118,7 @@ function parseJsonOrThrow(raw: string, label: string): unknown {
 }
 
 export function parseCodexReviewJson(raw: string): ReviewResult {
-  const parsed = parseJsonOrThrow(raw, 'review')
+  const parsed = unescapeNewlines(parseJsonOrThrow(raw, 'review'))
   const result = ReviewResultSchema.safeParse(parsed)
   if (!result.success) {
     const issues = result.error.issues.map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('; ')
@@ -127,7 +128,7 @@ export function parseCodexReviewJson(raw: string): ReviewResult {
 }
 
 export function parseCodexRecheckJson(raw: string): RecheckResult {
-  const parsed = parseJsonOrThrow(raw, 'recheck')
+  const parsed = unescapeNewlines(parseJsonOrThrow(raw, 'recheck'))
   const result = RecheckSchema.safeParse(parsed)
   if (!result.success) {
     const issues = result.error.issues.map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('; ')
