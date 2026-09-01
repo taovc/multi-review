@@ -25,10 +25,12 @@ export const RecheckSchema = z.object({
         status: z.enum(['fixed', 'partial', 'unaddressed', 'replied', 'new']),
         // What we now think of the finding itself, independently of the author.
         stance: z.enum(['kept', 'retracted', 'adjusted', 'discuss']).default('kept'),
-        // Required when the stance differs from the previous round's — the one thing a reviewer most wants to read,
-        // and the only bookkeeping the schema asks for. Nothing here attests to having read the history: the tool
-        // calls record that on their own.
-        stanceReason: z.string().default(''),
+        // Present only when the stance differs from the previous round's — the one thing a reviewer most wants to
+        // read, and the only bookkeeping the schema asks for. Optional rather than required-and-usually-empty: a
+        // required field the instructions tell you to leave blank is a field the model fights, and this schema is
+        // delivered through a validator that retries five times and then fails the whole round.
+        // Nothing here attests to having read the history — the tool calls record that on their own.
+        stanceReason: z.string().optional(),
         text: z.string().default(''),
       }),
     )
@@ -136,7 +138,8 @@ merged now. The conclusion replaces the one shown in the UI — write it for the
 
 Output **JSON only** (no code fences):
 {
-  "rechecks": [ { "fid": "F1", "status": "fixed", "stance": "kept", "stanceReason": "", "text": "explanation, citing the specific commit/line" } ],
+  "rechecks": [ { "fid": "F1", "status": "fixed", "stance": "kept", "text": "explanation, citing the specific commit/line" } ],
+  // include "stanceReason" on an item ONLY when its stance differs from the previous round's; omit the field otherwise
   "newFindings": [ { "severity": "High|Medium|Low", "title": "one-line title", "location": "path:line",
     "problem": "why it is a problem", "detail": "details", "fix": "how to fix it", "text": "which commit/line introduced it" } ],
   "conclusion": "overall verdict: which blockers remain, whether it can be merged"
@@ -150,7 +153,7 @@ ${outputLangClause(resolveLang(opts.lang))}
 // of 40 was already failing outright on a third of real runs.
 export const RECHECK_MAX_TURNS = 120
 
-export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }> {
+export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null; historyRead: boolean }> {
   const prompt = buildRecheckPrompt(opts)
   const stream = query({
     prompt,
@@ -160,13 +163,17 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
   let costUsd = 0
   let usage: ProviderUsage | null = null
   let structured: unknown = null
+  let historyRead = false
   for await (const msg of stream) {
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content
       if (Array.isArray(content)) {
         for (const b of content) {
           if (b.type === 'text') text += b.text
-          else if (b.type === 'tool_use') opts.onTool?.(b.name, String(b.input?.command || b.input?.file_path || b.input?.pattern || '').slice(0, 80))
+          else if (b.type === 'tool_use') {
+            if (touchesHistory(b.input, opts.historyPath)) historyRead = true
+            opts.onTool?.(b.name, String(b.input?.command || b.input?.file_path || b.input?.pattern || '').slice(0, 80))
+          }
         }
       }
     } else if (msg.type === 'result') {
@@ -177,5 +184,13 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
     }
   }
   const result = parseStructured(RecheckSchema, structured, text)
-  return { result, costUsd, usage }
+  return { result, costUsd, usage, historyRead }
+}
+
+// Whether a tool call went at the prepared history. Checked against the whole input, because the file gets opened with
+// Read as often as with grep or sed, and the event log the pipeline keeps truncates long paths.
+export function touchesHistory(input: unknown, historyPath: string): boolean {
+  let s = ''
+  try { s = JSON.stringify(input ?? '') } catch { return false }
+  return s.includes(historyPath) || s.includes(HISTORY_FILE)
 }

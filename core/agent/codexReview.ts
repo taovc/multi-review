@@ -7,7 +7,7 @@ import {
   type ReviewAgentOptions,
   type ReviewResult,
 } from './review'
-import { buildRecheckPrompt, RECHECK_PROCEDURE, RecheckSchema, type RecheckAgentOptions, type RecheckResult } from './recheck'
+import { buildRecheckPrompt, RECHECK_PROCEDURE, RecheckSchema, touchesHistory, type RecheckAgentOptions, type RecheckResult } from './recheck'
 import { resolveLang } from './lang'
 import type { ReviewRunner } from './runners'
 import type { ProviderUsage } from '../runs/types'
@@ -60,7 +60,7 @@ const RECHECK_RESULT_JSON_SCHEMA = {
           stanceReason: { type: 'string' },
           text: { type: 'string' },
         },
-        required: ['fid', 'status', 'stance', 'stanceReason', 'text'],
+        required: ['fid', 'status', 'stance', 'text'], // stanceReason only when the stance actually changed
       },
     },
     newFindings: {
@@ -165,7 +165,8 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
 }
 
 // ── Recheck after the author's update (codex) ── needs gh to read PR comments → allow network
-export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }> {
+export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null; historyRead: boolean }> {
+  let historyRead = false
   try {
     const { raw, usage } = await runCodexReadonly({
     onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
@@ -178,9 +179,9 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       allowNetwork: true,
       mcp: opts.mcp,
       label: 'recheck',
-      onTool: opts.onTool,
+      onTool: (name, info) => { if (touchesHistory(info, opts.historyPath)) historyRead = true; opts.onTool?.(name, info) },
     })
-    return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage }
+    return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage, historyRead }
   } catch (error) {
     throw normalizeCodexReviewError(error)
   }

@@ -10,7 +10,7 @@ const tmp = mkdtempSync(path.join(tmpdir(), 'pr-cockpit-history-'))
 process.env.DB_PATH = path.join(tmp, 'cockpit.db')
 
 const {
-  ROUND_EVENT, INSTRUCTION_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent, historyWasRead,
+  ROUND_EVENT, INSTRUCTION_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent,
   loadFindingHistory, recordRoundInstruction, removeReviewHistory, reviewHistoryDir, reviewHistoryRoot,
   sweepOrphanHistories, writeReviewHistory,
 } = await import('../core/agent/reviewHistory')
@@ -121,14 +121,15 @@ const ev = (kind: string, ts: string, message?: string) =>
   assert.ok(reviewHistoryRoot().startsWith(tmp), 'the root follows DB_PATH')
 }
 
-// ── did it read the thing: from the tool trace, never from self-report ──
+// ── did it open what we prepared: reported by the agent loop, which sees untruncated tool input ──
 {
-  d.insert(schema.runs).values({ id: 'RUN', kind: 'review', subkind: 'recheck', provider: 'claude', status: 'done', createdAt: now, updatedAt: now } as any).run()
-  assert.equal(historyWasRead(d, schema, 'RUN'), false)
-  d.insert(schema.runEvents).values({ id: nanoid(), runId: 'RUN', seq: 1, ts: now, kind: 'tool_result', data: JSON.stringify({ output: 'cannot open review-history.md' }) } as any).run()
-  assert.equal(historyWasRead(d, schema, 'RUN'), false, 'a failed open mentions the path too — that is not having read it')
-  d.insert(schema.runEvents).values({ id: nanoid(), runId: 'RUN', seq: 2, ts: now, kind: 'tool_use', data: JSON.stringify({ name: 'Read', input: { file_path: '/x/review-history.md' } }) } as any).run()
-  assert.equal(historyWasRead(d, schema, 'RUN'), true)
+  const { touchesHistory } = await import('../core/agent/recheck')
+  const hp = '/var/data/review-history/RV/review-history.md'
+  assert.equal(touchesHistory({ file_path: hp }, hp), true)
+  assert.equal(touchesHistory({ command: `sed -n '1,80p' ${hp}` }, hp), true, 'opened with a shell tool, not Read')
+  assert.equal(touchesHistory({ pattern: 'stance', path: '/var/data/review-history/RV' }, hp), false, 'the directory alone is not the file')
+  assert.equal(touchesHistory({ command: 'git diff HEAD~1..HEAD' }, hp), false)
+  assert.equal(touchesHistory(undefined, hp), false)
 }
 
 rmSync(tmp, { recursive: true, force: true })

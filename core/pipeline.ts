@@ -15,7 +15,7 @@ import { reviewAborts } from './agent/reviewAborts'
 import { getAgentSettings } from './agent/settings'
 import { projectDirNameFor } from './host/options'
 import {
-  ROUND_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent, historyWasRead, loadFindingHistory, writeReviewHistory,
+  ROUND_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent, loadFindingHistory, writeReviewHistory,
 } from './agent/reviewHistory'
 
 export function selectReviewRunner(provider?: ReviewProvider): ReviewRunner {
@@ -308,7 +308,7 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     emit('stage', `历史已备好（${findingHistory.length} 条 finding · ${Math.round(bytes / 1024)}KB）：${historyPath}`)
 
     emit('stage', '复审中：判断作者改了没 + 我方立场')
-    const { result, usage } = await selectReviewRunner(ctx.provider).runRecheck({
+    const { result, usage, historyRead } = await selectReviewRunner(ctx.provider).runRecheck({
       cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, defaultBranch: ctx.defaultBranch,
       requirement: review?.requirement ?? null,
       intent,
@@ -353,8 +353,8 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     const newConclusion = result.conclusion?.trim()
     setStatus('draft', { headSha: wt.headSha, authorUpdated: false, ...(newConclusion ? { conclusion: newConclusion } : {}) })
     finishRun(db, schema, runId, { status: 'done' })
-    // Ground truth, not self-report: the tool calls say whether it opened the history we prepared.
-    if (findingHistory.some((f) => f.roundTexts.length) && !historyWasRead(db, schema, runId)) {
+    // Ground truth, not self-report: the agent's own tool calls say whether it opened the history we prepared.
+    if (findingHistory.some((f) => f.roundTexts.length) && !historyRead) {
       emit('history-skipped', '本轮未查阅历史文件（结论仅基于本轮所见）')
     }
     db.insert(schema.events).values({ id: nanoid(), reviewId, ts: now(), kind: ROUND_EVENT, message: `round ${round}` }).run()

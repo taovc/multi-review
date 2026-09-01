@@ -233,17 +233,6 @@ export function sweepOrphanHistories(liveReviewIds: Set<string>): number {
   return removed
 }
 
-// ── did it actually read the thing? ──
-
-// Asking the agent to attest that it consulted the history measures its willingness to say yes. The tool calls are
-// already recorded, so read those instead: ground truth, no extra output, and no incentive to perform diligence.
-export function historyWasRead(db: any, schema: any, runId: string): boolean {
-  const rows = db.select().from(schema.runEvents).where(eq(schema.runEvents.runId, runId)).all() as { kind: string; data: string | null }[]
-  // The file name is distinctive enough to be conclusive, and it appears in the call whether the agent used Read,
-  // grep or sed. A tool_result alone does not count: a failed open mentions the path too.
-  return rows.some((r) => r.kind === 'tool_use' && (r.data || '').includes(HISTORY_FILE))
-}
-
 // Load every finding with its rounds, ready for both the index and the file.
 export function loadFindingHistory(db: any, schema: any, reviewId: string, opts: { includeRounds: boolean }): HistoryFinding[] {
   const findings = db.select().from(schema.findings).where(eq(schema.findings.reviewId, reviewId)).all() as any[]
