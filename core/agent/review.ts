@@ -47,12 +47,20 @@ const outputSpec = (lang: string) => `When you are done, output **only a single 
 Sort findings by severity, High→Medium→Low. ${outputLangClause(lang)}
 Break requirement / testPath onto **real newlines** (\\n inside the JSON string), one step/point per line, each section (${REVIEW_SECTIONS.join(', ')}) starting on its own line — do not cram everything into one run-on block.`
 
-export function buildReviewPrompt(opts: { repo: string; prNumber: number; branch: string; defaultBranch: string; lang: string }) {
+export function buildReviewPrompt(opts: { repo: string; prNumber: number; branch: string; defaultBranch: string; lang: string; instruction?: string | null }) {
   const { repo, prNumber, branch, defaultBranch } = opts
+  const instruction = (opts.instruction || '').trim()
   return `You are inside a git worktree (the current directory is the repo, with PR #${prNumber}'s branch ${branch} checked out and ${defaultBranch} merged in).
 
 Review PR #${prNumber} of repo ${repo}.
+${instruction ? `
+The reviewer asked for this pass specifically:
 
+> ${instruction.replace(/\n/g, '\n> ')}
+
+It narrows where you look; it does not lower the bar for what you report once you look. Anything the methodology
+treats as a blocker is still a blocker even if it falls outside what was asked for.
+` : ''}
 Steps:
 1. Look at the changes: \`git diff origin/${defaultBranch}...HEAD\`, \`git log origin/${defaultBranch}..HEAD --oneline\`
 2. Read the relevant files as needed and grep for call sites (for any changed exported name, grep the whole repo for who uses it)
@@ -75,6 +83,7 @@ export type ReviewAgentOptions = ReviewHostOptions & {
   prNumber: number
   branch: string
   defaultBranch: string
+  instruction?: string | null // what the reviewer typed before this pass started (one-shot: it steers this pass only)
   methodology: string
   model: string
   effort?: string
@@ -119,115 +128,4 @@ export async function runReviewAgent(opts: ReviewAgentOptions): Promise<{ result
 
   const parsed = parseStructured(ReviewResultSchema, structured, text)
   return { result: parsed, costUsd, raw: text, usage }
-}
-
-// ── Targeted re-review driven by reviewer feedback (guided) ──
-export const GuidedFindingSchema = z.object({
-  fid: z.string().optional(), // set when it maps to an existing finding; omitted for newly found ones
-  severity: z.enum(['High', 'Medium', 'Low']),
-  title: z.string(),
-  location: z.string().default(''),
-  problem: z.string().default(''),
-  detail: z.string().default(''),
-  fix: z.string().default(''),
-  introducedByPr: z.boolean().default(true),
-  response: z
-    .object({
-      status: z.enum(['kept', 'retracted', 'adjusted', 'discuss', 'new']),
-      text: z.string().default(''),
-    })
-    .optional(),
-})
-export const GuidedResultSchema = z.object({
-  findings: z.array(GuidedFindingSchema).default([]),
-  logic: z.string().default(''),
-  quality: z.string().default(''),
-  risk: z.string().default(''),
-  conclusion: z.string().default(''),
-  requirement: z.string().default(''),
-  testPath: z.string().default(''),
-})
-export type GuidedResult = z.infer<typeof GuidedResultSchema>
-const GUIDED_JSON_SCHEMA = jsonSchemaFor(GuidedResultSchema)
-
-export type GuidedInput = { fid: string; severity: string; title: string; location: string | null; problem: string | null; reviewerNote: string | null }
-
-export type GuidedReviewAgentOptions = ReviewHostOptions & {
-  cwd: string
-  repo: string
-  prNumber: number
-  branch: string
-  defaultBranch: string
-  methodology: string
-  model: string
-  effort?: string
-  codexServiceTier?: string | null
-  lang?: string
-  existing: GuidedInput[]
-  instruction: string
-  globalNotes: string
-  onTool?: (name: string, info: string) => void
-}
-
-export function buildGuidedReviewPrompt(opts: GuidedReviewAgentOptions): string {
-  return `You are inside a git worktree (PR #${opts.prNumber}'s branch ${opts.branch} is checked out with ${opts.defaultBranch} merged in). This is a **targeted re-review driven by reviewer feedback**, not a review from scratch.
-
-The reviewer's feedback on the previous round:
-- Review instruction (focus here — review specifically what I mention): ${opts.instruction || '(none)'}
-- General notes: ${opts.globalNotes || '(none)'}
-
-Findings from the previous round (reviewerNote is the reviewer's reply/challenge/addition for that item):
-${JSON.stringify(opts.existing, null, 2)}
-
-Steps:
-1. Look at the changes: git diff origin/${opts.defaultBranch}...HEAD; read files / grep as needed
-2. Focus your checks on the reviewer's instruction
-3. For every existing finding, respond in light of its reviewerNote:
-   - kept: stand by the original call (explain why)
-   - retracted: withdraw it (the reviewer is right / I judged wrong before — explain why you withdraw)
-   - adjusted: adjust it (change severity or wording — explain how)
-   - discuss: you are unsure too and want to discuss with the reviewer (ask a concrete question)
-   Every existing finding must carry its original fid and a response.
-4. If the reviewer's instruction surfaces a **new problem**, add a new finding (no fid, response.status="new").
-
-Discipline: read-only (git diff/log/show, grep, reading files, gh pr view). ❌ Any git write operation is forbidden.
-
-At the end, output **JSON only** (no code fences):
-{ "findings": [ { "fid": "F1" (include it when the finding already exists), "severity": "...", "title": "...", "location": "path:line",
-   "problem": "...", "detail": "...", "fix": "...", "introducedByPr": true,
-   "response": { "status": "kept|retracted|adjusted|discuss|new", "text": "<your response to the reviewer>" } } ],
-  "logic": "...", "quality": "...", "risk": "...", "conclusion": "overall conclusion of this re-review round",
-  "requirement": "...", "testPath": "..." }
-
-${outputLangClause(resolveLang(opts.lang))}
-⚠️ Strictly valid JSON: **never leave an unescaped ASCII double quote \`"\`** inside a string; always quote with 「」 or backticks \`.`
-}
-
-export async function runGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number; usage: ProviderUsage | null }> {
-  const prompt = buildGuidedReviewPrompt(opts)
-  const stream = query({
-    prompt,
-    options: buildReviewOptions({ cwd: opts.cwd, model: opts.model, effort: opts.effort, methodology: withContract(opts.methodology), maxTurns: 50, mcp: opts.mcp, chrome: opts.chrome, projectDirName: opts.projectDirName, abort: opts.abort, outputSchema: GUIDED_JSON_SCHEMA }),
-  })
-  let text = ''
-  let costUsd = 0
-  let usage: ProviderUsage | null = null
-  let structured: unknown = null
-  for await (const msg of stream) {
-    if (msg.type === 'assistant') {
-      const content = (msg as any).message?.content
-      if (Array.isArray(content)) {
-        for (const b of content) {
-          if (b.type === 'text') text += b.text
-          else if (b.type === 'tool_use') opts.onTool?.(b.name, String(b.input?.command || b.input?.pattern || b.input?.file_path || '').slice(0, 80))
-        }
-      }
-    } else if (msg.type === 'result') {
-      const c = (msg as any).total_cost_usd
-      if (typeof c === 'number') costUsd += c
-      usage = usageFromClaudeResult(msg, opts.model)
-      structured = (msg as any).structured_output ?? null
-    }
-  }
-  return { result: parseStructured(GuidedResultSchema, structured, text), costUsd, usage }
 }

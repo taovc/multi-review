@@ -19,6 +19,7 @@ export async function runCodexReadonly(opts: {
   mcp?: boolean
   label: string
   onTool?: (name: string, info: string) => void
+  onRawTool?: (input: unknown) => void // untruncated tool input; onTool's `info` is cut to 100 chars
   onStop?: (stop: () => void) => void
 }): Promise<{ raw: string; usage: ProviderUsage | null }> {
   const runId = `codex-${opts.label.replace(/\s+/g, '-')}-${nanoid(8)}`
@@ -32,7 +33,7 @@ export async function runCodexReadonly(opts: {
     if (stopped) throw new Error(`Codex ${opts.label} 已被用户停止`)
     const r = await codexHost.send(runId, opts.prompt, {
       onTool: (name, info) => opts.onTool?.(name === 'Bash' ? 'CodexCommand' : name === 'ApplyPatch' ? 'CodexFileChange' : name.startsWith('mcp__') ? 'CodexMcp' : name === 'WebSearch' ? 'CodexWebSearch' : name, info),
-      onEvent: (e) => { if (e.t === 'permission_denied') opts.onTool?.('CodexBlocked', e.message.slice(0, 140)); else if (e.t === 'note') opts.onTool?.('CodexWarning', e.text.slice(0, 140)) },
+      onEvent: (e) => { if (e.t === 'tool_use') opts.onRawTool?.(e.input); else if (e.t === 'permission_denied') opts.onTool?.('CodexBlocked', e.message.slice(0, 140)); else if (e.t === 'note') opts.onTool?.('CodexWarning', e.text.slice(0, 140)) },
     })
     if (r.interrupted || stopped) throw new Error(`Codex ${opts.label} 已被用户停止`)
     if (r.isError) throw new Error(`Codex ${opts.label} turn failed: ${r.error || r.text || 'unknown error'}`)

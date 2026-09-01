@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reviewSectionRe } from '~core/agent/reviewSections'
+import { isRecheckResolved, stanceOf } from '~core/recheckAxes'
 
 const props = defineProps<{ projectId: string; prNumber: number; reviewId: string | null }>()
 const emit = defineEmits<{ created: [id: string]; changed: [] }>()
@@ -9,7 +10,7 @@ type Finding = {
   id: string; fid: string; severity: 'High' | 'Medium' | 'Low'; title: string
   location: string | null; problem: string | null; detail: string | null; fix: string | null
   introducedByPr: boolean; checked: boolean; notes: string | null; verifyStatus?: 'confirmed' | 'refuted' | 'unsure' | null; verifyNote?: string | null
-  rechecks: { round: number; status: string; text: string | null; at: string }[]
+  rechecks: { round: number; status: string; stance?: string | null; stanceReason?: string | null; text: string | null; at: string }[]
 }
 type RunInfo = { id: string; subkind: string; provider: string; model: string | null; effort: string | null; status: string; costUsd: number | null; costSource: string | null; inputTokens: number; outputTokens: number; durationMs: number; skillVersion: number | null; skillName: string | null } | null
 type ReviewData = {
@@ -57,15 +58,16 @@ async function load() {
   }
 }
 
-// Fixed (latest recheck round = fixed) → uncheck; not fixed (any other recheck status) → check. Only touches findings that were rechecked,
-// ones never rechecked stay as they are; the user can still change them by hand afterwards. Posting follows the checkboxes, so this directly decides what gets posted.
+// Resolved by the latest round (we retracted it, or the author fixed/replied) → uncheck; still open → check. Only touches
+// findings that were rechecked; ones never rechecked stay as they are and the user can still change them by hand.
+// Posting follows the checkboxes, so this decides what goes out — a retracted finding must not be ticked back on.
 async function autoAdjustChecks() {
   const fs = data.value?.findings ?? []
   const changed: Finding[] = []
   for (const f of fs) {
     if (!f.rechecks.length) continue
     const latest = f.rechecks[f.rechecks.length - 1]!
-    const desired = latest.status !== 'fixed'
+    const desired = !isRecheckResolved(latest)
     if (f.checked !== desired) { f.checked = desired; changed.push(f) }
   }
   if (!changed.length) return
@@ -101,11 +103,15 @@ const STATUS: Record<string, string> = {
 function statusLabel(s: string) { const k = STATUS[s]; return k ? t(k) : s }
 const running = computed(() => ['queued', 'cloning', 'reviewing', 'recheck_requested', 'rechecking', 'posting'].includes(data.value?.review?.status))
 
+// Guidance for the very first pass. Without it the first review is blind to intent and the only way to steer is to let
+// it go wide once and correct afterwards — which is what every extra round was paying for.
+const startInstruction = ref('')
+
 async function startReview() {
   busy.value = 'start'
   try {
     const res = await $fetch<{ created: { id: string }[] }>('/api/reviews', {
-      method: 'POST', body: { projectId: props.projectId, pulls: [{ number: props.prNumber }] },
+      method: 'POST', body: { projectId: props.projectId, pulls: [{ number: props.prNumber }], instruction: startInstruction.value.trim() || undefined },
     })
     const id = res.created[0]?.id
     if (id) { rid.value = id; emit('created', id) }
@@ -113,8 +119,8 @@ async function startReview() {
 }
 // A modal popped inside the drawer gets blocked by USlideover's focus trap and can't be clicked → use in-place two-step confirmation instead, without closing the drawer, so you can watch the log while it runs
 const confirming = ref<'' | 'rerun' | 'recheck' | 'fresh' | 'delete'>('')
-// fresh=true → full review from scratch (wipes findings/notes, non-guided review);
-// false → guided re-review that keeps findings + notes.
+// fresh=true → full review from scratch (wipes findings/notes);
+// false → re-review that keeps findings + notes and judges them round by round.
 async function stopRun() {
   busy.value = 'stop'
   try { await $fetch(`/api/reviews/${rid.value}/stop`, { method: 'POST' }) } catch (e: any) { live.value = e?.data?.statusMessage || e?.message || String(e) } finally { busy.value = '' }
@@ -246,11 +252,22 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
 <template>
   <div class="flex-1 overflow-y-auto px-6 py-5">
     <!-- no task -->
-    <div v-if="!rid" class="text-center py-16">
-      <p class="text-sm text-dimmed mb-4">{{ $t('review.noTask') }}</p>
-      <button class="text-sm bg-inverted text-inverted px-5 py-2 hover:bg-inverted/90 disabled:opacity-40" :disabled="busy === 'start'" @click="startReview">
-        {{ busy === 'start' ? $t('review.creatingTask') : $t('review.startReview') }}
-      </button>
+    <div v-if="!rid" class="py-16">
+      <p class="text-sm text-dimmed mb-4 text-center">{{ $t('review.noTask') }}</p>
+      <div class="max-w-xl mx-auto">
+        <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.startInstructionLabel') }}</div>
+        <textarea
+          v-model="startInstruction" rows="2"
+          :placeholder="$t('review.startInstructionPlaceholder')"
+          class="w-full text-sm bg-muted border border-default rounded px-2 py-1 resize-y outline-none focus:border-accented"
+        />
+        <p class="text-[11px] text-dimmed mt-1">{{ $t('review.startInstructionHint') }}</p>
+      </div>
+      <div class="text-center mt-4">
+        <button class="text-sm bg-inverted text-inverted px-5 py-2 hover:bg-inverted/90 disabled:opacity-40" :disabled="busy === 'start'" @click="startReview">
+          {{ busy === 'start' ? $t('review.creatingTask') : $t('review.startReview') }}
+        </button>
+      </div>
     </div>
 
     <template v-else-if="data">
@@ -354,8 +371,9 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
               <pre v-if="f.fix" class="text-xs bg-muted border border-default rounded p-2 whitespace-pre-wrap mt-1 overflow-x-auto">{{ f.fix }}</pre>
             </details>
             <div v-for="r in f.rechecks" :key="r.round" class="text-xs mt-2 border-l-2 border-default pl-2">
-              <span class="font-medium">🔁 {{ $t('review.recheckRound', { round: r.round }) }} · {{ rcLabel(r.status) }}</span>
+              <span class="font-medium">🔁 {{ $t('review.recheckRound', { round: r.round }) }} · {{ rcLabel(r.status) }}<template v-if="stanceOf(r)"> · {{ rcLabel(stanceOf(r)!) }}</template></span>
               <span class="text-muted"> {{ r.text }}</span>
+              <div v-if="r.stanceReason" class="text-muted mt-0.5">↳ {{ r.stanceReason }}</div>
             </div>
             <textarea
               v-model="f.notes" rows="1" :placeholder="$t('review.notePlaceholder')"

@@ -3,15 +3,11 @@ import { formatCodexProviderError, previewRawOutput, rawCodexErrorMessage } from
 import { runCodexReadonly } from '../codex/oneshot'
 import {
   buildReviewPrompt,
-  buildGuidedReviewPrompt,
-  GuidedResultSchema,
   ReviewResultSchema,
-  type GuidedResult,
-  type GuidedReviewAgentOptions,
   type ReviewAgentOptions,
   type ReviewResult,
 } from './review'
-import { buildRecheckPrompt, RecheckSchema, type RecheckAgentOptions, type RecheckResult } from './recheck'
+import { buildRecheckPrompt, RECHECK_PROCEDURE, RecheckSchema, touchesHistory, type RecheckAgentOptions, type RecheckResult } from './recheck'
 import { resolveLang } from './lang'
 import type { ReviewRunner } from './runners'
 import type { ProviderUsage } from '../runs/types'
@@ -48,47 +44,6 @@ const REVIEW_RESULT_JSON_SCHEMA = {
   required: ['findings', 'logic', 'quality', 'risk', 'conclusion', 'requirement', 'testPath'],
 } as const
 
-const GUIDED_RESULT_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    findings: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          fid: { type: 'string' }, // only set when it matches an existing finding; new findings send an empty string (turned into absent at parse time)
-          severity: { type: 'string', enum: ['High', 'Medium', 'Low'] },
-          title: { type: 'string' },
-          location: { type: 'string' },
-          problem: { type: 'string' },
-          detail: { type: 'string' },
-          fix: { type: 'string' },
-          introducedByPr: { type: 'boolean' },
-          response: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              status: { type: 'string', enum: ['kept', 'retracted', 'adjusted', 'discuss', 'new'] },
-              text: { type: 'string' },
-            },
-            required: ['status', 'text'],
-          },
-        },
-        required: ['fid', 'severity', 'title', 'location', 'problem', 'detail', 'fix', 'introducedByPr', 'response'],
-      },
-    },
-    logic: { type: 'string' },
-    quality: { type: 'string' },
-    risk: { type: 'string' },
-    conclusion: { type: 'string' },
-    requirement: { type: 'string' },
-    testPath: { type: 'string' },
-  },
-  required: ['findings', 'logic', 'quality', 'risk', 'conclusion', 'requirement', 'testPath'],
-} as const
-
 const RECHECK_RESULT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -101,9 +56,14 @@ const RECHECK_RESULT_JSON_SCHEMA = {
         properties: {
           fid: { type: 'string' },
           status: { type: 'string', enum: ['fixed', 'partial', 'unaddressed', 'replied', 'new'] },
+          stance: { type: 'string', enum: ['kept', 'retracted', 'adjusted', 'discuss'] },
+          stanceReason: { type: 'string' },
           text: { type: 'string' },
         },
-        required: ['fid', 'status', 'text'],
+        // Every hand-written schema here lists all properties in `required` (strict structured output rejects a
+        // schema that does not). The Claude side makes stanceReason optional because a required-and-usually-empty
+        // field destabilised its output; Codex keeps it required, with the prompt telling it to send an empty string.
+        required: ['fid', 'status', 'stance', 'stanceReason', 'text'],
       },
     },
     newFindings: {
@@ -166,20 +126,6 @@ export function parseCodexReviewJson(raw: string): ReviewResult {
   return result.data
 }
 
-export function parseCodexGuidedJson(raw: string): GuidedResult {
-  const parsed = parseJsonOrThrow(raw, 'guided review') as { findings?: Array<{ fid?: string | null }> }
-  // A new finding's fid is an empty string/null; zod's optional rejects null, and an empty string must not be taken for an existing finding → make it absent.
-  if (parsed && Array.isArray(parsed.findings)) {
-    for (const f of parsed.findings) if (f && !f.fid) delete f.fid
-  }
-  const result = GuidedResultSchema.safeParse(parsed)
-  if (!result.success) {
-    const issues = result.error.issues.map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('; ')
-    throw new CodexReviewError(`Codex guided review JSON did not match GuidedResultSchema: ${issues}. Raw output starts with: ${previewRawOutput(raw)}`, result.error)
-  }
-  return result.data
-}
-
 export function parseCodexRecheckJson(raw: string): RecheckResult {
   const parsed = parseJsonOrThrow(raw, 'recheck')
   const result = RecheckSchema.safeParse(parsed)
@@ -221,34 +167,13 @@ export async function runCodexReviewAgent(opts: ReviewAgentOptions): Promise<{ r
   }
 }
 
-// ── Targeted re-review with feedback (codex) ──
-export async function runCodexGuidedReviewAgent(opts: GuidedReviewAgentOptions): Promise<{ result: GuidedResult; costUsd: number; usage: ProviderUsage | null }> {
-  try {
-    const { raw, usage } = await runCodexReadonly({
-    onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
-      prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildGuidedReviewPrompt(opts)}\n\n(The structured output requires an fid field on every finding: use the existing finding's fid when it matches one, and set fid to the empty string "" for a new finding.)`,
-      cwd: opts.cwd,
-      model: opts.model,
-      effort: opts.effort,
-      serviceTier: opts.codexServiceTier,
-      outputSchema: GUIDED_RESULT_JSON_SCHEMA,
-      allowNetwork: true,
-      mcp: opts.mcp,
-      label: 'guided review',
-      onTool: opts.onTool,
-    })
-    return { result: parseCodexGuidedJson(raw), costUsd: usage?.costUsd ?? 0, usage }
-  } catch (error) {
-    throw normalizeCodexReviewError(error)
-  }
-}
-
 // ── Recheck after the author's update (codex) ── needs gh to read PR comments → allow network
-export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null }> {
+export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{ result: RecheckResult; costUsd: number; usage: ProviderUsage | null; historyRead: boolean }> {
+  let historyRead = false
   try {
     const { raw, usage } = await runCodexReadonly({
     onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
-      prompt: `${withContract(opts.methodology)}\n\n---\n\n${buildRecheckPrompt(opts)}`,
+      prompt: `${withContract(opts.methodology, RECHECK_PROCEDURE)}\n\n---\n\n${buildRecheckPrompt(opts)}\n\n(This structured output requires "stanceReason" on every recheck item: send the reason when the stance changed, and an empty string "" when it did not.)`,
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
@@ -258,8 +183,9 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       mcp: opts.mcp,
       label: 'recheck',
       onTool: opts.onTool,
+      onRawTool: (input) => { if (touchesHistory(input, opts.historyPath)) historyRead = true },
     })
-    return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage }
+    return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage, historyRead }
   } catch (error) {
     throw normalizeCodexReviewError(error)
   }
@@ -267,6 +193,5 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
 
 export const codexReviewRunner: ReviewRunner = {
   runReview: runCodexReviewAgent,
-  runGuidedReview: runCodexGuidedReviewAgent,
   runRecheck: runCodexRecheckAgent,
 }

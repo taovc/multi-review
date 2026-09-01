@@ -128,6 +128,9 @@ function ensureColumns(sqlite: Database.Database) {
     ['reviews', 'last_run_id', 'TEXT'],
     ['reviews', 'skill_version_id', 'TEXT'],
     ['findings', 'checked_by', 'TEXT'],
+    // the re-review's second dimension (what we think) alongside `status` (what the author did)
+    ['finding_rechecks', 'stance', 'TEXT'],
+    ['finding_rechecks', 'stance_reason', 'TEXT'],
     ['findings', 'checked_at', 'TEXT'],
     ['findings', 'posted_post_id', 'TEXT'],
     ['findings', 'human_accepted_at', 'TEXT'],

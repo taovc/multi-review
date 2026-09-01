@@ -160,9 +160,14 @@ export const findingRechecks = sqliteTable('finding_rechecks', {
   round: integer('round').notNull(),
   // Recheck (did the author fix it): fixed/partial/unaddressed/replied/new
   // Recheck with feedback (AI responding to my note): kept/retracted/adjusted/discuss/new
+  // What the AUTHOR did (this is the column every existing reader uses, and what old rows hold).
   status: text('status', {
     enum: ['fixed', 'partial', 'unaddressed', 'replied', 'new', 'kept', 'retracted', 'adjusted', 'discuss'],
   }).notNull(),
+  // What WE now think, independently of whether the author moved: the two used to be squeezed into `status`, which
+  // made "the author fixed it, and I no longer think it was worth raising" impossible to record.
+  stance: text('stance', { enum: ['kept', 'retracted', 'adjusted', 'discuss'] }),
+  stanceReason: text('stance_reason'), // required of the agent only when the stance differs from the previous round
   text: text('text'),
   at: text('at').notNull(),
 })

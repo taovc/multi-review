@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { removeWorktree } from '~core/git/worktree'
 import { optOutPr } from '~core/automation/state'
+import { removeReviewHistory, reviewHistoryRootFor } from '~core/agent/reviewHistory'
 
 // Delete a single review task: clean up its worktree at the same time (only the local task is deleted, GitHub comments are left alone)
 export default defineEventHandler(async (event) => {
@@ -17,5 +18,6 @@ export default defineEventHandler(async (event) => {
     optOutPr(d, schema, review.projectId, review.prNumber, new Date().toISOString())
   }
   d.delete(schema.reviews).where(eq(schema.reviews.id, id)).run()
+  removeReviewHistory(reviewHistoryRootFor(cfg.dbPath as string), id) // the prepared re-review history goes with the task
   return { ok: true }
 })

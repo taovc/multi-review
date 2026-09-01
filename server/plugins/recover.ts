@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { getDb, schema } from '~core/db/client'
 import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
 import { recoverHostState } from '~core/host/recover'
+import { reviewHistoryRootFor, sweepOrphanHistories } from '~core/agent/reviewHistory'
 
 const pexec = promisify(execFile)
 
@@ -97,6 +98,16 @@ export default defineNitroPlugin(async () => {
     if (stuck.length) console.log(`[recover] 重置了 ${stuck.length} 个中断的发布（posting → ready_to_post，请在 GitHub 确认后再决定是否重发）`)
   } catch (e) {
     console.error('[recover] posting 启动恢复失败', e)
+  }
+
+  // 1.6) Prepared re-review history whose task is gone: deleting a task removes its directory, but a crash between
+  // writing one and deleting it leaves a directory nobody owns. Whatever no review claims goes.
+  try {
+    const live = new Set((d.select().from(schema.reviews).all() as any[]).map((r) => r.id))
+    const removed = sweepOrphanHistories(reviewHistoryRootFor(cfg.dbPath as string), live)
+    if (removed) console.log(`[recover] 清理了 ${removed} 份无主的复审历史目录`)
+  } catch (e) {
+    console.error('[recover] 复审历史清理失败', e)
   }
 
   // 2) Interrupted upload (busy_action = pushing): the push may already have reached GitHub (it just wasn't written back).
