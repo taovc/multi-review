@@ -4,6 +4,8 @@ import { enqueueRecheck } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 import { resolveLang } from '~core/agent/lang'
+import { recordRoundInstruction } from '~core/agent/reviewHistory'
+import { nanoid } from 'nanoid'
 
 // Trigger a re-review (the author pushed again after our comment and we want the AI to check whether it was fixed)
 export default defineEventHandler(async (event) => {
@@ -31,6 +33,8 @@ export default defineEventHandler(async (event) => {
     if (!branch) throw createError({ statusCode: 400, statusMessage: '无法获取 PR 分支（可能已删除）' })
     d.update(schema.reviews).set({ branch, updatedAt: new Date().toISOString() }).where(eq(schema.reviews.id, id)).run()
   }
+
+  if (review.reviewInstruction) recordRoundInstruction(d, schema, id, review.reviewInstruction, nanoid(), new Date().toISOString())
 
   reviewQueue.setLimit(Number(cfg.maxConcurrency) || 3)
   // Clear the previous round's error when re-entering a re-review (it may have been restarted from the error state)

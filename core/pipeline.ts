@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { reviewQueue } from './queue'
 import { cockpitBus } from './events'
 import { prepareWorktree } from './git/worktree'
-import { fetchPrMergeable } from './github/gh'
+import { fetchPrMergeable, fetchReviewComments, fetchTimeline } from './github/gh'
 import { claudeReviewRunner } from './agent/claudeRunners'
 import { codexReviewRunner } from './agent/codexReview'
 import { runVerifyAgent, verdictMap } from './agent/verify'
@@ -14,6 +14,9 @@ import type { ReviewProvider, ReviewRunner } from './agent/runners'
 import { reviewAborts } from './agent/reviewAborts'
 import { getAgentSettings } from './agent/settings'
 import { projectDirNameFor } from './host/options'
+import {
+  ROUND_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent, historyWasRead, loadFindingHistory, writeReviewHistory,
+} from './agent/reviewHistory'
 
 export function selectReviewRunner(provider?: ReviewProvider): ReviewRunner {
   return provider === 'codex' ? codexReviewRunner : claudeReviewRunner
@@ -61,7 +64,7 @@ export type ReviewJobCtx = {
   effort: string
   codexServiceTier?: string | null
   lang?: string // working language of the AI output (UI locale); defaults to zh to preserve the old behavior
-  guided?: boolean // true = targeted re-review with feedback; false/undefined = fresh first review
+  instruction?: string | null // what the reviewer typed before this pass (fresh review); re-reviews read theirs from the event log
   // Observability: attribute the run to a project and to the exact skill version that ran (both optional for old callers).
   projectId?: string | null
   skillId?: string | null
@@ -124,13 +127,11 @@ async function runReviewJob(ctx: ReviewJobCtx) {
 
     setStatus('reviewing', { headSha: wt.headSha })
 
-    const existing = db.select().from(schema.findings).where(eq(schema.findings.reviewId, reviewId)).all()
     const review = db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()
-    const guided = ctx.guided && existing.length > 0
 
     // One run record per execution; the review row points at its latest run and the skill version it used.
     runId = createRun(db, schema, {
-      kind: 'review', subkind: guided ? 'guided' : 'review', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
+      kind: 'review', subkind: 'review', provider: ctx.provider === 'codex' ? 'codex' : 'claude',
       projectId: ctx.projectId ?? review?.projectId ?? null, reviewId, workspaceType: 'pr_worktree', workspacePath: wt.path,
       prNumber: ctx.prNumber, branch: ctx.branch, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier,
       skillId: ctx.skillId ?? null, skillVersionId: ctx.skillVersionId ?? null, lang: ctx.lang ?? null, title: review?.title ?? null,
@@ -141,64 +142,14 @@ async function runReviewJob(ctx: ReviewJobCtx) {
     let costUsd = 0
     let usage: any = null
 
-    if (guided) {
-      // ── Targeted re-review with feedback: keep notes/checkmarks, the AI responds item by item ──
-      emit('stage', 'AI 针对你的反馈复审中…')
-      const g = await selectReviewRunner(ctx.provider).runGuidedReview({
-        cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
-        defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
-        instruction: review?.reviewInstruction || '', globalNotes: review?.globalNotes || '',
-        existing: existing.map((f: any) => ({ fid: f.fid, severity: f.severity, title: f.title, location: f.location, problem: f.problem, reviewerNote: f.notes })),
-        onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
-      })
-      result = g.result
-      costUsd = g.costUsd
-      usage = g.usage
-      recordRunUsage(db, schema, runId, usage)
-      if (taskGone()) { emit('error', '任务已被删除，丢弃复审结果'); finishRun(db, schema, runId, { status: 'stopped', error: 'task deleted' }); return }
-
-      const byFid = new Map(existing.map((f: any) => [f.fid, f]))
-      const round =
-        db.select().from(schema.events).where(eq(schema.events.reviewId, reviewId)).all()
-          .filter((e: any) => e.kind === 'review-round').length + 1
-      let maxN = existing.reduce((m: number, f: any) => Math.max(m, parseInt(String(f.fid).replace(/\D/g, '')) || 0), 0)
-
-      for (const f of result.findings) {
-        const cur = f.fid && byFid.get(f.fid)
-        if (cur) {
-          // update the content, keep notes/checked
-          db.update(schema.findings).set({
-            severity: f.severity, title: f.title, location: f.location || null,
-            problem: f.problem || null, detail: f.detail || null, fix: f.fix || null, introducedByPr: f.introducedByPr,
-            verifyStatus: null, verifyNote: null, // the verdict was about the previous wording
-          }).where(eq(schema.findings.id, cur.id)).run()
-          if (f.response) {
-            db.insert(schema.findingRechecks).values({
-              id: nanoid(), findingId: cur.id, round, status: f.response.status, text: f.response.text || null, at: now(),
-            }).run()
-          }
-          byFid.delete(f.fid)
-        } else {
-          // new finding
-          const id = nanoid()
-          db.insert(schema.findings).values({
-            id, reviewId, fid: `F${++maxN}`, severity: f.severity, title: f.title, location: f.location || null,
-            problem: f.problem || null, detail: f.detail || null, fix: f.fix || null, introducedByPr: f.introducedByPr,
-            checked: false, notes: null, sortOrder: maxN, createdAt: now(),
-          }).run()
-          db.insert(schema.findingRechecks).values({
-            id: nanoid(), findingId: id, round, status: 'new', text: f.response?.text || null, at: now(),
-          }).run()
-        }
-      }
-      db.insert(schema.events).values({ id: nanoid(), reviewId, ts: now(), kind: 'review-round', message: `round ${round}` }).run()
-    } else {
-      // ── Fresh first review: wipe and rewrite ──
+    {
+      // ── Fresh review: wipe and rewrite (the only shape this job has; re-reviews go through runRecheckJob) ──
       emit('stage', 'AI 审核中…')
       const reviewRunner = selectReviewRunner(ctx.provider)
       const r = await reviewRunner.runReview({
         cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, branch: ctx.branch,
         defaultBranch: ctx.defaultBranch, methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang,
+        instruction: ctx.instruction ?? review?.reviewInstruction ?? null,
         onTool: (name, info) => emit('tool', `${name} ${info}`), ...hostOpts,
       })
       result = r.result
@@ -283,7 +234,7 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       testPath: result.testPath || null,
     })
     finishRun(db, schema, runId, { status: 'done' })
-    emit('done', `${guided ? '复审' : '审核'}完成 · ${formatUsageLabel(usage, costUsd)}`)
+    emit('done', `审核完成 · ${formatUsageLabel(usage, costUsd)}`)
   } catch (e) {
     const stopped = abort.signal.aborted
     const message = stopped ? '已停止' : (e as Error).message
@@ -314,9 +265,8 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
 
   const review = db.select().from(schema.reviews).where(eq(schema.reviews.id, reviewId)).get()
   const existing = db.select().from(schema.findings).where(eq(schema.findings.reviewId, reviewId)).all()
-  const round =
-    db.select().from(schema.events).where(eq(schema.events.reviewId, reviewId)).all()
-      .filter((e: any) => e.kind === 'recheck').length + 1
+  // The head the previous round judged: read it before this run overwrites it, so the diff can start there.
+  const previousHeadSha = review?.headSha ?? null
 
   let wt: { path: string; headSha: string; cleanup: () => Promise<void> } | null = null
   let runId: string | null = null
@@ -340,12 +290,30 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     // Only the run pointer: the findings were produced by an earlier (fresh/guided) review, so the review keeps that skill version.
     db.update(schema.reviews).set({ lastRunId: runId, updatedAt: now() }).where(eq(schema.reviews.id, reviewId)).run()
 
-    emit('stage', '复审中：判断作者改了没')
+    const intent = computeRoundIntent(db, schema, reviewId, wt.headSha, previousHeadSha)
+    const round = intent.round
+
+    // Prepare the round's context before the agent starts: the conversation is fetched here (one gh call) rather than
+    // spent out of the agent's turn budget, and everything bulky lands in a file it pulls from on its own.
+    emit('stage', `复审 round ${round}：准备历史${intent.instruction ? '（带你的指令）' : ''}`)
+    const [timeline, reviewComments] = await Promise.all([
+      fetchTimeline(ctx.repo, ctx.prNumber).catch(() => []),
+      fetchReviewComments(ctx.repo, ctx.prNumber).catch(() => []),
+    ])
+    const findingHistory = loadFindingHistory(db, schema, reviewId, { includeRounds: true })
+    const { path: historyPath, bytes } = writeReviewHistory(reviewId, buildHistoryDoc({
+      reviewId, repo: ctx.repo, prNumber: ctx.prNumber, intent, findings: findingHistory,
+      timeline, reviewComments, since: intent.lastRoundAt,
+    }))
+    emit('stage', `历史已备好（${findingHistory.length} 条 finding · ${Math.round(bytes / 1024)}KB）：${historyPath}`)
+
+    emit('stage', '复审中：判断作者改了没 + 我方立场')
     const { result, usage } = await selectReviewRunner(ctx.provider).runRecheck({
       cwd: wt.path, repo: ctx.repo, prNumber: ctx.prNumber, defaultBranch: ctx.defaultBranch,
-      lastPostSha: review?.lastPostSha ?? null,
       requirement: review?.requirement ?? null,
-      findings: existing.map((f: any) => ({ fid: f.fid, title: f.title, location: f.location, problem: f.problem, fix: f.fix, notes: f.notes })),
+      intent,
+      findingIndex: buildFindingIndex(findingHistory),
+      historyPath,
       methodology: ctx.methodology, model: ctx.model, effort: ctx.effort, codexServiceTier: ctx.codexServiceTier, lang: ctx.lang, onTool: (n, i) => emit('tool', `${n} ${i}`), ...hostOpts,
     })
 
@@ -359,7 +327,8 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
       const findingId = fidToId.get(r.fid)
       if (!findingId) continue // drop verdicts with no matching old finding (new issues go through newFindings)
       db.insert(schema.findingRechecks).values({
-        id: nanoid(), findingId, round, status: r.status, text: r.text || null, at: now(),
+        id: nanoid(), findingId, round, status: r.status, stance: r.stance || 'kept',
+        stanceReason: r.stanceReason || null, text: r.text || null, at: now(),
       }).run()
       applied++
     }
@@ -375,7 +344,7 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
         introducedByPr: true, checked: false, notes: null, sortOrder: maxN, createdAt: now(),
       }).run()
       db.insert(schema.findingRechecks).values({
-        id: nanoid(), findingId: id, round, status: 'new', text: nf.text || null, at: now(),
+        id: nanoid(), findingId: id, round, status: 'new', stance: 'kept', text: nf.text || null, at: now(),
       }).run()
       added++
     }
@@ -384,6 +353,11 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     const newConclusion = result.conclusion?.trim()
     setStatus('draft', { headSha: wt.headSha, authorUpdated: false, ...(newConclusion ? { conclusion: newConclusion } : {}) })
     finishRun(db, schema, runId, { status: 'done' })
+    // Ground truth, not self-report: the tool calls say whether it opened the history we prepared.
+    if (findingHistory.some((f) => f.roundTexts.length) && !historyWasRead(db, schema, runId)) {
+      emit('history-skipped', '本轮未查阅历史文件（结论仅基于本轮所见）')
+    }
+    db.insert(schema.events).values({ id: nanoid(), reviewId, ts: now(), kind: ROUND_EVENT, message: `round ${round}` }).run()
     emit('recheck', `复审 round ${round} 完成 · 更新 ${applied} 条${added ? ` · 新增 ${added} 条` : ''} · ${formatUsageLabel(usage, 0)}`)
   } catch (e) {
     const stopped = abort.signal.aborted

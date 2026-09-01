@@ -459,7 +459,10 @@
     "deleteConfirm": "Supprimer cette tâche de revue ? Local uniquement — les commentaires déjà publiés restent.",
     "costUnknown": "coût inconnu",
     "costTotal": "total ${cost}",
-    "runLineTitle": "Dernière exécution : coût · provider · modèle · effort · tokens · durée · version du skill"
+    "runLineTitle": "Dernière exécution : coût · provider · modèle · effort · tokens · durée · version du skill",
+    "startInstructionLabel": "Consigne pour cette passe (facultatif)",
+    "startInstructionPlaceholder": "Sur quoi doit-elle se concentrer ? p. ex. juger si chaque fichier modifié dans ce périmètre le mérite — ne pas élargir la revue",
+    "startInstructionHint": "Ne vaut que pour la première passe. Chaque tour suivant suit la consigne donnée à ce moment-là ; les précédentes restent en historique."
   },
   "fix": {
     "discard": "Abandonner",

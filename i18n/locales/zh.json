@@ -459,7 +459,10 @@
     "deleteConfirm": "删除这条审核任务？仅本地，已发到 GitHub 的评论保留。",
     "costUnknown": "成本未知",
     "costTotal": "累计 ${cost}",
-    "runLineTitle": "最近一次 agent 运行：成本 · provider · 模型 · 力度 · tokens · 时长 · skill 版本"
+    "runLineTitle": "最近一次 agent 运行：成本 · provider · 模型 · 力度 · tokens · 时长 · skill 版本",
+    "startInstructionLabel": "本轮审核指导（可选）",
+    "startInstructionPlaceholder": "这轮想让它重点看什么？例如：只看这个 scope 内每个文件的改动是否值得，别扩大范围",
+    "startInstructionHint": "只作用于第一轮。之后每轮受你当时写的那条指令约束，早先的作为历史保留。"
   },
   "fix": {
     "discard": "放弃",

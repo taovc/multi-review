@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
-import { enqueueReview } from '~core/pipeline'
+import { enqueueRecheck, enqueueReview } from '~core/pipeline'
+import { recordRoundInstruction } from '~core/agent/reviewHistory'
+import { nanoid } from 'nanoid'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 import { resolveLang } from '~core/agent/lang'
@@ -10,8 +12,8 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const cfg = useRuntimeConfig()
   const d = db()
-  // fresh=true → full review from scratch (wipes the findings, NON-guided review).
-  // Default → guided re-review that keeps findings + notes ("re-check against my feedback").
+  // fresh=true → full review from scratch (wipes the findings).
+  // Default → the re-review path, which keeps findings + notes and judges them round by round.
   const body = (await readBody(event).catch(() => ({}))) as { fresh?: boolean }
   const fresh = body?.fresh === true
 
@@ -41,11 +43,20 @@ export default defineEventHandler(async (event) => {
     d.update(schema.reviews).set({ branch, updatedAt: new Date().toISOString() }).where(eq(schema.reviews.id, id)).run()
   }
 
+  // Re-review only makes sense once there is something to re-review; otherwise this is a first pass.
+  const hasFindings = d.select().from(schema.findings).where(eq(schema.findings.reviewId, id)).all().length > 0
+  const reReview = !fresh && hasFindings
+
+  // Whatever is in the instruction box when the button is pressed steers THIS round (and only this one).
+  const now = new Date().toISOString()
+  if (review.reviewInstruction) recordRoundInstruction(d, schema, id, review.reviewInstruction, nanoid(), now)
+
   reviewQueue.setLimit(Number(cfg.maxConcurrency) || 3)
-  d.update(schema.reviews).set({ status: 'queued', error: null, updatedAt: new Date().toISOString() }).where(eq(schema.reviews.id, id)).run()
+  d.update(schema.reviews).set({ status: reReview ? 'recheck_requested' : 'queued', error: null, updatedAt: now }).where(eq(schema.reviews.id, id)).run()
 
   const rc = resolveReviewConfig(d, project)
-  enqueueReview({
+  const enqueue = reReview ? enqueueRecheck : enqueueReview
+  enqueue({
     db: d,
     schema,
     reviewId: id,
@@ -63,9 +74,8 @@ export default defineEventHandler(async (event) => {
     codexServiceTier: rc.codexServiceTier,
     lang: resolveLang(getCookie(event, 'mr-locale')),
     verifyBeforePost: !!project.verifyBeforePost,
-    guided: !fresh,
     projectId: project.id, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
   })
 
-  return { ok: true, status: 'queued' }
+  return { ok: true, status: reReview ? 'recheck_requested' : 'queued' }
 })

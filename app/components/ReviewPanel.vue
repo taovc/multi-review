@@ -101,11 +101,15 @@ const STATUS: Record<string, string> = {
 function statusLabel(s: string) { const k = STATUS[s]; return k ? t(k) : s }
 const running = computed(() => ['queued', 'cloning', 'reviewing', 'recheck_requested', 'rechecking', 'posting'].includes(data.value?.review?.status))
 
+// Guidance for the very first pass. Without it the first review is blind to intent and the only way to steer is to let
+// it go wide once and correct afterwards — which is what every extra round was paying for.
+const startInstruction = ref('')
+
 async function startReview() {
   busy.value = 'start'
   try {
     const res = await $fetch<{ created: { id: string }[] }>('/api/reviews', {
-      method: 'POST', body: { projectId: props.projectId, pulls: [{ number: props.prNumber }] },
+      method: 'POST', body: { projectId: props.projectId, pulls: [{ number: props.prNumber }], instruction: startInstruction.value.trim() || undefined },
     })
     const id = res.created[0]?.id
     if (id) { rid.value = id; emit('created', id) }
@@ -113,8 +117,8 @@ async function startReview() {
 }
 // A modal popped inside the drawer gets blocked by USlideover's focus trap and can't be clicked → use in-place two-step confirmation instead, without closing the drawer, so you can watch the log while it runs
 const confirming = ref<'' | 'rerun' | 'recheck' | 'fresh' | 'delete'>('')
-// fresh=true → full review from scratch (wipes findings/notes, non-guided review);
-// false → guided re-review that keeps findings + notes.
+// fresh=true → full review from scratch (wipes findings/notes);
+// false → re-review that keeps findings + notes and judges them round by round.
 async function stopRun() {
   busy.value = 'stop'
   try { await $fetch(`/api/reviews/${rid.value}/stop`, { method: 'POST' }) } catch (e: any) { live.value = e?.data?.statusMessage || e?.message || String(e) } finally { busy.value = '' }
@@ -246,11 +250,22 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
 <template>
   <div class="flex-1 overflow-y-auto px-6 py-5">
     <!-- no task -->
-    <div v-if="!rid" class="text-center py-16">
-      <p class="text-sm text-dimmed mb-4">{{ $t('review.noTask') }}</p>
-      <button class="text-sm bg-inverted text-inverted px-5 py-2 hover:bg-inverted/90 disabled:opacity-40" :disabled="busy === 'start'" @click="startReview">
-        {{ busy === 'start' ? $t('review.creatingTask') : $t('review.startReview') }}
-      </button>
+    <div v-if="!rid" class="py-16">
+      <p class="text-sm text-dimmed mb-4 text-center">{{ $t('review.noTask') }}</p>
+      <div class="max-w-xl mx-auto">
+        <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.startInstructionLabel') }}</div>
+        <textarea
+          v-model="startInstruction" rows="2"
+          :placeholder="$t('review.startInstructionPlaceholder')"
+          class="w-full text-sm bg-muted border border-default rounded px-2 py-1 resize-y outline-none focus:border-accented"
+        />
+        <p class="text-[11px] text-dimmed mt-1">{{ $t('review.startInstructionHint') }}</p>
+      </div>
+      <div class="text-center mt-4">
+        <button class="text-sm bg-inverted text-inverted px-5 py-2 hover:bg-inverted/90 disabled:opacity-40" :disabled="busy === 'start'" @click="startReview">
+          {{ busy === 'start' ? $t('review.creatingTask') : $t('review.startReview') }}
+        </button>
+      </div>
     </div>
 
     <template v-else-if="data">

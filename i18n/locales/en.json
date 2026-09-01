@@ -459,7 +459,10 @@
     "deleteConfirm": "Delete this review task? Local only — comments already posted to GitHub stay.",
     "costUnknown": "cost unknown",
     "costTotal": "total ${cost}",
-    "runLineTitle": "Latest agent run: cost · provider · model · effort · tokens · duration · skill version"
+    "runLineTitle": "Latest agent run: cost · provider · model · effort · tokens · duration · skill version",
+    "startInstructionLabel": "Guidance for this pass (optional)",
+    "startInstructionPlaceholder": "What should it focus on? e.g. judge whether each file changed inside this scope earns its place — do not widen the review",
+    "startInstructionHint": "Applies to the first pass only. Each later round is bound by the instruction you give it then; earlier ones are kept as history."
   },
   "fix": {
     "discard": "Discard",

@@ -6,6 +6,7 @@ import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 import { resolveLang } from '~core/agent/lang'
+import { recordRoundInstruction } from '~core/agent/reviewHistory'
 
 // Create review tasks straight from the entries ticked in "all PRs" (the metadata comes with the list, no extra gh call needed).
 const Pull = z.object({
@@ -21,6 +22,9 @@ const Pull = z.object({
 const Body = z.object({
   projectId: z.string().min(1),
   pulls: z.array(Pull).min(1),
+  // Optional guidance typed before the first pass ever runs. Until now the first review was blind to intent: the
+  // instruction box only fed re-reviews, so the only way to steer was to let it go wide once and correct afterwards.
+  instruction: z.string().optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -29,6 +33,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: parsed.error.issues.map((i) => i.message).join('; ') })
   }
   const { projectId, pulls } = parsed.data
+  const instruction = (parsed.data.instruction || '').trim()
   const cfg = useRuntimeConfig()
   const d = db()
 
@@ -90,6 +95,7 @@ export default defineEventHandler(async (event) => {
       branch: meta.branch,
       headSha: meta.headSha ?? null,
       status: 'queued' as const, // the engine hooks in on the second batch; for now just queue it
+      reviewInstruction: instruction || null,
       prState: meta.state ?? 'unknown',
       additions: meta.additions ?? null,
       deletions: meta.deletions ?? null,
@@ -97,6 +103,8 @@ export default defineEventHandler(async (event) => {
       updatedAt: now,
     }
     d.insert(schema.reviews).values(row).run()
+    // Round 0 of the instruction log: what was asked for before anything had been reviewed.
+    recordRoundInstruction(d, schema, row.id, instruction, nanoid(), now)
     created.push(row)
 
     // Start the review automatically when a local path is set; otherwise leave it queued for the user to run manually after configuring one
@@ -119,6 +127,7 @@ export default defineEventHandler(async (event) => {
         codexServiceTier: rc.codexServiceTier,
         lang: resolveLang(getCookie(event, 'mr-locale')),
         verifyBeforePost: !!project.verifyBeforePost,
+        instruction: instruction || null,
         projectId, skillId: rc.skillId, skillVersionId: rc.skillVersionId,
       })
     }

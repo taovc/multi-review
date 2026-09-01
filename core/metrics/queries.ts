@@ -104,29 +104,39 @@ export function precisionBySkillVersion(db: any, f: MetricsFilter = {}) {
     }))
 }
 
-// Recheck outcomes: the most recent recheck entry per finding (by timestamp — guided rounds and author rounds keep
-// separate round counters, so MAX(round) would count a finding twice), bucketed by status.
-// Retraction rate = retracted / findings whose latest entry came from a guided (reviewer-feedback) round.
+// Recheck outcomes: the most recent recheck entry per finding (by timestamp, not MAX(round) — round numbers were once
+// counted separately per path and can repeat within one finding), bucketed on both axes.
+// `status` is what the AUTHOR did; `stance` is what we think. Rows written before the split carry a stance word in
+// `status` and no `stance`, so the stance axis falls back to it.
+const STANCE_WORDS = new Set(['kept', 'retracted', 'adjusted', 'discuss'])
+
 export function recheckFunnel(db: any, f: MetricsFilter = {}) {
   const w = where(f, { project: 'r.project_id', ts: 'r.created_at' })
-  const rows = all<{ status: string; n: number }>(db, `
+  const rows = all<{ status: string; stance: string | null; n: number }>(db, `
     WITH latest AS (
       SELECT fr.finding_id, MAX(fr.at) AS at FROM finding_rechecks fr GROUP BY fr.finding_id
     )
-    SELECT fr.status AS status, COUNT(DISTINCT fr.finding_id) AS n
+    SELECT fr.status AS status, fr.stance AS stance, COUNT(DISTINCT fr.finding_id) AS n
     FROM finding_rechecks fr
     JOIN latest l ON l.finding_id = fr.finding_id AND l.at = fr.at
     JOIN findings fd ON fd.id = fr.finding_id
     JOIN reviews r ON r.id = fd.review_id
     ${w.clause}
-    GROUP BY fr.status`, w.args)
+    GROUP BY fr.status, fr.stance`, w.args)
   const by: Record<string, number> = {}
-  for (const r of rows) by[r.status] = Number(r.n)
-  const guided = (by.kept ?? 0) + (by.retracted ?? 0) + (by.adjusted ?? 0) + (by.discuss ?? 0)
+  const byStance: Record<string, number> = {}
+  for (const r of rows) {
+    const n = Number(r.n)
+    by[r.status] = (by[r.status] ?? 0) + n
+    const stance = r.stance ?? (STANCE_WORDS.has(r.status) ? r.status : null)
+    if (stance) byStance[stance] = (byStance[stance] ?? 0) + n
+  }
+  const stanced = Object.values(byStance).reduce((a, b) => a + b, 0)
   const authorRound = (by.fixed ?? 0) + (by.partial ?? 0) + (by.unaddressed ?? 0) + (by.replied ?? 0) + (by.new ?? 0)
   return {
     byStatus: by,
-    retractionRate: guided ? (by.retracted ?? 0) / guided : null,
+    byStance,
+    retractionRate: stanced ? (byStance.retracted ?? 0) / stanced : null,
     fixedRate: authorRound ? (by.fixed ?? 0) / authorRound : null,
   }
 }
