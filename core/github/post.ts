@@ -1,4 +1,5 @@
 import { ghBin } from './gh'
+import { authorMoveOf, stanceOf } from '../recheckAxes'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { writeFile, rm, mkdtemp } from 'node:fs/promises'
@@ -21,14 +22,14 @@ export type PostFinding = {
   notes: string | null
   introducedByPr: boolean
   // Verdict of the latest recheck round (null if never rechecked) → decides how this comment gets posted
-  recheck: { status: string; text: string | null } | null
+  recheck: { status: string; stance?: string | null; text: string | null } | null
 }
 
 // Once a finding has been rechecked, the latest recheck status decides how it is posted:
 //   fixed     → don't repost the original, add one line to the summary's "Confirmed fixed" list
 //   partial   → post a comment, but only about what's still missing
 //   replied   → author replied without changing code: post only if you left a new note (a response to the author's reply); skip otherwise
-//   retracted → the AI already withdrew this one, don't post
+//   retracted → the AI already withdrew this one, don't post (our stance is checked before any author move)
 //   anything else / no recheck → post the original finding as usual (the finding is the current verdict)
 type Plan =
   | { action: 'comment'; kind: 'normal' | 'partial' | 'reply' }
@@ -36,13 +37,17 @@ type Plan =
   | { action: 'skip'; reason: 'replied-no-note' | 'retracted' }
 
 function planFinding(f: PostFinding): Plan {
-  const st = f.recheck?.status
+  // Our stance decides first — withdrawing a finding outranks whatever the author did about it — and only then does
+  // the author move decide the wording. Reading a single column for both questions is what let a finding the review
+  // had explicitly retracted go out as a live comment.
+  const stance = stanceOf(f.recheck)
+  const move = authorMoveOf(f.recheck)
   const hasNote = !!(f.notes && f.notes.trim())
-  if (st === 'fixed') return { action: 'fixed' }
-  if (st === 'retracted') return { action: 'skip', reason: 'retracted' }
-  if (st === 'partial') return { action: 'comment', kind: 'partial' }
-  if (st === 'replied' || st === 'discuss')
-    return hasNote ? { action: 'comment', kind: 'reply' } : { action: 'skip', reason: 'replied-no-note' }
+  if (stance === 'retracted') return { action: 'skip', reason: 'retracted' }
+  if (stance === 'discuss') return hasNote ? { action: 'comment', kind: 'reply' } : { action: 'skip', reason: 'replied-no-note' }
+  if (move === 'fixed') return { action: 'fixed' }
+  if (move === 'partial') return { action: 'comment', kind: 'partial' }
+  if (move === 'replied') return hasNote ? { action: 'comment', kind: 'reply' } : { action: 'skip', reason: 'replied-no-note' }
   return { action: 'comment', kind: 'normal' }
 }
 

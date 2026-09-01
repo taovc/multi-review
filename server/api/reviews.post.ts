@@ -6,7 +6,7 @@ import { enqueueReview } from '~core/pipeline'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
 import { resolveLang } from '~core/agent/lang'
-import { recordRoundInstruction } from '~core/agent/reviewHistory'
+import { recordRoundInstruction, reviewHistoryRootFor } from '~core/agent/reviewHistory'
 
 // Create review tasks straight from the entries ticked in "all PRs" (the metadata comes with the list, no extra gh call needed).
 const Pull = z.object({
@@ -121,6 +121,7 @@ export default defineEventHandler(async (event) => {
         methodology: rc.methodology,
         reposDir: cfg.reposDir as string,
         worktreeLocation: cfg.worktreeLocation as string,
+        historyRoot: reviewHistoryRootFor(cfg.dbPath as string),
         provider: rc.provider,
         model: rc.model,
         effort: rc.effort,

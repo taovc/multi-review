@@ -60,7 +60,10 @@ const RECHECK_RESULT_JSON_SCHEMA = {
           stanceReason: { type: 'string' },
           text: { type: 'string' },
         },
-        required: ['fid', 'status', 'stance', 'text'], // stanceReason only when the stance actually changed
+        // Every hand-written schema here lists all properties in `required` (strict structured output rejects a
+        // schema that does not). The Claude side makes stanceReason optional because a required-and-usually-empty
+        // field destabilised its output; Codex keeps it required, with the prompt telling it to send an empty string.
+        required: ['fid', 'status', 'stance', 'stanceReason', 'text'],
       },
     },
     newFindings: {
@@ -170,7 +173,7 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
   try {
     const { raw, usage } = await runCodexReadonly({
     onStop: (stop) => { if (opts.abort?.signal.aborted) stop(); else opts.abort?.signal.addEventListener('abort', stop, { once: true }) },
-      prompt: `${withContract(opts.methodology, RECHECK_PROCEDURE)}\n\n---\n\n${buildRecheckPrompt(opts)}`,
+      prompt: `${withContract(opts.methodology, RECHECK_PROCEDURE)}\n\n---\n\n${buildRecheckPrompt(opts)}\n\n(This structured output requires "stanceReason" on every recheck item: send the reason when the stance changed, and an empty string "" when it did not.)`,
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
@@ -179,7 +182,8 @@ export async function runCodexRecheckAgent(opts: RecheckAgentOptions): Promise<{
       allowNetwork: true,
       mcp: opts.mcp,
       label: 'recheck',
-      onTool: (name, info) => { if (touchesHistory(info, opts.historyPath)) historyRead = true; opts.onTool?.(name, info) },
+      onTool: opts.onTool,
+      onRawTool: (input) => { if (touchesHistory(input, opts.historyPath)) historyRead = true },
     })
     return { result: parseCodexRecheckJson(raw), costUsd: usage?.costUsd ?? 0, usage, historyRead }
   } catch (error) {

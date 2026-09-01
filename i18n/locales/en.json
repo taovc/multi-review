@@ -851,6 +851,7 @@
       "turns": "Turns"
     },
     "retractionRate": "Retraction rate",
+    "stance": "stance",
     "fixedRate": "Fixed rate",
     "defaultSkill": "built-in default",
     "noData": "No runs recorded yet — run a review to see numbers here.",

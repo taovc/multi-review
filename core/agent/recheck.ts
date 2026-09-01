@@ -31,6 +31,14 @@ export const RecheckSchema = z.object({
         // delivered through a validator that retries five times and then fails the whole round.
         // Nothing here attests to having read the history — the tool calls record that on their own.
         stanceReason: z.string().optional(),
+        // Send these ONLY with stance 'adjusted' — that stance means the finding itself was wrong as written, so the
+        // corrected version has to come with it or the list keeps showing (and posting) the wording just disowned.
+        severity: z.enum(['High', 'Medium', 'Low']).optional(),
+        title: z.string().optional(),
+        location: z.string().optional(),
+        problem: z.string().optional(),
+        detail: z.string().optional(),
+        fix: z.string().optional(),
         text: z.string().default(''),
       }),
     )
@@ -56,8 +64,6 @@ export const RecheckSchema = z.object({
 })
 export type RecheckResult = z.infer<typeof RecheckSchema>
 const RECHECK_JSON_SCHEMA = jsonSchemaFor(RecheckSchema)
-
-export type ExistingFinding = { fid: string; title: string; location: string | null; problem: string | null; fix: string | null; notes: string | null }
 
 export type RecheckAgentOptions = ReviewHostOptions & {
   cwd: string
@@ -102,7 +108,9 @@ about to contradict, re-open, or drop, read that finding's section first.
    An author who fixed something you should never have raised is \`fixed\` + \`retracted\`. One who ignored something you
    now agree was noise is \`unaddressed\` + \`retracted\`. The reviewer needs both halves.
 4. When your stance differs from the previous round's, say why in \`stanceReason\`. This is the reviewer's main signal
-   that the review is converging rather than drifting; leave it empty when the stance is unchanged.
+   that the review is converging rather than drifting; omit the field when the stance is unchanged.
+   With \`adjusted\`, also send the corrected \`severity\`/\`title\`/\`location\`/\`problem\`/\`detail\`/\`fix\` — that stance
+   means the finding was wrong as written, and the reviewer posts from the finding, not from your note about it.
 5. Report anything the author's new commits broke as a new finding, not as a note on an old one.
 
 **On the reviewer's instruction**: it governs this round only. Earlier instructions are in the history file as
@@ -139,7 +147,8 @@ merged now. The conclusion replaces the one shown in the UI — write it for the
 Output **JSON only** (no code fences):
 {
   "rechecks": [ { "fid": "F1", "status": "fixed", "stance": "kept", "text": "explanation, citing the specific commit/line" } ],
-  // include "stanceReason" on an item ONLY when its stance differs from the previous round's; omit the field otherwise
+  // include "stanceReason" ONLY when the stance differs from the previous round's; omit it otherwise.
+  // with "stance": "adjusted", also include the corrected severity/title/location/problem/detail/fix on that item.
   "newFindings": [ { "severity": "High|Medium|Low", "title": "one-line title", "location": "path:line",
     "problem": "why it is a problem", "detail": "details", "fix": "how to fix it", "text": "which commit/line introduced it" } ],
   "conclusion": "overall verdict: which blockers remain, whether it can be merged"
@@ -187,10 +196,11 @@ export async function runRecheckAgent(opts: RecheckAgentOptions): Promise<{ resu
   return { result, costUsd, usage, historyRead }
 }
 
-// Whether a tool call went at the prepared history. Checked against the whole input, because the file gets opened with
-// Read as often as with grep or sed, and the event log the pipeline keeps truncates long paths.
+// Whether a tool call went at the prepared history. Matched on the full path only: the bare file name appears in the
+// procedure text the agent was given, so accepting it would let a to-do item that merely quotes the name pass as
+// having read the file. Checked against the whole input, because it gets opened with Read as often as with grep or sed.
 export function touchesHistory(input: unknown, historyPath: string): boolean {
   let s = ''
-  try { s = JSON.stringify(input ?? '') } catch { return false }
-  return s.includes(historyPath) || s.includes(HISTORY_FILE)
+  try { s = typeof input === 'string' ? input : JSON.stringify(input ?? '') } catch { return false }
+  return s.includes(historyPath)
 }

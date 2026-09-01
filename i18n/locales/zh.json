@@ -851,6 +851,7 @@
       "turns": "轮次"
     },
     "retractionRate": "撤回率",
+    "stance": "立场",
     "fixedRate": "修复率",
     "defaultSkill": "内置默认",
     "noData": "还没有运行记录——跑一次审核就会有数据。",

@@ -131,6 +131,9 @@ export function recheckFunnel(db: any, f: MetricsFilter = {}) {
     const stance = r.stance ?? (STANCE_WORDS.has(r.status) ? r.status : null)
     if (stance) byStance[stance] = (byStance[stance] ?? 0) + n
   }
+  // Every round now records a stance, so this denominator is "findings whose last round expressed a position" —
+  // which since the split is all of them, not just the ones a feedback round touched. Numbers either side of the
+  // split are therefore not comparable, and the older ones read high because only feedback rounds counted then.
   const stanced = Object.values(byStance).reduce((a, b) => a + b, 0)
   const authorRound = (by.fixed ?? 0) + (by.partial ?? 0) + (by.unaddressed ?? 0) + (by.replied ?? 0) + (by.new ?? 0)
   return {

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { schema } from '~core/db/client'
 import { enqueueRecheck, enqueueReview } from '~core/pipeline'
-import { recordRoundInstruction } from '~core/agent/reviewHistory'
+import { recordRoundInstruction, reviewHistoryRootFor } from '~core/agent/reviewHistory'
 import { nanoid } from 'nanoid'
 import { reviewQueue } from '~core/queue'
 import { fetchPrMeta } from '~core/github/gh'
@@ -66,6 +66,7 @@ export default defineEventHandler(async (event) => {
     defaultBranch: project.defaultBranch,
     localPath: project.localPath,
     methodology: rc.methodology,
+    historyRoot: reviewHistoryRootFor(cfg.dbPath as string),
     reposDir: cfg.reposDir as string,
     worktreeLocation: cfg.worktreeLocation as string,
     provider: rc.provider,

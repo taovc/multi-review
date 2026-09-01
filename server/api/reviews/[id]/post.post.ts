@@ -62,10 +62,10 @@ export default defineEventHandler(async (event) => {
     // Latest recheck verdict for each checked finding (decides how it is posted: fixed → one summary line / partial → only state what is still missing / reply-only → respond again per the note, or skip)
     const checkedIds = checked.map((f) => f.id)
     const rcs = d.select().from(schema.findingRechecks).where(inArray(schema.findingRechecks.findingId, checkedIds)).all()
-    const latestRc = new Map<string, { status: string; text: string | null; round: number }>()
+    const latestRc = new Map<string, { status: string; stance: string | null; text: string | null; round: number }>()
     for (const rc of rcs) {
       const cur = latestRc.get(rc.findingId)
-      if (!cur || rc.round > cur.round) latestRc.set(rc.findingId, { status: rc.status, text: rc.text, round: rc.round })
+      if (!cur || rc.round > cur.round) latestRc.set(rc.findingId, { status: rc.status, stance: rc.stance ?? null, text: rc.text, round: rc.round })
     }
 
     const findings: PostFinding[] = checked.map((f) => {
@@ -73,7 +73,7 @@ export default defineEventHandler(async (event) => {
       return {
         fid: f.fid, severity: f.severity as any, title: f.title, location: f.location,
         problem: f.problem, detail: f.detail, fix: f.fix, notes: f.notes, introducedByPr: f.introducedByPr,
-        recheck: rc ? { status: rc.status, text: rc.text } : null,
+        recheck: rc ? { status: rc.status, stance: rc.stance, text: rc.text } : null,
       }
     })
 

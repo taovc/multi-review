@@ -11,12 +11,13 @@ process.env.DB_PATH = path.join(tmp, 'cockpit.db')
 
 const {
   ROUND_EVENT, INSTRUCTION_EVENT, buildFindingIndex, buildHistoryDoc, computeRoundIntent,
-  loadFindingHistory, recordRoundInstruction, removeReviewHistory, reviewHistoryDir, reviewHistoryRoot,
+  loadFindingHistory, recordRoundInstruction, removeReviewHistory, reviewHistoryDir, reviewHistoryRootFor,
   sweepOrphanHistories, writeReviewHistory,
 } = await import('../core/agent/reviewHistory')
 const { getDb, schema } = await import('../core/db/client')
 const { nanoid } = await import('nanoid')
 
+const root = reviewHistoryRootFor(process.env.DB_PATH!)
 const d = getDb(':memory:')
 const now = new Date().toISOString()
 d.insert(schema.projects).values({ id: 'P', name: 'p', slug: 'p', repo: 'o/r', defaultBranch: 'main', createdAt: now }).run()
@@ -31,31 +32,47 @@ const ev = (kind: string, ts: string, message?: string) =>
   ev(ROUND_EVENT, '2026-01-01T01:00:00Z', 'round 1')
   ev(INSTRUCTION_EVENT, '2026-01-01T02:00:00Z', 'stop widening the scope')
 
-  const i = computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old')
+  // What binds the round is what stands in the box now — that is what pressing the button promises.
+  const i = computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old', 'stop widening the scope')
   assert.equal(i.round, 2)
   assert.equal(i.hasNewCommits, true)
-  assert.equal(i.instruction, 'stop widening the scope', 'only an instruction newer than the last round binds this one')
-  assert.deepEqual(i.pastInstructions.map((x) => x.text), ['only look at permission boundaries'], 'earlier ones stay as evidence, not as constraints')
+  assert.equal(i.instruction, 'stop widening the scope')
+  assert.deepEqual(i.pastInstructions.map((x) => x.text), ['only look at permission boundaries'], 'earlier, different instructions are evidence of steering')
   assert.equal(i.sinceSha, 'sha-old')
   assert.equal(i.lastRoundAt, '2026-01-01T01:00:00Z')
 
-  assert.equal(computeRoundIntent(d, schema, 'RV', 'sha-old', 'sha-old').hasNewCommits, false, 'same head = the author pushed nothing')
-  assert.equal(computeRoundIntent(d, schema, 'RV', 'sha-new', null).hasNewCommits, false, 'no previous head recorded = do not claim new commits')
+  // The box keeps its text between rounds, so the standing instruction must not read as a repeated correction.
+  assert.ok(!i.pastInstructions.some((x) => x.text === i.instruction), 'the current instruction is never also listed as past steering')
+
+  // Changing your mind mid-review: the new text binds, the old one becomes history.
+  const j = computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old', 'actually go wide again')
+  assert.equal(j.instruction, 'actually go wide again')
+  assert.deepEqual(j.pastInstructions.map((x) => x.text).sort(), ['only look at permission boundaries', 'stop widening the scope'])
+
+  // Clearing the box means no instruction binds this round, whatever was said before.
+  assert.equal(computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old', '   ').instruction, null)
+
+  assert.equal(computeRoundIntent(d, schema, 'RV', 'sha-old', 'sha-old', null).hasNewCommits, false, 'same head = the author pushed nothing')
+  assert.equal(computeRoundIntent(d, schema, 'RV', 'sha-new', null, null).hasNewCommits, false, 'no previous head recorded = do not claim new commits')
 }
 
-// ── recording an instruction: repeatable across rounds, deduped within one ──
+// ── the instruction log records changes of direction, not every resubmission of the same box ──
 {
-  const before = d.select().from(schema.events).all().length
+  const count = () => d.select().from(schema.events).all().length
+  const before = count()
   recordRoundInstruction(d, schema, 'RV', 'stop widening the scope', nanoid(), '2026-01-01T02:30:00Z')
-  assert.equal(d.select().from(schema.events).all().length, before, 'the same text again for the same round is a double click, not a new instruction')
+  assert.equal(count(), before, 'the box still holds last round\'s text; resubmitting it is not a new correction')
 
   recordRoundInstruction(d, schema, 'RV', '   ', nanoid(), '2026-01-01T02:31:00Z')
-  assert.equal(d.select().from(schema.events).all().length, before, 'blank is not an instruction')
+  assert.equal(count(), before, 'blank is not an instruction')
 
   ev(ROUND_EVENT, '2026-01-01T03:00:00Z', 'round 2')
   recordRoundInstruction(d, schema, 'RV', 'stop widening the scope', nanoid(), '2026-01-01T04:00:00Z')
-  assert.equal(d.select().from(schema.events).all().length, before + 2, 'the same text for a NEW round binds again (+ the round event)')
-  assert.equal(computeRoundIntent(d, schema, 'RV', 'a', 'b').round, 3)
+  assert.equal(count(), before + 1, 'a new round alone does not make the unchanged text a new correction (+ the round event only)')
+
+  recordRoundInstruction(d, schema, 'RV', 'now check the tests too', nanoid(), '2026-01-01T05:00:00Z')
+  assert.equal(count(), before + 2, 'changed text is logged')
+  assert.equal(computeRoundIntent(d, schema, 'RV', 'a', 'b', null).round, 3)
 }
 
 // ── findings + their rounds ──
@@ -80,9 +97,10 @@ const ev = (kind: string, ts: string, message?: string) =>
   assert.ok(!index.includes('fixed in abc123'), 'nor the round texts')
 
   // The file is where the bulk lives.
-  const intent = computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old')
+  const intent = computeRoundIntent(d, schema, 'RV', 'sha-new', 'sha-old', 'stop widening the scope')
   const doc = buildHistoryDoc({
     reviewId: 'RV', repo: 'o/r', prNumber: 7, intent, findings: hist,
+    globalNotes: 'this module is being deleted next sprint', fetchErrors: [],
     timeline: [
       { kind: 'comment', actor: 'author', isBot: false, at: '2026-01-01T05:00:00Z', body: 'addressed in the last push' },
       { kind: 'comment', actor: 'author', isBot: false, at: '2025-12-01T00:00:00Z', body: 'ancient history' },
@@ -97,28 +115,39 @@ const ev = (kind: string, ts: string, message?: string) =>
   assert.match(doc, /out of the scope the reviewer set/, 'including why a stance changed')
   assert.match(doc, /do not quietly drop it/, 'a hand-accepted finding is flagged')
   assert.match(doc, /addressed in the last push/)
-  assert.ok(!doc.includes('ancient history'), 'conversation older than the last round is not repeated')
+  assert.match(doc, /new since the last round/, 'what arrived since the last round is marked')
+  assert.match(doc, /ancient history/, 'older conversation stays: a late verdict can hinge on an early reply, and nothing tells the agent to go fetch it')
   assert.match(doc, /why not scoped\?/)
   assert.match(doc, /\*\*for this round\*\*/)
+  assert.match(doc, /deleted next sprint/, "the reviewer's standing note reaches every round")
+
+  // A failed fetch must never read as "the author said nothing".
+  const broken = buildHistoryDoc({
+    reviewId: 'RV', repo: 'o/r', prNumber: 7, intent, findings: hist,
+    globalNotes: null, fetchErrors: ['PR conversation: rate limited'],
+    timeline: [], reviewComments: [], since: null,
+  })
+  assert.match(broken, /Incomplete — GitHub would not return/)
+  assert.match(broken, /not evidence of silence/)
 }
 
 // ── the file on disk, and what happens to it ──
 {
-  const { path: p, bytes } = writeReviewHistory('RV', '# hello\n')
+  const { path: p, bytes } = writeReviewHistory(root, 'RV', '# hello\n')
   assert.ok(existsSync(p))
   assert.ok(bytes > 0)
   assert.ok(!p.includes('worktree'), 'never inside a worktree: the agent judges the checkout with git')
-  assert.equal(path.dirname(p), reviewHistoryDir('RV'))
+  assert.equal(path.dirname(p), reviewHistoryDir(root, 'RV'))
 
-  mkdirSync(reviewHistoryDir('ORPHAN'), { recursive: true })
-  writeFileSync(path.join(reviewHistoryDir('ORPHAN'), 'review-history.md'), 'x')
-  assert.equal(sweepOrphanHistories(new Set(['RV'])), 1, 'a directory no review claims is swept at startup')
+  mkdirSync(reviewHistoryDir(root, 'ORPHAN'), { recursive: true })
+  writeFileSync(path.join(reviewHistoryDir(root, 'ORPHAN'), 'review-history.md'), 'x')
+  assert.equal(sweepOrphanHistories(root, new Set(['RV'])), 1, 'a directory no review claims is swept at startup')
   assert.ok(existsSync(p), 'the live one survives')
 
-  removeReviewHistory('RV')
-  assert.ok(!existsSync(reviewHistoryDir('RV')), 'deleting the task takes its history with it')
-  assert.equal(sweepOrphanHistories(new Set()), 0, 'sweeping an empty root is a no-op')
-  assert.ok(reviewHistoryRoot().startsWith(tmp), 'the root follows DB_PATH')
+  removeReviewHistory(root, 'RV')
+  assert.ok(!existsSync(reviewHistoryDir(root, 'RV')), 'deleting the task takes its history with it')
+  assert.equal(sweepOrphanHistories(root, new Set()), 0, 'sweeping an empty root is a no-op')
+  assert.ok(root.startsWith(tmp), 'the root is derived from the db path the caller was given')
 }
 
 // ── did it open what we prepared: reported by the agent loop, which sees untruncated tool input ──

@@ -851,6 +851,7 @@
       "turns": "Tours"
     },
     "retractionRate": "Taux de rétractation",
+    "stance": "position",
     "fixedRate": "Taux de correction",
     "defaultSkill": "défaut intégré",
     "noData": "Aucune exécution enregistrée — lancez une revue pour voir des chiffres.",

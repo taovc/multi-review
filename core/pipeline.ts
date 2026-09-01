@@ -59,6 +59,7 @@ export type ReviewJobCtx = {
   methodology: string // the resolved methodology (active skill or default)
   reposDir: string
   worktreeLocation?: string | null
+  historyRoot: string // where prepared re-review history lives (reviewHistoryRootFor(cfg.dbPath))
   provider?: ReviewProvider
   model: string // the actual model of the current provider (never mixed)
   effort: string
@@ -233,6 +234,9 @@ async function runReviewJob(ctx: ReviewJobCtx) {
       requirement: result.requirement || null,
       testPath: result.testPath || null,
     })
+    // The first pass is a round too. Without this marker the next re-review sees no previous round, and the
+    // instruction typed before the first pass would go on binding it — the opposite of one-shot.
+    db.insert(schema.events).values({ id: nanoid(), reviewId, ts: now(), kind: ROUND_EVENT, message: 'round 1' }).run()
     finishRun(db, schema, runId, { status: 'done' })
     emit('done', `审核完成 · ${formatUsageLabel(usage, costUsd)}`)
   } catch (e) {
@@ -290,20 +294,24 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     // Only the run pointer: the findings were produced by an earlier (fresh/guided) review, so the review keeps that skill version.
     db.update(schema.reviews).set({ lastRunId: runId, updatedAt: now() }).where(eq(schema.reviews.id, reviewId)).run()
 
-    const intent = computeRoundIntent(db, schema, reviewId, wt.headSha, previousHeadSha)
+    const intent = computeRoundIntent(db, schema, reviewId, wt.headSha, previousHeadSha, ctx.instruction ?? review?.reviewInstruction ?? null)
     const round = intent.round
 
     // Prepare the round's context before the agent starts: the conversation is fetched here (one gh call) rather than
     // spent out of the agent's turn budget, and everything bulky lands in a file it pulls from on its own.
     emit('stage', `复审 round ${round}：准备历史${intent.instruction ? '（带你的指令）' : ''}`)
+    // A failed fetch must not read as "the author said nothing" — that turns a network blip into a wrong verdict that
+    // looks exactly like a right one. Record what could not be fetched, in the file and in the log.
+    const fetchErrors: string[] = []
     const [timeline, reviewComments] = await Promise.all([
-      fetchTimeline(ctx.repo, ctx.prNumber).catch(() => []),
-      fetchReviewComments(ctx.repo, ctx.prNumber).catch(() => []),
+      fetchTimeline(ctx.repo, ctx.prNumber).catch((e) => { fetchErrors.push(`PR conversation: ${(e as Error).message}`); return [] }),
+      fetchReviewComments(ctx.repo, ctx.prNumber).catch((e) => { fetchErrors.push(`line-level comments: ${(e as Error).message}`); return [] }),
     ])
+    if (fetchErrors.length) emit('stage', `⚠️ 抓取失败，历史文件会标注缺口：${fetchErrors.join('；')}`)
     const findingHistory = loadFindingHistory(db, schema, reviewId, { includeRounds: true })
-    const { path: historyPath, bytes } = writeReviewHistory(reviewId, buildHistoryDoc({
+    const { path: historyPath, bytes } = writeReviewHistory(ctx.historyRoot, reviewId, buildHistoryDoc({
       reviewId, repo: ctx.repo, prNumber: ctx.prNumber, intent, findings: findingHistory,
-      timeline, reviewComments, since: intent.lastRoundAt,
+      timeline, reviewComments, since: intent.lastRoundAt, globalNotes: review?.globalNotes ?? null, fetchErrors,
     }))
     emit('stage', `历史已备好（${findingHistory.length} 条 finding · ${Math.round(bytes / 1024)}KB）：${historyPath}`)
 
@@ -326,8 +334,18 @@ async function runRecheckJob(ctx: ReviewJobCtx) {
     for (const r of result.rechecks) {
       const findingId = fidToId.get(r.fid)
       if (!findingId) continue // drop verdicts with no matching old finding (new issues go through newFindings)
+      // 'adjusted' means the finding was wrong as written: take the correction, and drop the verify verdict with it
+      // (that verdict judged the old wording). Anything the agent left out keeps its current value.
+      if (r.stance === 'adjusted') {
+        const patch: Record<string, unknown> = { verifyStatus: null, verifyNote: null }
+        for (const k of ['severity', 'title', 'location', 'problem', 'detail', 'fix'] as const) {
+          const v = (r as any)[k]
+          if (typeof v === 'string' && v.trim()) patch[k] = v
+        }
+        if (Object.keys(patch).length > 2) db.update(schema.findings).set(patch).where(eq(schema.findings.id, findingId)).run()
+      }
       db.insert(schema.findingRechecks).values({
-        id: nanoid(), findingId, round, status: r.status, stance: r.stance || 'kept',
+        id: nanoid(), findingId, round, status: r.status, stance: r.stance,
         stanceReason: r.stanceReason || null, text: r.text || null, at: now(),
       }).run()
       applied++

@@ -156,6 +156,7 @@ const tileLabel = 'text-[10px] uppercase tracking-[0.15em] text-dimmed'
             <div class="text-xs space-y-1">
               <div><span class="text-dimmed">{{ $t('dashboard.retractionRate') }}</span> <span class="tabular-nums">{{ pct(data?.recheck?.retractionRate) }}</span> · <span class="text-dimmed">{{ $t('dashboard.fixedRate') }}</span> <span class="tabular-nums">{{ pct(data?.recheck?.fixedRate) }}</span></div>
               <div class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px]"><span v-for="(n, k) in data?.recheck?.byStatus ?? {}" :key="k">{{ k }} <b>{{ n }}</b></span><span v-if="!Object.keys(data?.recheck?.byStatus ?? {}).length" class="text-dimmed">—</span></div>
+              <div class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px]"><span class="text-dimmed">{{ $t('dashboard.stance') }}</span><span v-for="(n, k) in data?.recheck?.byStance ?? {}" :key="k">{{ k }} <b>{{ n }}</b></span><span v-if="!Object.keys(data?.recheck?.byStance ?? {}).length" class="text-dimmed">—</span></div>
             </div>
           </div>
           <div>

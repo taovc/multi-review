@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { getDb, schema } from '~core/db/client'
 import { migrateWorktreeToRepo, removeWorktree } from '~core/git/worktree'
 import { recoverHostState } from '~core/host/recover'
-import { sweepOrphanHistories } from '~core/agent/reviewHistory'
+import { reviewHistoryRootFor, sweepOrphanHistories } from '~core/agent/reviewHistory'
 
 const pexec = promisify(execFile)
 
@@ -104,7 +104,7 @@ export default defineNitroPlugin(async () => {
   // writing one and deleting it leaves a directory nobody owns. Whatever no review claims goes.
   try {
     const live = new Set((d.select().from(schema.reviews).all() as any[]).map((r) => r.id))
-    const removed = sweepOrphanHistories(live)
+    const removed = sweepOrphanHistories(reviewHistoryRootFor(cfg.dbPath as string), live)
     if (removed) console.log(`[recover] 清理了 ${removed} 份无主的复审历史目录`)
   } catch (e) {
     console.error('[recover] 复审历史清理失败', e)

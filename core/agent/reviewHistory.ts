@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { ReviewComment, TimelineNode } from '../github/gh'
 
 // Everything a re-review round needs to know about the rounds before it.
@@ -16,17 +16,16 @@ import type { ReviewComment, TimelineNode } from '../github/gh'
 
 export const HISTORY_FILE = 'review-history.md'
 
-// Next to the database, never inside a worktree. Same source as runtimeConfig.dbPath so both agree without plumbing.
-export function reviewHistoryRoot(): string {
-  return resolve(dirname(process.env.DB_PATH || './data/cockpit.db'), 'review-history')
+// Next to the database, never inside a worktree. The root is passed in rather than derived from process.env here:
+// runtimeConfig.dbPath is also settable as NUXT_DB_PATH, so reading the bare env var would put history somewhere the
+// rest of the app is not looking — and the startup sweep deletes whatever it finds under the root it is given.
+// Callers resolve it exactly like the other data dirs do (see server/utils/runContext.ts).
+export function reviewHistoryRootFor(dbPath: string): string {
+  return resolve(process.cwd(), dirname(dbPath), 'review-history')
 }
 
-export function reviewHistoryDir(reviewId: string): string {
-  return join(reviewHistoryRoot(), reviewId)
-}
-
-export function reviewHistoryPath(reviewId: string): string {
-  return join(reviewHistoryDir(reviewId), HISTORY_FILE)
+export function reviewHistoryDir(root: string, reviewId: string): string {
+  return join(root, reviewId)
 }
 
 // ── what a round is told about itself ──
@@ -43,39 +42,48 @@ export type RoundIntent = {
 export const INSTRUCTION_EVENT = 'review-instruction'
 export const ROUND_EVENT = 'review-round'
 
-// Record the instruction this round is being started with. Pressing "re-review" with text in the box means "use this",
-// so the same text given again for a later round counts again; the only thing suppressed is a duplicate for the round
-// already being set up (a double click, or a run triggered twice).
+// The events table holds a row per agent tool call, so a long-running review has thousands; only the two markers are
+// wanted here and filtering in SQL keeps that off the heap.
+function markerEvents(db: any, schema: any, reviewId: string): { ts: string; kind: string; message: string | null }[] {
+  return db.select().from(schema.events)
+    .where(and(eq(schema.events.reviewId, reviewId), inArray(schema.events.kind, [ROUND_EVENT, INSTRUCTION_EVENT])))
+    .all() as { ts: string; kind: string; message: string | null }[]
+}
+
+// Record a change of instruction. The drawer's box keeps its text, so it is re-submitted on every round whether or not
+// the reviewer touched it; logging it each time would fill the history with the same sentence and the procedure reads
+// repetition as "a correction they have had to make more than once". Only a change is an event. What binds the round is
+// the box's current text either way (see computeRoundIntent) — this log is the record of where the steering moved.
 export function recordRoundInstruction(db: any, schema: any, reviewId: string, text: string, id: string, at: string): void {
   const t = (text || '').trim()
   if (!t) return
-  const events = db.select().from(schema.events).where(eq(schema.events.reviewId, reviewId)).all() as { ts: string; kind: string; message: string | null }[]
-  const lastRoundAt = events.filter((e) => e.kind === ROUND_EVENT).map((e) => e.ts).sort().pop() ?? null
-  const pending = events
-    .filter((e) => e.kind === INSTRUCTION_EVENT && (!lastRoundAt || e.ts > lastRoundAt))
-    .map((e) => (e.message || '').trim())
-  if (pending.includes(t)) return
+  const last = markerEvents(db, schema, reviewId)
+    .filter((e) => e.kind === INSTRUCTION_EVENT)
+    .sort((a, b) => a.ts.localeCompare(b.ts))
+    .pop()
+  if ((last?.message || '').trim() === t) return
   db.insert(schema.events).values({ id, reviewId, ts: at, kind: INSTRUCTION_EVENT, message: t }).run()
 }
 
 // One counter for the whole family. The old code counted two different event kinds independently, so a recheck round
 // and a guided round could both call themselves round 1 and land in the same column.
-export function computeRoundIntent(db: any, schema: any, reviewId: string, currentHeadSha: string | null, previousHeadSha: string | null): RoundIntent {
-  const events = db.select().from(schema.events).where(eq(schema.events.reviewId, reviewId)).all() as { ts: string; kind: string; message: string | null }[]
+export function computeRoundIntent(db: any, schema: any, reviewId: string, currentHeadSha: string | null, previousHeadSha: string | null, currentInstruction: string | null): RoundIntent {
+  const events = markerEvents(db, schema, reviewId)
   const rounds = events.filter((e) => e.kind === ROUND_EVENT).sort((a, b) => a.ts.localeCompare(b.ts))
   const lastRoundAt = rounds.length ? rounds[rounds.length - 1]!.ts : null
   const instructions = events
     .filter((e) => e.kind === INSTRUCTION_EVENT && (e.message || '').trim())
     .sort((a, b) => a.ts.localeCompare(b.ts))
     .map((e) => ({ at: e.ts, text: (e.message || '').trim(), round: rounds.filter((r) => r.ts < e.ts).length }))
-  // One-shot: only an instruction written after the last round steers this one. Earlier ones stay as context.
-  const isFresh = (at: string) => !lastRoundAt || at > lastRoundAt
-  const fresh = instructions.filter((i) => isFresh(i.at))
+  // What binds this round is what stands in the box when the button is pressed — that is what the button promises.
+  // The log supplies the rest: earlier, *different* instructions, as evidence of where the reviewer keeps steering.
+  // Text identical to the current one is not "past steering", it is the same standing instruction.
+  const instruction = (currentInstruction || '').trim() || null
   return {
     round: rounds.length + 1,
     hasNewCommits: !!currentHeadSha && !!previousHeadSha && currentHeadSha !== previousHeadSha,
-    instruction: fresh.length ? fresh.map((i) => i.text).join('\n') : null,
-    pastInstructions: instructions.filter((i) => !isFresh(i.at)),
+    instruction,
+    pastInstructions: instructions.filter((i) => i.text !== instruction),
     lastRoundAt,
     sinceSha: previousHeadSha,
   }
@@ -100,7 +108,7 @@ export function buildFindingIndex(findings: IndexFinding[]): string {
   if (!findings.length) return '(no findings yet)'
   const lines = findings.map((f) => {
     const trace = f.rounds.length
-      ? f.rounds.sort((a, b) => a.round - b.round).map((r) => `r${r.round}:${r.status}${r.stance ? `/${r.stance}` : ''}`).join(' → ')
+      ? [...f.rounds].sort((a, b) => a.round - b.round).map((r) => `r${r.round}:${r.status}${r.stance ? `/${r.stance}` : ''}`).join(' → ')
       : 'never re-reviewed'
     const marks = [f.checked ? 'ticked-for-posting' : '', f.humanAcceptedAt ? 'accepted-by-reviewer' : ''].filter(Boolean).join(', ')
     return `${f.fid} [${f.severity}] ${truncate(f.title, 80)}${f.location ? ` (${f.location})` : ''} · ${trace}${marks ? ` · ${marks}` : ''}`
@@ -131,7 +139,9 @@ export type HistoryInput = {
   findings: HistoryFinding[]
   timeline: TimelineNode[]
   reviewComments: ReviewComment[]
-  since: string | null // only conversation newer than this is included (the previous round)
+  since: string | null // the previous round: entries newer than this are marked NEW (nothing is withheld)
+  globalNotes: string | null // the reviewer's standing note on the whole review
+  fetchErrors: string[] // anything GitHub would not give us, so a gap never reads as silence
 }
 
 export function buildHistoryDoc(input: HistoryInput): string {
@@ -154,6 +164,13 @@ export function buildHistoryDoc(input: HistoryInput): string {
     out.push('')
   }
 
+  if (input.globalNotes?.trim()) {
+    out.push("## The reviewer's standing note on this review")
+    out.push('')
+    out.push(input.globalNotes.trim())
+    out.push('')
+  }
+
   out.push('## Findings, round by round')
   out.push('')
   if (!input.findings.length) out.push('(no findings yet)')
@@ -167,7 +184,7 @@ export function buildHistoryDoc(input: HistoryInput): string {
     if (f.checked) out.push('The reviewer ticked this one to be posted.')
     if (f.humanAcceptedAt) out.push('The reviewer accepted this one by hand — do not quietly drop it.')
     if (!f.roundTexts.length) out.push('\nNo earlier round has judged this finding.')
-    for (const r of f.roundTexts.sort((a, b) => a.round - b.round)) {
+    for (const r of [...f.roundTexts].sort((a, b) => a.round - b.round)) {
       out.push('')
       out.push(`- **round ${r.round}** — author: ${r.status}${r.stance ? ` · my stance: ${r.stance}` : ''}`)
       if (r.text) out.push(`  ${r.text.replace(/\n/g, '\n  ')}`)
@@ -176,15 +193,19 @@ export function buildHistoryDoc(input: HistoryInput): string {
     out.push('')
   }
 
+  // The whole conversation, with the round boundary marked rather than used to withhold: a round-3 verdict can hinge
+  // on an author reply from round 1, and the prompt no longer tells the agent to go fetch any of this with gh.
+  const isNew = (at: string) => (input.since ? at > input.since : false)
+  const mark = (at: string) => (isNew(at) ? ' **[new since the last round]**' : '')
+
   out.push('## PR conversation')
   out.push('')
-  out.push(input.since ? `Only what was said after ${input.since} (the previous round).` : 'The whole conversation so far.')
+  if (input.fetchErrors.length) out.push(`⚠️ Incomplete — GitHub would not return: ${input.fetchErrors.join('; ')}. Absence below is not evidence of silence.`)
   out.push('')
-  const nodes = input.timeline.filter((n) => (n.body || n.message) && (!input.since || n.at > input.since))
-  if (!nodes.length) out.push('(nothing new)')
+  const nodes = input.timeline.filter((n) => n.body || n.message)
+  if (!nodes.length) out.push('(nothing)')
   for (const n of nodes) {
-    const head = `- ${n.at} · ${n.actor}${n.isBot ? ' (bot)' : ''} · ${n.kind}${n.state ? `/${n.state}` : ''}`
-    out.push(head)
+    out.push(`- ${n.at} · ${n.actor}${n.isBot ? ' (bot)' : ''} · ${n.kind}${n.state ? `/${n.state}` : ''}${mark(n.at)}`)
     const body = (n.body || n.message || '').trim()
     if (body) out.push(`  ${truncateBody(body).replace(/\n/g, '\n  ')}`)
   }
@@ -192,10 +213,9 @@ export function buildHistoryDoc(input: HistoryInput): string {
 
   out.push('## Line-level review comments and the author\'s replies')
   out.push('')
-  const comments = input.reviewComments.filter((c) => !input.since || c.createdAt > input.since)
-  if (!comments.length) out.push('(nothing new)')
-  for (const c of comments) {
-    out.push(`- ${c.createdAt} · ${c.author}${c.isBot ? ' (bot)' : ''} · ${c.path}${c.line != null ? `:${c.line}` : ''}${c.inReplyToId ? ` (reply to #${c.inReplyToId})` : ''}`)
+  if (!input.reviewComments.length) out.push('(nothing)')
+  for (const c of input.reviewComments) {
+    out.push(`- ${c.createdAt} · ${c.author}${c.isBot ? ' (bot)' : ''} · ${c.path}${c.line != null ? `:${c.line}` : ''}${c.inReplyToId ? ` (reply to #${c.inReplyToId})` : ''}${mark(c.createdAt)}`)
     const body = (c.body || '').trim()
     if (body) out.push(`  ${truncateBody(body).replace(/\n/g, '\n  ')}`)
   }
@@ -208,8 +228,8 @@ function truncateBody(s: string): string {
   return s.length > 4000 ? `${s.slice(0, 4000)}\n… (truncated)` : s
 }
 
-export function writeReviewHistory(reviewId: string, doc: string): { path: string; bytes: number } {
-  const dir = reviewHistoryDir(reviewId)
+export function writeReviewHistory(root: string, reviewId: string, doc: string): { path: string; bytes: number } {
+  const dir = reviewHistoryDir(root, reviewId)
   mkdirSync(dir, { recursive: true })
   const path = join(dir, HISTORY_FILE)
   writeFileSync(path, doc, 'utf8')
@@ -217,13 +237,12 @@ export function writeReviewHistory(reviewId: string, doc: string): { path: strin
 }
 
 // Deleting the task deletes its history with it.
-export function removeReviewHistory(reviewId: string): void {
-  try { rmSync(reviewHistoryDir(reviewId), { recursive: true, force: true }) } catch { /* already gone */ }
+export function removeReviewHistory(root: string, reviewId: string): void {
+  try { rmSync(reviewHistoryDir(root, reviewId), { recursive: true, force: true }) } catch { /* already gone */ }
 }
 
 // A crash between writing and deleting leaves a directory nobody owns; startup clears whatever no review claims.
-export function sweepOrphanHistories(liveReviewIds: Set<string>): number {
-  const root = reviewHistoryRoot()
+export function sweepOrphanHistories(root: string, liveReviewIds: Set<string>): number {
   if (!existsSync(root)) return 0
   let removed = 0
   for (const name of readdirSync(root)) {

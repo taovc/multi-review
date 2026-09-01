@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reviewSectionRe } from '~core/agent/reviewSections'
+import { isRecheckResolved, stanceOf } from '~core/recheckAxes'
 
 const props = defineProps<{ projectId: string; prNumber: number; reviewId: string | null }>()
 const emit = defineEmits<{ created: [id: string]; changed: [] }>()
@@ -9,7 +10,7 @@ type Finding = {
   id: string; fid: string; severity: 'High' | 'Medium' | 'Low'; title: string
   location: string | null; problem: string | null; detail: string | null; fix: string | null
   introducedByPr: boolean; checked: boolean; notes: string | null; verifyStatus?: 'confirmed' | 'refuted' | 'unsure' | null; verifyNote?: string | null
-  rechecks: { round: number; status: string; text: string | null; at: string }[]
+  rechecks: { round: number; status: string; stance?: string | null; stanceReason?: string | null; text: string | null; at: string }[]
 }
 type RunInfo = { id: string; subkind: string; provider: string; model: string | null; effort: string | null; status: string; costUsd: number | null; costSource: string | null; inputTokens: number; outputTokens: number; durationMs: number; skillVersion: number | null; skillName: string | null } | null
 type ReviewData = {
@@ -57,15 +58,16 @@ async function load() {
   }
 }
 
-// Fixed (latest recheck round = fixed) → uncheck; not fixed (any other recheck status) → check. Only touches findings that were rechecked,
-// ones never rechecked stay as they are; the user can still change them by hand afterwards. Posting follows the checkboxes, so this directly decides what gets posted.
+// Resolved by the latest round (we retracted it, or the author fixed/replied) → uncheck; still open → check. Only touches
+// findings that were rechecked; ones never rechecked stay as they are and the user can still change them by hand.
+// Posting follows the checkboxes, so this decides what goes out — a retracted finding must not be ticked back on.
 async function autoAdjustChecks() {
   const fs = data.value?.findings ?? []
   const changed: Finding[] = []
   for (const f of fs) {
     if (!f.rechecks.length) continue
     const latest = f.rechecks[f.rechecks.length - 1]!
-    const desired = latest.status !== 'fixed'
+    const desired = !isRecheckResolved(latest)
     if (f.checked !== desired) { f.checked = desired; changed.push(f) }
   }
   if (!changed.length) return
@@ -369,8 +371,9 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
               <pre v-if="f.fix" class="text-xs bg-muted border border-default rounded p-2 whitespace-pre-wrap mt-1 overflow-x-auto">{{ f.fix }}</pre>
             </details>
             <div v-for="r in f.rechecks" :key="r.round" class="text-xs mt-2 border-l-2 border-default pl-2">
-              <span class="font-medium">🔁 {{ $t('review.recheckRound', { round: r.round }) }} · {{ rcLabel(r.status) }}</span>
+              <span class="font-medium">🔁 {{ $t('review.recheckRound', { round: r.round }) }} · {{ rcLabel(r.status) }}<template v-if="stanceOf(r)"> · {{ rcLabel(stanceOf(r)!) }}</template></span>
               <span class="text-muted"> {{ r.text }}</span>
+              <div v-if="r.stanceReason" class="text-muted mt-0.5">↳ {{ r.stanceReason }}</div>
             </div>
             <textarea
               v-model="f.notes" rows="1" :placeholder="$t('review.notePlaceholder')"
