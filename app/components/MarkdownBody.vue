@@ -1,38 +1,15 @@
 <script setup lang="ts">
-// Shared markdown rendering (for chat/assistant output): marked + dompurify loaded dynamically on the
-// client, gfm + breaks.
-// The .md-body styles match the review drawer; they ship with this component (not scoped), so nothing
-// else has to be mounted first.
-const props = defineProps<{ text: string }>()
+// The shared renderer for agent output. The pipeline itself lives in useMarkdown (one loader, shared by every caller);
+// this component owns the look, and its .md-body styles are deliberately unscoped so any consumer gets them by mounting
+// it — nothing has to be loaded in a particular order.
+const props = defineProps<{ text?: string | null; inline?: boolean }>()
 
-const html = ref('')
-let _render: ((s: string) => string) | null = null
-async function getRenderer() {
-  if (_render) return _render
-  const [{ marked }, dp] = await Promise.all([import('marked'), import('dompurify')])
-  marked.setOptions({ gfm: true, breaks: true })
-  const DOMPurify = (dp as any).default
-  // Private GitHub images go through the backend proxy (same as PrDetailDrawer), so they still render
-  // when the AI output references them.
-  const PROXY = /(<img[^>]+\bsrc=")(https:\/\/(?:github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)[^"]+)(")/gi
-  _render = (s: string) => {
-    const out = DOMPurify.sanitize(marked.parse(s ?? '', { async: false }) as string)
-    return out.replace(PROXY, (_m: string, pre: string, url: string, post: string) => `${pre}/api/img?u=${encodeURIComponent(url)}${post}`)
-  }
-  return _render
-}
-
-// While streaming this re-renders on every token; marked is fast enough. Nothing renders during SSR
-// (the dynamic import is client-only).
-watch(() => props.text, async (t) => {
-  if (!import.meta.client) return
-  const render = await getRenderer()
-  html.value = render(t || '')
-}, { immediate: true })
+// inline: emphasis and code spans without a paragraph wrapper, for titles and other single-line labels.
+const html = useMarkdown(() => props.text, { inline: props.inline })
 </script>
 
 <template>
-  <div class="md-body" v-html="html" />
+  <component :is="inline ? 'span' : 'div'" class="md-body" :class="{ 'md-inline': inline }" v-html="html" />
 </template>
 
 <style>
@@ -53,5 +30,8 @@ watch(() => props.text, async (t) => {
 .md-body table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.85em; }
 .md-body th, .md-body td { border: 1px solid var(--ui-border); padding: 0.3em 0.6em; text-align: left; }
 .md-body img { max-width: 100%; }
+/* inline mode: the surrounding line owns the typography, so contribute nothing but emphasis and code spans */
+.md-inline { display: inline; font-size: inherit; line-height: inherit; color: inherit; }
+.md-inline code { font-size: 0.9em; }
 .md-body hr { border: 0; border-top: 1px solid var(--ui-border); margin: 0.8em 0; }
 </style>

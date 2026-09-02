@@ -219,7 +219,9 @@ async function deleteReview() {
 // ~core/agent/reviewSections next to the prompt that dictates them, so the two cannot drift apart.
 const SECTION_RE = reviewSectionRe()
 
-// The AI often writes the requirement / test path as one long run-on block with no line breaks → insert line breaks before enumerations/section labels for readability
+// A readability pre-pass, run before the markdown renderer: the AI often writes the requirement / test path as one
+// run-on block, so line breaks go in ahead of enumerations and section labels (the renderer has breaks:true, so a
+// single newline becomes a line break rather than being collapsed).
 function fmt(t?: string | null) {
   if (!t) return ''
   return t
@@ -328,7 +330,7 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
       <!-- AI summary (pinned to the top) -->
       <section v-if="data.review.conclusion" class="mb-5 border border-default rounded p-3">
         <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.aiSummary') }}</div>
-        <p class="text-sm text-default whitespace-pre-wrap leading-relaxed">{{ fmt(data.review.conclusion) }}</p>
+        <MarkdownBody :text="fmt(data.review.conclusion)" />
       </section>
 
       <!-- review instruction for the AI (consulted on "recheck against my feedback") -->
@@ -346,11 +348,11 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
       <template v-if="data.review.requirement || data.review.testPath">
         <section v-if="data.review.requirement" class="mb-4">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.requirement') }}</div>
-          <p class="text-sm text-default whitespace-pre-wrap leading-relaxed">{{ fmt(data.review.requirement) }}</p>
+          <MarkdownBody :text="fmt(data.review.requirement)" />
         </section>
         <section v-if="data.review.testPath" class="mb-5">
           <div class="text-[10px] uppercase tracking-[0.15em] text-dimmed mb-1">{{ $t('review.testPath') }}</div>
-          <p class="text-sm text-default whitespace-pre-wrap leading-relaxed">{{ fmt(data.review.testPath) }}</p>
+          <MarkdownBody :text="fmt(data.review.testPath)" />
         </section>
       </template>
 
@@ -361,19 +363,19 @@ function skipReasonLabel(s: string) { const k = SKIP_REASON[s]; return k ? t(k) 
           <input type="checkbox" class="accent-neutral-900 dark:accent-neutral-100 mt-1" :checked="f.checked" @change="toggleFinding(f)" />
           <div class="min-w-0 flex-1">
             <div class="text-sm">
-              <span class="text-xs mr-1" :class="sevCls[f.severity]">[{{ f.severity }}]</span>{{ f.title }}
+              <span class="text-xs mr-1" :class="sevCls[f.severity]">[{{ f.severity }}]</span><MarkdownBody :text="f.title" inline />
             </div>
             <div class="text-xs text-dimmed mt-0.5">{{ f.location }}<span v-if="!f.introducedByPr"> {{ $t('review.preExisting') }}</span><span v-if="f.verifyStatus === 'refuted'" class="ml-1 text-highlighted" :title="f.verifyNote || ''">⊘ {{ $t('review.verifyRefuted') }}</span><span v-else-if="f.verifyStatus === 'confirmed'" class="ml-1" :title="f.verifyNote || ''">✓ {{ $t('review.verifyConfirmed') }}</span><span v-else-if="f.verifyStatus === 'unsure'" class="ml-1" :title="f.verifyNote || ''">? {{ $t('review.verifyUnsure') }}</span></div>
-            <p v-if="f.problem" class="text-sm text-toned mt-1">{{ f.problem }}</p>
+            <MarkdownBody v-if="f.problem" :text="f.problem" class="mt-1" />
             <details v-if="f.detail || f.fix" class="mt-1">
               <summary class="text-xs text-dimmed cursor-pointer">{{ $t('review.detailFix') }}</summary>
-              <pre v-if="f.detail" class="text-xs text-toned whitespace-pre-wrap mt-1 font-sans">{{ f.detail }}</pre>
-              <pre v-if="f.fix" class="text-xs bg-muted border border-default rounded p-2 whitespace-pre-wrap mt-1 overflow-x-auto">{{ f.fix }}</pre>
+              <MarkdownBody v-if="f.detail" :text="f.detail" class="text-xs mt-1" />
+              <MarkdownBody v-if="f.fix" :text="f.fix" class="text-xs bg-muted border border-default rounded p-2 mt-1 overflow-x-auto" />
             </details>
             <div v-for="r in f.rechecks" :key="r.round" class="text-xs mt-2 border-l-2 border-default pl-2">
               <span class="font-medium">🔁 {{ $t('review.recheckRound', { round: r.round }) }} · {{ rcLabel(r.status) }}<template v-if="stanceOf(r)"> · {{ rcLabel(stanceOf(r)!) }}</template></span>
-              <span class="text-muted"> {{ r.text }}</span>
-              <div v-if="r.stanceReason" class="text-muted mt-0.5">↳ {{ r.stanceReason }}</div>
+              <MarkdownBody v-if="r.text" :text="r.text" class="text-muted" />
+              <div v-if="r.stanceReason" class="text-muted mt-0.5 flex gap-1"><span class="shrink-0">↳</span><MarkdownBody :text="r.stanceReason" /></div>
             </div>
             <textarea
               v-model="f.notes" rows="1" :placeholder="$t('review.notePlaceholder')"

@@ -60,11 +60,10 @@ type Detail = {
 type Node = {
   kind: 'comment' | 'review' | 'commit' | 'event'
   actor: string; isBot: boolean; at: string
-  body?: string; bodyHtml?: string; state?: string; sha?: string; message?: string; verb?: string; detail?: string
+  body?: string; state?: string; sha?: string; message?: string; verb?: string; detail?: string
 }
 
 const detail = ref<Detail | null>(null)
-const openingHtml = ref('')
 const nodes = ref<Node[]>([])
 const pending = ref(false)
 const error = ref('')
@@ -112,40 +111,21 @@ function wfLabel(ev: WfEvent) {
   return t(k, { round: ev.message ?? '', info: ev.message ?? '' })
 }
 
-// ── markdown rendering (marked + dompurify loaded dynamically on the client) ──
-let _render: ((s: string) => string) | null = null
-async function getRenderer() {
-  if (_render) return _render
-  const [{ marked }, dp] = await Promise.all([import('marked'), import('dompurify')])
-  marked.setOptions({ gfm: true, breaks: true })
-  const DOMPurify = (dp as any).default
-  // After rendering, point the src of GitHub private images (user-attachments / githubusercontent) at
-  // the backend proxy; otherwise the browser hitting those URLs directly gets a 404 (they need a GitHub session).
-  const PROXY = /(<img[^>]+\bsrc=")(https:\/\/(?:github\.com\/user-attachments\/|[a-z0-9-]+\.githubusercontent\.com\/)[^"]+)(")/gi
-  _render = (s: string) => {
-    const html = DOMPurify.sanitize(marked.parse(s ?? '', { async: false }) as string)
-    return html.replace(PROXY, (_m: string, pre: string, url: string, post: string) => `${pre}/api/img?u=${encodeURIComponent(url)}${post}`)
-  }
-  return _render
-}
-
 watch(
   () => [open.value, props.prNumber] as const,
   async ([isOpen, num]) => {
     if (!isOpen || !num) return
     if (detail.value?.number === num) return
-    detail.value = null; nodes.value = []; openingHtml.value = ''; diff.value = null; wfEvents.value = []
+    detail.value = null; nodes.value = []; diff.value = null; wfEvents.value = []
     activeTab.value = (props.initialTab as any) || (props.reviewId ? 'review' : 'timeline'); error.value = ''; pending.value = true
     try {
       const res = await $fetch<{ detail: Detail; nodes: Node[] }>(
         `/api/projects/${props.projectId}/pulls/${num}/timeline`,
       )
-      const render = await getRenderer()
+      // Rendered by MarkdownBody where they are shown (one shared pipeline, see useMarkdown) rather than
+      // pre-rendered into the node list here.
       detail.value = res.detail
-      openingHtml.value = render(res.detail.body)
-      nodes.value = res.nodes.map((n) =>
-        n.body ? { ...n, bodyHtml: render(n.body) } : n,
-      )
+      nodes.value = res.nodes
     } catch (e: any) {
       error.value = e?.data?.statusMessage || e?.message || t('prDrawer.loadFailed')
     } finally {
@@ -306,7 +286,7 @@ const lineCls: Record<DiffLine['t'], string> = {
                 <span class="text-default font-medium">{{ detail.author }}</span> {{ $t('prDrawer.openedPr') }} · {{ rel(detail.createdAt) }}
               </div>
               <div class="border border-default rounded-md p-3">
-                <div v-if="detail.body" class="md-body" v-html="openingHtml" />
+                <MarkdownBody v-if="detail.body" :text="detail.body" />
                 <span v-else class="text-sm text-dimmed">{{ $t('prDrawer.noDescription') }}</span>
               </div>
             </li>
@@ -322,7 +302,7 @@ const lineCls: Record<DiffLine['t'], string> = {
                   <span v-else class="ml-1">{{ $t('prDrawer.commentLabel') }}</span>
                   · {{ rel(n.at) }}
                 </div>
-                <div v-if="n.bodyHtml" class="border border-default rounded-md p-3 md-body" v-html="n.bodyHtml" />
+                <MarkdownBody v-if="n.body" :text="n.body" class="border border-default rounded-md p-3" />
               </template>
 
               <!-- commit -->
@@ -385,22 +365,5 @@ const lineCls: Record<DiffLine['t'], string> = {
 </template>
 
 <style>
-.md-body { font-size: 0.875rem; line-height: 1.65; color: var(--ui-text-toned); word-break: break-word; }
-.md-body > *:first-child { margin-top: 0; }
-.md-body > *:last-child { margin-bottom: 0; }
-.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; margin: 0.9em 0 0.4em; color: var(--ui-text-highlighted); }
-.md-body h1 { font-size: 1.1rem; } .md-body h2 { font-size: 1rem; } .md-body h3 { font-size: 0.92rem; }
-.md-body p { margin: 0.5em 0; }
-.md-body ul { margin: 0.5em 0; padding-left: 1.3em; list-style: disc; }
-.md-body ol { margin: 0.5em 0; padding-left: 1.3em; list-style: decimal; }
-.md-body li { margin: 0.2em 0; }
-.md-body code { background: var(--ui-bg-muted); padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.85em; }
-.md-body pre { background: var(--ui-bg-muted); padding: 0.7em; border-radius: 6px; overflow-x: auto; margin: 0.6em 0; }
-.md-body pre code { background: none; padding: 0; }
-.md-body a { color: var(--ui-text-highlighted); text-decoration: underline; }
-.md-body blockquote { border-left: 2px solid var(--ui-border); padding-left: 0.8em; color: var(--ui-text-muted); margin: 0.5em 0; }
-.md-body table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.85em; }
-.md-body th, .md-body td { border: 1px solid var(--ui-border); padding: 0.3em 0.6em; text-align: left; }
-.md-body img { max-width: 100%; }
-.md-body hr { border: 0; border-top: 1px solid var(--ui-border); margin: 0.8em 0; }
+/* .md-body styles ship with MarkdownBody (unscoped) — this file used to carry a second copy of them. */
 </style>
